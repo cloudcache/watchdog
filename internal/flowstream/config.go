@@ -63,12 +63,15 @@ type ProducerConfig struct {
 }
 
 type ConsumerConfig struct {
-	Kafka                 KafkaConfig
-	ConsumerGroup         string
-	FetchMinBytes         int32
-	FetchMaxWait          time.Duration
-	TemplateReplayRecords int64
-	StartAtEnd            bool
+	Kafka                  KafkaConfig
+	ConsumerGroup          string
+	FetchMinBytes          int32
+	FetchMaxBytes          int32
+	FetchMaxPartitionBytes int32
+	FetchMaxWait           time.Duration
+	PartitionBatchRecords  int
+	TemplateReplayRecords  int64
+	StartAtEnd             bool
 }
 
 func DefaultProducerConfig() ProducerConfig {
@@ -92,13 +95,20 @@ func DefaultConsumerConfig() ConsumerConfig {
 		},
 		ConsumerGroup: "watchdog-flow-decode",
 		FetchMinBytes: 1_000_000,
-		FetchMaxWait:  time.Second,
-		// NetFlow/IPFIX templates live in decoder memory. Replaying an
-		// explicit bounded window on every assignment reconstructs that state
-		// after process restart or partition movement without another topic or
-		// state database. Capacity tests must size this above the maximum
-		// records-per-template refresh interval for each partition.
-		TemplateReplayRecords: 1_000_000,
+		FetchMaxBytes: 64 << 20,
+		// A single exporter is intentionally pinned to one Kafka partition.
+		// The franz-go default is only 1 MiB, which prevents a recovered worker
+		// from draining that partition faster than a busy live producer.
+		FetchMaxPartitionBytes: 16 << 20,
+		FetchMaxWait:           time.Second,
+		// Bound one durable handler call independently of Kafka's fetch size.
+		// A ClickHouse failure after earlier chunks have succeeded can then
+		// commit those chunks instead of replaying the entire fetch.
+		PartitionBatchRecords: 4_096,
+		// Packet formats such as sFlow do not need decoder template replay.
+		// NetFlow/IPFIX deployments may opt into a bounded replay window sized
+		// above their maximum records-per-template refresh interval.
+		TemplateReplayRecords: 0,
 	}
 }
 
@@ -163,11 +173,20 @@ func (c ConsumerConfig) Validate() error {
 	if c.FetchMinBytes < 1 {
 		return errors.New("Kafka fetch minimum bytes must be positive")
 	}
+	if c.FetchMaxPartitionBytes < c.FetchMinBytes || c.FetchMaxPartitionBytes > 1<<30 {
+		return errors.New("Kafka fetch maximum partition bytes must be at least the minimum and no more than 1 GiB")
+	}
+	if c.FetchMaxBytes < c.FetchMaxPartitionBytes || c.FetchMaxBytes > 1<<30 {
+		return errors.New("Kafka fetch maximum bytes must be at least the partition maximum and no more than 1 GiB")
+	}
 	if c.FetchMaxWait < 100*time.Millisecond {
 		return errors.New("Kafka fetch maximum wait must be at least 100ms")
 	}
-	if c.TemplateReplayRecords < 1 || c.TemplateReplayRecords > 100_000_000 {
-		return errors.New("Kafka template replay records must be 1..100000000")
+	if c.PartitionBatchRecords < 1 || c.PartitionBatchRecords > 1_000_000 {
+		return errors.New("Kafka partition batch records must be 1..1000000")
+	}
+	if c.TemplateReplayRecords < 0 || c.TemplateReplayRecords > 100_000_000 {
+		return errors.New("Kafka template replay records must be 0..100000000")
 	}
 	return nil
 }

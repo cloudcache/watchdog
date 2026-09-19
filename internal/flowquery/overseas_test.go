@@ -103,6 +103,10 @@ func TestCompileOverseasStorageV2UnionsArchiveAndRawBeforeAnalysis(t *testing.T)
 	request.Bucket = BucketOneHour
 	request.StorageV2 = true
 	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	request.Filters = OverseasFilters{
+		Directions: []string{"out"},
+		DeviceIDs:  []string{"device-a"},
+	}
 	compiled, err := CompileOverseas(Scope{}, request, overseasNow())
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +114,7 @@ func TestCompileOverseasStorageV2UnionsArchiveAndRawBeforeAnalysis(t *testing.T)
 	for _, required := range []string{
 		"FROM flow_records FINAL",
 		"event_time >= {archive_through:DateTime('UTC')}",
+		"raw_base AS",
 		"SELECT * FROM archive_selected",
 		"SELECT * FROM raw_selected",
 		"FROM coverage",
@@ -121,6 +126,44 @@ func TestCompileOverseasStorageV2UnionsArchiveAndRawBeforeAnalysis(t *testing.T)
 	if !compiled.UsesRawFacts || !compiled.ArchiveThrough.Equal(request.ArchiveThrough) ||
 		queryParameter(compiled.Query, "source_seconds") != "'3600'" {
 		t.Fatalf("compiled=%+v", compiled)
+	}
+	if compiled.PostProcessGeoTopN || setting(compiled.Query, "max_rows_to_read") != "500000000" ||
+		setting(compiled.Query, "max_bytes_to_read") != "34359738368" || setting(compiled.Query, "max_execution_time") != "30" {
+		t.Fatalf("mixed budgets rows=%q bytes=%q postprocess=%v", setting(compiled.Query, "max_rows_to_read"), setting(compiled.Query, "max_bytes_to_read"), compiled.PostProcessGeoTopN)
+	}
+	archiveEnd := strings.Index(compiled.Query.Body, "raw_base AS")
+	rawBaseEnd := strings.Index(compiled.Query.Body, "raw_selected AS")
+	rawEnd := -1
+	if rawBaseEnd >= 0 {
+		remaining := compiled.Query.Body[rawBaseEnd+len("raw_selected AS"):]
+		if offset := strings.Index(remaining, "\n  selected AS"); offset >= 0 {
+			rawEnd = rawBaseEnd + len("raw_selected AS") + offset
+		}
+	}
+	if archiveEnd < 0 || rawBaseEnd < 0 || rawEnd < 0 || rawBaseEnd <= archiveEnd || rawEnd <= rawBaseEnd {
+		t.Fatalf("Storage V2 overseas query has malformed source CTEs:\n%s", compiled.Query.Body)
+	}
+	archiveSQL := compiled.Query.Body[:archiveEnd]
+	rawBaseSQL := compiled.Query.Body[archiveEnd:rawBaseEnd]
+	rawExpandedSQL := compiled.Query.Body[rawBaseEnd:rawEnd]
+	for _, required := range []string{
+		"AND source.business_direction IN ({detail_direction_0:String})",
+		"AND source.device_id IN ({detail_device_0:String})",
+	} {
+		if !strings.Contains(archiveSQL, required) {
+			t.Fatalf("archive source is missing pushed predicate %q:\n%s", required, archiveSQL)
+		}
+	}
+	for _, required := range []string{
+		"AND business_direction IN ({detail_direction_0:String})",
+		"AND device_id IN ({detail_device_0:String})",
+	} {
+		if !strings.Contains(rawBaseSQL, required) {
+			t.Fatalf("raw base is missing pushed predicate %q:\n%s", required, rawBaseSQL)
+		}
+	}
+	if !strings.Contains(rawExpandedSQL, "FROM raw_base") || strings.Contains(rawExpandedSQL, "FROM flow_records") {
+		t.Fatalf("raw expansion must consume the prefiltered base CTE:\n%s", rawExpandedSQL)
 	}
 }
 
@@ -140,9 +183,15 @@ func TestCompileOverseasUsesLargerReadBudgetOnlyForIdentityScopedRawFacts(t *tes
 	if setting(unscoped.Query, "max_rows_to_read") != "50000000" || setting(unscoped.Query, "max_bytes_to_read") != "4294967296" {
 		t.Fatalf("unscoped budgets rows=%q bytes=%q", setting(unscoped.Query, "max_rows_to_read"), setting(unscoped.Query, "max_bytes_to_read"))
 	}
-	if setting(scoped.Query, "max_rows_to_read") != "200000000" || setting(scoped.Query, "max_bytes_to_read") != "8589934592" {
+	if setting(scoped.Query, "max_rows_to_read") != "500000000" || setting(scoped.Query, "max_bytes_to_read") != "34359738368" ||
+		setting(scoped.Query, "max_execution_time") != "30" {
 		t.Fatalf("scoped budgets rows=%q bytes=%q", setting(scoped.Query, "max_rows_to_read"), setting(scoped.Query, "max_bytes_to_read"))
 	}
+	if !scoped.PostProcessGeoTopN || strings.Count(scoped.Query.Body, "FROM flow_records FINAL") != 1 ||
+		!strings.Contains(scoped.Query.Body, "ARRAY JOIN arrayFilter") || strings.Contains(scoped.Query.Body, "remote_endpoints AS") {
+		t.Fatalf("all-raw overseas query is not the single-scan plan:\n%s", scoped.Query.Body)
+	}
+
 }
 
 func TestCompileOverseasRejectsUnsafeUnsupportedOrUnboundedRequests(t *testing.T) {

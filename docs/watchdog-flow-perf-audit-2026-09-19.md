@@ -329,7 +329,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 过滤下推和落盘仍不足以闭环端点查询：同设备当前 24h 范围包含 66,210,292 条事实和 18,374,764 个不同目标 IP；全库为 69,720,428 条事实和 19,431,102 个不同目标 IP。按小时+IP 精确聚合再窗口排名的只读探针即使启用 external group/sort 仍在 15 秒超时。因此源/目的 IP 的 raw-only Storage V2 路径改为两遍有界算法：第一遍以 `topKWeighted(TopN*8)` 获取固定大小候选，第二遍只读取当前请求指标并计算候选的精确桶值，同时把非候选及候选中未进入最终 Top N 的事实按版本汇入 `_other`。该路径必须明确选择 device、target 或 exporter；未限定身份的查询仍保留 50M rows/4GiB read 上限。端点候选两遍读取使用独立的 400M 总读行、16GiB 累计列读取上限；普通身份受限单遍查询仍为 200M/8GiB，二者的内存均为 4GiB、执行时限均为 15s。真实 ClickHouse 集成验证 Top N、`_other`、records 和完整度守恒；生产同形只读探针在 71,819,059 条设备事实、约 1,986 万目标 IP 的 24h 范围内用时 4.522s。2026-09-19 数据增长后，同形查询累计读取 248.91M 行，证明双扫描不能复用单遍 200M 门禁；拆分预算后生产重放通过。
 
-生产复测进一步确认“每个 Flow 页面都报 resource limit”并非端点算法单点问题：所选设备的 24h 查询在 `FINAL` 前需要读取约 114,270,000 条物理行，而通用聚合、联合维度和境外三条编译链仍各自使用 50M 行字面量，查询在读取 0 行时即被 ClickHouse 拒绝。三条链现已统一身份受限预算：只有请求明确携带 device/target/exporter 且实际访问 raw facts 时才允许 200M rows/8GiB read，未选设备的全局查询仍为 50M/4GiB。Storage V2 通用聚合同时改为仅投影和汇总当前指标列，不再为一个 `estimated_bps` 请求读取并聚合 raw/estimated 字节和包数四套计数器。
+生产复测进一步确认“每个 Flow 页面都报 resource limit”并非端点算法单点问题：所选设备的 24h 查询在 `FINAL` 前需要读取约 114,270,000 条物理行，而通用聚合、联合维度和境外三条编译链仍各自使用 50M 行字面量，查询在读取 0 行时即被 ClickHouse 拒绝。三条链现已统一身份受限预算：只有请求明确携带 device/target/exporter 且实际访问 raw facts 时才使用扩大后的读取预算，未选设备的全局查询仍为 50M rows/4GiB read。2026-09-19 生产失败样本进一步读取 179.44M rows/10.66GiB，但仅消耗 236.91MiB 内存、运行 6.5s，证明旧的 200M rows/8GiB 是读取字节误杀而非真实内存过载。因此单遍身份受限查询调整为 250M rows/16GiB、端点两遍查询调整为 500M rows/32GiB，二者执行窗口为 30s；4GiB 内存、1GiB external group/sort、结果行上限和无身份范围的 50M/4GiB/15s 保护保持不变。Storage V2 通用聚合同时改为仅投影和汇总当前指标列，不再为一个 `estimated_bps` 请求读取并聚合 raw/estimated 字节和包数四套计数器。
 
 同一个 Kafka offset 窄窗口（11,000,000～11,001,000）返回相同的 3,889 条事实时：
 
@@ -363,11 +363,11 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 ### PERF-Q1B 24h 查询聚合内存闭环
 
 - [x] **故障证据**：固定两条生产失败 query，确认不是结果行过多，而是高基数端点聚合在 `AggregatingTransform` 内达到 4GiB；同时确认生产仍使用过滤后置的旧 SQL。
-- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。明确选择 device/target/exporter 的普通单遍 raw 查询使用 200M rows/8GiB read；端点候选两遍查询独立使用 400M/16GiB；未限定身份的全局查询继续保留 50M/4GiB fail-closed 上限；4GiB memory 和 15s 上限不变。
+- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。明确选择 device/target/exporter 的普通单遍 raw 查询使用 250M rows/16GiB read；端点候选两遍查询独立使用 500M/32GiB；两者执行窗口为 30s。未限定身份的全局查询继续保留 50M/4GiB/15s fail-closed 上限，4GiB memory 和结果行上限不变。
 - [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值；端点编译器断言两遍扫描均先应用设备过滤、候选数固定、只投影当前指标且无 `dense_rank` 高基数状态；未选择设备或带显式 IP/version 残余筛选时仍回退普通精确门禁路径。
 - [x] **真实 ClickHouse 集成**：隔离数据库写入三个目标 IP，验证候选查询的 Top 1 精确值、版本化 `_other`、records 和 bucket completeness 守恒。
 - [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；同设备 24h 同形只读探针已在 4.522s 完成，仍需经认证 API 重放并记录 `system.query_log` 的 `read_rows/read_bytes/memory_usage/duration`。
-- [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。普通单遍查询仍超过 200M/8GiB/15s、端点两遍查询仍超过 400M/16GiB/15s，或任何超过 50M 的全局查询不得再抬同步上限，应进入热查询层或异步导出工作包。
+- [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。普通单遍查询仍超过 250M/16GiB/30s、端点两遍查询仍超过 500M/32GiB/30s，或任何超过 50M 的全局查询不得再抬同步上限，应进入热查询层或异步导出工作包。
 
 ### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环
 
@@ -394,14 +394,14 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 ### PERF-SFC1 sFlow 接口 counter 真值、覆盖与校准闭环
 
-> 约束：counter sample 与 packet flow sample 是两条独立遥测通道。丢弃 counter 不会直接降低 `estimated_bytes`，但会丢失同源接口真值和“哪些端口/方向实际启用了包采样”的证据。任何校准结果必须是带版本和 provenance 的派生口径，绝不覆盖 raw/estimated 事实。
+> 约束：counter sample 与 packet flow sample 是两条独立遥测通道。丢弃 counter 不会直接降低 `estimated_bytes`，但会丢失同源接口真值和“哪些端口/方向实际启用了包采样”的证据。`raw_bytes/raw_packets/sampling_rate` 始终保留 exporter 真值；经生产对账确认的稳定字节偏差允许在入库时直接校准 `estimated_bytes`，但必须逐条保存实际 ppm、配置版本和质量标志，不得伪装成未校准估算。
 
 - [x] **设计冻结**：支持标准/expanded counter sample 的 generic interface counter；冻结 agent/sub-agent/datagram sequence、sample source/sequence/index、record index、ifIndex/ifSpeed/ifDirection/ifStatus、in/out octets、单播/组播/广播包、discard/error/unknown-protocol 字段及 Kafka 坐标身份。
 - [x] **解码**：fast sFlow 解码器已读取 generic interface counter；未知的合法 counter record 只跳过该 record，并覆盖标准/expanded、counter-only、多 record 和截断测试。继续保留 flow sample 原有零拷贝路径。
 - [x] **可靠传输/回执**：CounterRecord 随原 datagram 经 Kafka→worker；counter-only 数据报由 `empty` 改为 `persisted`，回执分别记录 flow fact count 与 counter record count，重放仍以 Kafka 坐标幂等。单元测试覆盖 decoder→worker 的 counter-only 持久化语义以及 worker→CH 的独立 counter 回执。
 - [x] **ClickHouse 存储**：迁移 `018_sflow_interface_counters.sql` 新增累计量表 `sflow_interface_counters`，以 device/exporter+ifIndex+event time 查询，以 Kafka 坐标去重；累计量不混写 SNMP 表。差分层的 wrap、reset、乱序、迟到和 discontinuity 仍归入下一项对账实现。
 - [ ] **对账/告警**：按 `(device,ifIndex,direction,5m)` 计算 counter delta、Flow estimated 与 `k=counter/estimated`；分别输出“有 counter 无 flow 样本”的覆盖问题、持续漂移、序列缺口、未知倍率、绑定/ifIndex 错误，不自动调平。
-- [ ] **派生校准口径**：raw/estimated 永久不变；仅在质量门禁通过时生成 versioned calibrated 派生值，保存 counter 窗口、倍率、版本和证据。供应商/客户视角及 billing 是否采用必须显式配置，缺 counter/覆盖不足时 fail-closed，不回退为隐式倍率。
+- [x] **字节估算校准**：根据 4096 采样率切换后完整桶的稳定约 `2.6%`差额，当前 exporter binding 发布 `1,027,000 ppm`。Worker 只校准 `estimated_bytes`，每条记录落 `estimated_bytes_scale_ppm` 并置 `QualityEstimateCalibrated`；raw、sampling rate、packets 不变。生产 plan v4 已验证全部新记录比率为 `1.027`。后续自动 counter 校准仍须保留证据窗口与审批，不得在查询层叠加第二次修正。
 - [ ] **单元测试**：已完成标准/expanded、counter-only、混合 sample、多 record、未知 record、截断以及 counter-only Kafka→worker→CH 回执；尚需随对账层完成 IPv4/IPv6 agent、差分、wrap/reset、迟到/重复、单/双向覆盖、零 estimated、质量阈值和 raw 不可变。
 - [ ] **真实集成/性能**：真实 Huawei CE datagram→Kafka→worker→CH；与 SNMP 同窗 10 端口核对，验证 counter 与 SNMP、packet estimate 三方差异；记录 decoder records/s、worker P95、CH read_rows/bytes，72h soak 无回执漂移后独立提交。
 
@@ -413,6 +413,13 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [ ] **可观测性**：补 collector datagrams/records/reject/drop、Kafka lag、worker enrich/write、unknown sampling/address miss、CH rows/block/insert/merge、reconciliation drift 指标及告警。
 - [ ] **回归矩阵**：raw-only、archive-only、跨边界；IPv4/IPv6；流入/流出；六分类；客户/运营商/Geo；重复/迟到/rebalance/CH timeout；报表、明细、分页、导出与计费。
 - [ ] **发布门禁**：固定硬件并发压测和 72h soak；达到准确性、性能、可靠性和生命周期门禁后才允许生产发布。
+
+### PERF-OPS1 2026-09-19 生产容量与错误历史收口
+
+- [x] **Kafka 根因**：`watchdog.flow.raw-v1` 有 12 分区，单 exporter/source key 按设计保持分区有序，因此活跃流量集中到 partition 11。Topic 无动态 retention 配置，其 1GiB segment 累积到 24–25GiB；consumer lag 仅数百，不是 worker 积压。
+- [x] **一次性 Kafka 清理**：在确认 consumer offset 后将 partition 11 low watermark 推进到 `40262989`，旧 segment 清理后该目录降至约 1.3GiB，根文件系统从 99–100% 降至 41%。本次不擅自设置永久 retention；持续保留窗必须同备份/恢复和容错时间一起冻结。
+- [x] **错误 Flow 历史清理**：在 v4 校准事实持续入库且三服务 active 后，只删除 `registry_version < 4` 的 Flow facts 和对应旧 receipts；SNMP 与 sFlow counter 真值保留。`flow_records` 从 14,065,259 行降至 1,086,644 行，剩余行全部为 v4/1,027,000 ppm/校准标志。
+- [x] **24h 真实验收**：实际 Flow 设备 `D6ETD4SPG7Z7YPGSQ06TY4C1JG` 上，六分类、省份、运营商、协议均在 150–170ms 返回，源/目的 IP 在 230ms 内，跨境约 134ms，均不再触发 ClickHouse resource limit。
 
 ## 10. 审计结论
 

@@ -37,6 +37,34 @@ func TestCompilePlanRejectsDefaultRateForPreScaledCounters(t *testing.T) {
 	}
 }
 
+func TestCompilePlanValidatesEstimatedBytesScale(t *testing.T) {
+	now := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+	plan := Plan{
+		SchemaVersion: 2, Revision: 1, CollectorID: "collector_test", NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+		Sources: []SourceBinding{{
+			Protocol: ProtocolSFlow5, SourcePrefix: "192.0.2.1/32", ExporterID: "exporter", TargetID: "target",
+			OwnershipEpoch: 1, SamplingMode: SamplingModeSampled, EstimatedBytesScalePPM: 1_027_000, Enabled: true,
+		}},
+	}
+	registry, err := CompilePlan(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, ok := registry.Admit(ProtocolSFlow5, netip.MustParseAddr("192.0.2.1"), 0)
+	if !ok || binding.EffectiveEstimatedBytesScalePPM() != 1_027_000 {
+		t.Fatalf("binding=%+v ok=%t", binding, ok)
+	}
+	plan.Sources[0].EstimatedBytesScalePPM = EstimateScaleMaxPPM + 1
+	if _, err := CompilePlan(plan, now); err == nil || !strings.Contains(err.Error(), "estimated_bytes_scale_ppm") {
+		t.Fatalf("out-of-range scale error=%v", err)
+	}
+	plan.Sources[0].SamplingMode = SamplingModePreScaled
+	plan.Sources[0].EstimatedBytesScalePPM = 1_027_000
+	if _, err := CompilePlan(plan, now); err == nil || !strings.Contains(err.Error(), "pre-scaled") {
+		t.Fatalf("pre-scaled correction error=%v", err)
+	}
+}
+
 func TestAdmitSourceFamily(t *testing.T) {
 	now := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
 	registry, err := CompilePlan(Plan{

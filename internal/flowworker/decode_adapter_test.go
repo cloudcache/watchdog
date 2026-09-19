@@ -201,6 +201,48 @@ func TestDecodeAdapterRetainsOverflowAndUnavailableSelectorAsQuality(t *testing.
 	})
 }
 
+func TestDecodeAdapterAppliesAuditableEstimatedBytesScale(t *testing.T) {
+	receivedAt := time.Date(2026, 9, 19, 5, 0, 0, 0, time.UTC)
+	decoded := decodedFixture(receivedAt)
+	decoded.Records[0].SamplingRate = 4096
+	binding := bindingFixture()
+	binding.EstimatedBytesScalePPM = 1_027_000
+	adapter := DecodeAdapter{ResolveBinding: func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {
+		return binding, nil
+	}}
+	batch, err := adapter.Map(&kgo.Record{Topic: "raw", Partition: 11, Offset: 40262989}, decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := batch.Records[0]
+	if record.EstimatedBytes != 420_659 || record.EstimatedPackets != 8_192 || record.EstimatedBytesScalePPM != 1_027_000 || record.QualityFlags&QualityEstimateCalibrated == 0 {
+		t.Fatalf("calibrated estimate is not auditable: %+v", record)
+	}
+	if err := validateRecord(batch, record, EnrichmentLimits{MaxFutureSkew: time.Minute}); err != nil {
+		t.Fatalf("calibrated record failed validation: %v", err)
+	}
+}
+
+func TestDecodeAdapterRejectsEstimatedBytesScaleOverflow(t *testing.T) {
+	decoded := decodedFixture(time.Date(2026, 9, 19, 5, 0, 0, 0, time.UTC))
+	decoded.Records[0].Bytes = math.MaxUint64
+	decoded.Records[0].Packets = 1
+	decoded.Records[0].SamplingRate = 1
+	binding := bindingFixture()
+	binding.EstimatedBytesScalePPM = 2_000_000
+	adapter := DecodeAdapter{ResolveBinding: func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {
+		return binding, nil
+	}}
+	batch, err := adapter.Map(&kgo.Record{Topic: "raw", Partition: 11, Offset: 40262990}, decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := batch.Records[0]
+	if record.EstimatedValid || record.QualityFlags&QualityCounterOverflow == 0 || record.EstimatedBytesScalePPM != 2_000_000 {
+		t.Fatalf("calibration overflow was not explicit: %+v", record)
+	}
+}
+
 func TestDecodeAdapterRejectsUnboundAndInvalidRecords(t *testing.T) {
 	decoded := decodedFixture(time.Now().UTC())
 	adapter := DecodeAdapter{ResolveBinding: func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {

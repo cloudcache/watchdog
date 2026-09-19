@@ -28,7 +28,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"010_flow_aggregate_reorder.sql", "011_flow_storage_v2.sql", "012_snmp_telemetry.sql",
 		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql", "015_flow_raw_delete_quarantine.sql",
 		"016_flow_historical_reclassification.sql", "017_flow_reclassification_counter_totals.sql",
-		"018_sflow_interface_counters.sql",
+		"018_sflow_interface_counters.sql", "019_flow_estimated_bytes_scale.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
@@ -76,6 +76,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"flow_quarantined_datagrams", "late_quarantined", "raw_payload String CODEC(ZSTD(3))",
 		"flow_reclassified_records", "flow_reclassification_generations", "reclassification_generation", "raw_bytes Decimal(39, 0)",
 		"sflow_interface_counters", "counter_record_count UInt64", "if_in_octets UInt64", "if_out_octets UInt64",
+		"estimated_bytes_scale_ppm UInt32 DEFAULT 1000000",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

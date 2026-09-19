@@ -308,7 +308,7 @@ func writeProductionBootstrap(t testing.TB) productionBootstrap {
 		},
 	}
 	classification := flowdimension.ClassificationBundle{
-		SchemaVersion: flowdimension.ClassificationSchemaVersion, Version: 1,
+		SchemaVersion: flowdimension.LegacyClassificationSchemaVersion, Version: 1,
 		EffectiveFrom: effectiveFrom, DimensionSnapshotID: dimension.SnapshotID,
 		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	}

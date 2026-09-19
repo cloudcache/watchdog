@@ -87,7 +87,8 @@ func TestCompileJointUsesLargerReadBudgetOnlyWithIdentityScope(t *testing.T) {
 	if setting(unscoped.Query, "max_rows_to_read") != "50000000" || setting(unscoped.Query, "max_bytes_to_read") != "4294967296" {
 		t.Fatalf("unscoped budgets rows=%q bytes=%q", setting(unscoped.Query, "max_rows_to_read"), setting(unscoped.Query, "max_bytes_to_read"))
 	}
-	if setting(scoped.Query, "max_rows_to_read") != "200000000" || setting(scoped.Query, "max_bytes_to_read") != "8589934592" {
+	if setting(scoped.Query, "max_rows_to_read") != "250000000" || setting(scoped.Query, "max_bytes_to_read") != "17179869184" ||
+		setting(scoped.Query, "max_execution_time") != "30" {
 		t.Fatalf("scoped budgets rows=%q bytes=%q", setting(scoped.Query, "max_rows_to_read"), setting(scoped.Query, "max_bytes_to_read"))
 	}
 }

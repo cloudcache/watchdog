@@ -186,6 +186,58 @@ func TestOverseasRunnerReturnsExecutorFailureWithoutPartialResult(t *testing.T) 
 	}
 }
 
+func TestApplyOverseasGeoTopNPreservesTotalsAndBuildsOther(t *testing.T) {
+	bucket := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	point := func(direction OverseasDirection, geo string, value float64, received, unknown, quality uint64) OverseasPoint {
+		return OverseasPoint{
+			Bucket: bucket, Kind: OverseasRowGeo, GeoScope: OverseasScopeOverseas,
+			Direction: direction, IPFamily: OverseasIPFamilyAll, GeoValue: geo,
+			DimensionSnapshotID: "snapshot-a", GeoVersion: "geo-a", ClassificationVersion: 1,
+			Value: value, ReceivedRecords: received, UnknownSamplingRecords: unknown,
+			QualityRecords: quality, GeneratedAt: bucket.Add(time.Minute),
+		}
+	}
+	input := []OverseasPoint{
+		point(OverseasDirectionIn, "US", 60, 6, 1, 1), point(OverseasDirectionOut, "US", 40, 4, 0, 1), point(OverseasDirectionCombined, "US", 100, 10, 1, 2),
+		point(OverseasDirectionIn, "JP", 30, 3, 0, 0), point(OverseasDirectionOut, "JP", 30, 3, 0, 0), point(OverseasDirectionCombined, "JP", 60, 6, 0, 0),
+		point(OverseasDirectionIn, "SG", 25, 5, 1, 1), point(OverseasDirectionOut, "SG", 15, 3, 0, 0), point(OverseasDirectionCombined, "SG", 40, 8, 1, 1),
+		{Bucket: bucket, Kind: OverseasRowGeo, GeoScope: OverseasScopeUnknownGeo, Direction: OverseasDirectionCombined,
+			IPFamily: OverseasIPFamilyAll, GeoValue: "_unassigned", DimensionSnapshotID: "snapshot-a",
+			GeoVersion: "geo-a", ClassificationVersion: 1, Value: 5, ReceivedRecords: 1, GeneratedAt: bucket.Add(time.Minute)},
+	}
+
+	withOther := applyOverseasGeoTopN(input, 2, true)
+	if len(withOther) != 10 {
+		t.Fatalf("points=%d, want 10", len(withOther))
+	}
+	var otherCombined *OverseasPoint
+	for index := range withOther {
+		current := &withOther[index]
+		if current.Direction == OverseasDirectionCombined && current.Other {
+			otherCombined = current
+		}
+		if current.GeoValue == "SG" {
+			t.Fatalf("non-top series leaked into result: %+v", current)
+		}
+	}
+	if otherCombined == nil || otherCombined.GeoValue != "_other" || otherCombined.Value != 40 ||
+		otherCombined.ReceivedRecords != 8 || otherCombined.UnknownSamplingRecords != 1 || otherCombined.QualityRecords != 1 ||
+		!otherCombined.SamplingCompletenessKnown || otherCombined.SamplingCompleteness != 0.875 ||
+		!otherCombined.QualityRecordRatioKnown || otherCombined.QualityRecordRatio != 0.125 {
+		t.Fatalf("combined other=%+v", otherCombined)
+	}
+
+	withoutOther := applyOverseasGeoTopN(input, 2, false)
+	if len(withoutOther) != 7 {
+		t.Fatalf("points without other=%d, want 7", len(withoutOther))
+	}
+	for _, current := range withoutOther {
+		if current.Other || current.GeoValue == "SG" || current.GeoValue == "_other" {
+			t.Fatalf("non-top series was not removed: %+v", current)
+		}
+	}
+}
+
 func TestOverseasRunnerRejectsMissingExecutorOrCompiledContract(t *testing.T) {
 	if _, err := NewOverseasRunner(nil); err == nil {
 		t.Fatal("nil executor was accepted")

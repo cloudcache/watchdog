@@ -403,7 +403,7 @@ func (c *reclassificationSourceColumns) batch(row int) (*flowworker.EnrichedBatc
 		ObservationIfIndex: c.u32["observation_if_index"].Row(row), ObservationDirection: uint32(c.u8["observation_direction"].Row(row)), InIf: c.u32["ingress_if_index"].Row(row), OutIf: c.u32["egress_if_index"].Row(row),
 		SourceIP: c.ips["src_ip"].Row(row).ToIP().AsSlice(), DestinationIP: c.ips["dst_ip"].Row(row).ToIP().AsSlice(), SourcePort: uint32(c.u16["src_port"].Row(row)), DestinationPort: uint32(c.u16["dst_port"].Row(row)),
 		IPProtocol: uint32(c.u8["ip_protocol"].Row(row)), TCPFlags: uint32(c.u8["tcp_flags"].Row(row)), SourceASN: c.u32["source_asn"].Row(row), DestinationASN: c.u32["destination_asn"].Row(row),
-		RawBytes: c.u64["raw_bytes"].Row(row), RawPackets: c.u64["raw_packets"].Row(row), SamplingMode: uint32(c.u8["sampling_mode"].Row(row)), SamplingRate: c.u64["sampling_rate"].Row(row), SamplingSource: uint32(c.u8["sampling_source"].Row(row)),
+		RawBytes: c.u64["raw_bytes"].Row(row), RawPackets: c.u64["raw_packets"].Row(row), SamplingMode: uint32(c.u8["sampling_mode"].Row(row)), SamplingRate: c.u64["sampling_rate"].Row(row), SamplingSource: uint32(c.u8["sampling_source"].Row(row)), EstimatedBytesScalePPM: c.u32["estimated_bytes_scale_ppm"].Row(row),
 		EstimatedValid: c.bools["estimated_valid"].Row(row), EstimatedBytes: c.u64["estimated_bytes"].Row(row), EstimatedPackets: c.u64["estimated_packets"].Row(row), FlowDurationMS: c.u64["flow_duration_ms"].Row(row), QualityFlags: c.u64["quality_flags"].Row(row),
 		SourceIDType: c.u32["source_id_type"].Row(row), SourceIDValue: c.u32["source_id_value"].Row(row), SampleSequence: c.u32["sample_sequence"].Row(row), SamplePool: c.u64["sample_pool"].Row(row), ExporterDrops: c.u64["exporter_drops"].Row(row), SampleIndex: c.u32["sample_index"].Row(row), QualityEpoch: c.u64["quality_epoch"].Row(row)}
 	batch := &flowworker.EnrichedBatch{SchemaVersion: flowworker.EnrichedBatchSchemaVersion, MessageDisposition: flowworker.MessageDispositionPersisted,
@@ -420,7 +420,7 @@ func (c *reclassificationSourceColumns) cursor(row int) ReclassificationCursor {
 
 var reclassStringColumns = []string{"source_stream_id", "kafka_topic", "collector_id", "exporter_id", "target_id", "device_id"}
 var reclassUInt64Columns = []string{"kafka_offset", "registry_version", "exporter_epoch", "observation_domain_id", "raw_bytes", "raw_packets", "sampling_rate", "estimated_bytes", "estimated_packets", "flow_duration_ms", "quality_flags", "sample_pool", "exporter_drops", "quality_epoch"}
-var reclassUInt32Columns = []string{"kafka_partition", "record_index", "sub_agent_id", "datagram_sequence", "observation_if_index", "ingress_if_index", "egress_if_index", "source_asn", "destination_asn", "source_id_type", "source_id_value", "sample_sequence", "sample_index"}
+var reclassUInt32Columns = []string{"kafka_partition", "record_index", "sub_agent_id", "datagram_sequence", "observation_if_index", "ingress_if_index", "egress_if_index", "source_asn", "destination_asn", "estimated_bytes_scale_ppm", "source_id_type", "source_id_value", "sample_sequence", "sample_index"}
 var reclassUInt16Columns = []string{"src_port", "dst_port"}
 var reclassUInt8Columns = []string{"flow_protocol", "observation_direction", "ip_protocol", "tcp_flags", "sampling_mode", "sampling_source"}
 var reclassBoolColumns = []string{"agent_ip_valid", "estimated_valid"}
@@ -430,7 +430,7 @@ const reclassificationSourcePageSQL = `SELECT
 event_time,received_time,
 CAST(source_stream_id AS String) source_stream_id,CAST(kafka_topic AS String) kafka_topic,CAST(collector_id AS String) collector_id,CAST(exporter_id AS String) exporter_id,CAST(target_id AS String) target_id,CAST(device_id AS String) device_id,
 kafka_offset,registry_version,exporter_epoch,observation_domain_id,raw_bytes,raw_packets,sampling_rate,estimated_bytes,estimated_packets,flow_duration_ms,quality_flags,sample_pool,exporter_drops,quality_epoch,
-kafka_partition,record_index,sub_agent_id,datagram_sequence,observation_if_index,ingress_if_index,egress_if_index,source_asn,destination_asn,source_id_type,source_id_value,sample_sequence,sample_index,
+kafka_partition,record_index,sub_agent_id,datagram_sequence,observation_if_index,ingress_if_index,egress_if_index,source_asn,destination_asn,estimated_bytes_scale_ppm,source_id_type,source_id_value,sample_sequence,sample_index,
 src_port,dst_port,
 flow_protocol,toUInt8(observation_direction) observation_direction,ip_protocol,tcp_flags,toUInt8(sampling_mode) sampling_mode,toUInt8(sampling_source) sampling_source,
 agent_ip_valid,estimated_valid,

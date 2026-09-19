@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/ClickHouse/ch-go/proto"
@@ -127,6 +128,9 @@ func (r *OverseasRunner) Run(ctx context.Context, compiled CompiledOverseas) (Ov
 	if state.metadataRows != 1 {
 		return OverseasResult{}, fmt.Errorf("invalid ClickHouse Flow overseas result: metadata rows=%d, want 1", state.metadataRows)
 	}
+	if compiled.PostProcessGeoTopN {
+		state.points = applyOverseasGeoTopN(state.points, compiled.TopN, compiled.IncludeOther)
+	}
 	expected := uint64(compiled.To.Sub(compiled.From) / compiled.BucketDuration)
 	if state.coveredBuckets > expected {
 		return OverseasResult{}, fmt.Errorf("invalid ClickHouse Flow overseas result: covered buckets=%d exceed expected=%d", state.coveredBuckets, expected)
@@ -141,6 +145,132 @@ func (r *OverseasRunner) Run(ctx context.Context, compiled CompiledOverseas) (Ov
 		TopN: compiled.TopN, IncludeOther: compiled.IncludeOther, RollupCompleteness: completeness,
 		MixedVersions: len(state.versions) > 1, VersionCount: uint64(len(state.versions)),
 	}, nil
+}
+
+type overseasGeoSeriesKey struct {
+	value                 string
+	dimensionSnapshotID   string
+	geoVersion            string
+	classificationVersion uint32
+}
+
+// applyOverseasGeoTopN finishes the single-scan all-raw plan. Ranking uses the
+// combined-direction point once per bucket, which is equivalent to ranking the
+// old in+out source rows and avoids double-counting the directional copies.
+func applyOverseasGeoTopN(points []OverseasPoint, topN uint16, includeOther bool) []OverseasPoint {
+	rankValues := make(map[overseasGeoSeriesKey]float64)
+	for _, point := range points {
+		if point.Kind != OverseasRowGeo || point.GeoScope != OverseasScopeOverseas || point.Direction != OverseasDirectionCombined {
+			continue
+		}
+		key := overseasGeoSeriesKey{point.GeoValue, point.DimensionSnapshotID, point.GeoVersion, point.ClassificationVersion}
+		rankValues[key] += point.Value
+	}
+	ranked := make([]overseasGeoSeriesKey, 0, len(rankValues))
+	for key := range rankValues {
+		ranked = append(ranked, key)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		left, right := rankValues[ranked[i]], rankValues[ranked[j]]
+		if left != right {
+			return left > right
+		}
+		if ranked[i].value != ranked[j].value {
+			return ranked[i].value < ranked[j].value
+		}
+		if ranked[i].dimensionSnapshotID != ranked[j].dimensionSnapshotID {
+			return ranked[i].dimensionSnapshotID < ranked[j].dimensionSnapshotID
+		}
+		if ranked[i].geoVersion != ranked[j].geoVersion {
+			return ranked[i].geoVersion < ranked[j].geoVersion
+		}
+		return ranked[i].classificationVersion < ranked[j].classificationVersion
+	})
+	if len(ranked) > int(topN) {
+		ranked = ranked[:topN]
+	}
+	top := make(map[overseasGeoSeriesKey]struct{}, len(ranked))
+	for _, key := range ranked {
+		top[key] = struct{}{}
+	}
+
+	result := make([]OverseasPoint, 0, len(points))
+	otherIndex := make(map[overseasPointKey]int)
+	for _, point := range points {
+		if point.Kind != OverseasRowGeo || point.GeoScope != OverseasScopeOverseas {
+			result = append(result, point)
+			continue
+		}
+		series := overseasGeoSeriesKey{point.GeoValue, point.DimensionSnapshotID, point.GeoVersion, point.ClassificationVersion}
+		if _, exists := top[series]; exists {
+			result = append(result, point)
+			continue
+		}
+		if !includeOther {
+			continue
+		}
+		point.GeoValue = "_other"
+		point.Other = true
+		key := overseasPointKey{
+			bucket: point.Bucket.Unix(), kind: point.Kind, scope: point.GeoScope,
+			direction: point.Direction, family: point.IPFamily, geoValue: point.GeoValue, other: true,
+			dimensionSnapshotID: point.DimensionSnapshotID, geoVersion: point.GeoVersion,
+			classificationVersion: point.ClassificationVersion,
+		}
+		if index, exists := otherIndex[key]; exists {
+			current := &result[index]
+			current.Value += point.Value
+			current.ReceivedRecords += point.ReceivedRecords
+			current.UnknownSamplingRecords += point.UnknownSamplingRecords
+			current.QualityRecords += point.QualityRecords
+			if point.GeneratedAt.After(current.GeneratedAt) {
+				current.GeneratedAt = point.GeneratedAt
+			}
+			setOverseasPointRatios(current)
+			continue
+		}
+		setOverseasPointRatios(&point)
+		otherIndex[key] = len(result)
+		result = append(result, point)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if !left.Bucket.Equal(right.Bucket) {
+			return left.Bucket.Before(right.Bucket)
+		}
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.GeoScope != right.GeoScope {
+			return left.GeoScope < right.GeoScope
+		}
+		if left.Direction != right.Direction {
+			return left.Direction < right.Direction
+		}
+		if left.IPFamily != right.IPFamily {
+			return left.IPFamily < right.IPFamily
+		}
+		if left.Other != right.Other {
+			return !left.Other
+		}
+		if left.Value != right.Value {
+			return left.Value > right.Value
+		}
+		return left.GeoValue < right.GeoValue
+	})
+	return result
+}
+
+func setOverseasPointRatios(point *OverseasPoint) {
+	point.SamplingCompletenessKnown = point.ReceivedRecords > 0
+	point.QualityRecordRatioKnown = point.ReceivedRecords > 0
+	if point.ReceivedRecords == 0 {
+		point.SamplingCompleteness = 0
+		point.QualityRecordRatio = 0
+		return
+	}
+	point.SamplingCompleteness = float64(point.ReceivedRecords-point.UnknownSamplingRecords) / float64(point.ReceivedRecords)
+	point.QualityRecordRatio = float64(point.QualityRecords) / float64(point.ReceivedRecords)
 }
 
 type overseasResultColumns struct {

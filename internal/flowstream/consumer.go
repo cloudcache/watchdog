@@ -23,19 +23,19 @@ type partitionHandler func(context.Context, []*kgo.Record) (int, error)
 
 type consumerClient interface {
 	PollFetches(context.Context) kgo.Fetches
-	MarkCommitRecords(...*kgo.Record)
-	CommitMarkedOffsets(context.Context) error
+	CommitRecords(context.Context, ...*kgo.Record) error
 	AllowRebalance()
 	CloseAllowingRebalance()
 	Ping(context.Context) error
 }
 
 type Consumer struct {
-	client           consumerClient
-	replayWatermarks *replayWatermarks
-	stats            *consumerStats
-	onError          func(error)
-	once             sync.Once
+	client                consumerClient
+	replayWatermarks      *replayWatermarks
+	partitionBatchRecords int
+	stats                 *consumerStats
+	onError               func(error)
+	once                  sync.Once
 }
 
 type replayPartition struct {
@@ -97,30 +97,30 @@ func NewConsumer(config ConsumerConfig, onError func(error)) (*Consumer, error) 
 	stats := newConsumerStats()
 	opts = append(opts,
 		kgo.FetchMinBytes(config.FetchMinBytes),
+		kgo.FetchMaxBytes(config.FetchMaxBytes),
+		kgo.FetchMaxPartitionBytes(config.FetchMaxPartitionBytes),
 		kgo.FetchMaxWait(config.FetchMaxWait),
 		kgo.ConsumerGroup(config.ConsumerGroup),
 		kgo.ConsumeTopics(topicForVersion(config.Kafka.Topic)),
 		kgo.ConsumeStartOffset(startOffset),
 		kgo.ConsumeResetOffset(startOffset),
-		kgo.AutoCommitMarks(),
-		kgo.AutoCommitInterval(time.Second),
+		kgo.DisableAutoCommit(),
 		kgo.BlockRebalanceOnPoll(),
-		kgo.AdjustFetchOffsetsFn(func(_ context.Context, offsets map[string]map[int32]kgo.Offset) (map[string]map[int32]kgo.Offset, error) {
-			return watermarks.rewind(offsets, config.TemplateReplayRecords), nil
-		}),
 		kgo.OnPartitionsAssigned(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
 			stats.assign(partitions)
 		}),
-		kgo.OnPartitionsRevoked(func(ctx context.Context, client *kgo.Client, partitions map[string][]int32) {
-			if err := client.CommitMarkedOffsets(ctx); err != nil && onError != nil {
-				onError(fmt.Errorf("commit revoked Kafka partitions: %w", err))
-			}
+		kgo.OnPartitionsRevoked(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
 			stats.revoke(partitions, false)
 		}),
 		kgo.OnPartitionsLost(func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
 			stats.revoke(partitions, true)
 		}),
 	)
+	if config.TemplateReplayRecords > 0 {
+		opts = append(opts, kgo.AdjustFetchOffsetsFn(func(_ context.Context, offsets map[string]map[int32]kgo.Offset) (map[string]map[int32]kgo.Offset, error) {
+			return watermarks.rewind(offsets, config.TemplateReplayRecords), nil
+		}))
+	}
 	if err := kgo.ValidateOpts(opts...); err != nil {
 		return nil, err
 	}
@@ -128,7 +128,9 @@ func NewConsumer(config ConsumerConfig, onError func(error)) (*Consumer, error) 
 	if err != nil {
 		return nil, err
 	}
-	return newConsumerWithClientWatermarksAndStats(client, watermarks, stats, onError), nil
+	consumer := newConsumerWithClientWatermarksAndStats(client, watermarks, stats, onError)
+	consumer.partitionBatchRecords = config.PartitionBatchRecords
+	return consumer, nil
 }
 
 func rewindAssignedOffsets(offsets map[string]map[int32]kgo.Offset, records int64) map[string]map[int32]kgo.Offset {
@@ -265,16 +267,30 @@ func (c *Consumer) run(ctx context.Context, handler partitionHandler) error {
 			c.client.AllowRebalance()
 			return errors.Join(errorsFound...)
 		}
-		if err := c.processFetches(ctx, fetches, handler); err != nil {
+		durableRecords, processErr := c.processFetches(ctx, fetches, handler)
+		if len(durableRecords) > 0 {
+			commitCtx := ctx
+			var cancel context.CancelFunc
+			if ctx.Err() != nil {
+				commitCtx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+			}
+			if err := c.client.CommitRecords(commitCtx, durableRecords...); err != nil {
+				c.stats.errors.Add(1)
+				c.client.AllowRebalance()
+				return fmt.Errorf("commit durable Kafka offsets: %w", err)
+			}
+		}
+		if processErr != nil {
 			c.stats.errors.Add(1)
 			c.client.AllowRebalance()
-			return err
+			return processErr
 		}
 		c.client.AllowRebalance()
 	}
 }
 
-func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, handler partitionHandler) error {
+func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, handler partitionHandler) ([]*kgo.Record, error) {
 	type partitionKey struct {
 		topic     string
 		partition int32
@@ -306,6 +322,7 @@ func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, hand
 	workCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errorsByPartition := make([]error, len(work))
+	durableByPartition := make([]*kgo.Record, len(work))
 	var wait sync.WaitGroup
 	for index := range work {
 		index := index
@@ -316,7 +333,7 @@ func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, hand
 			if len(records) == 0 || workCtx.Err() != nil {
 				return
 			}
-			processed, err := handler(workCtx, records)
+			processed, err := processPartitionChunks(workCtx, records, c.partitionBatchRecords, handler)
 			if processed < 0 || processed > len(records) {
 				err = errors.Join(err, fmt.Errorf("handler returned invalid processed count %d for %d records", processed, len(records)))
 				processed = 0
@@ -327,11 +344,11 @@ func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, hand
 					continue
 				}
 				lastCommittable = record
-				c.client.MarkCommitRecords(record)
 				c.stats.records.Add(1)
 				c.stats.bytes.Add(uint64(len(record.Value)))
 			}
 			if lastCommittable != nil {
+				durableByPartition[index] = lastCommittable
 				c.stats.observeLag(replayPartition{topic: lastCommittable.Topic, partition: lastCommittable.Partition}, work[index].highWatermark, lastCommittable.Offset+1)
 			}
 			if err != nil {
@@ -351,7 +368,40 @@ func (c *Consumer) processFetches(ctx context.Context, fetches kgo.Fetches, hand
 		}()
 	}
 	wait.Wait()
-	return errors.Join(errorsByPartition...)
+	durableRecords := make([]*kgo.Record, 0, len(durableByPartition))
+	for _, record := range durableByPartition {
+		if record != nil {
+			durableRecords = append(durableRecords, record)
+		}
+	}
+	return durableRecords, errors.Join(errorsByPartition...)
+}
+
+func processPartitionChunks(ctx context.Context, records []*kgo.Record, maxRecords int, handler partitionHandler) (int, error) {
+	if maxRecords <= 0 || maxRecords >= len(records) {
+		return handler(ctx, records)
+	}
+	processed := 0
+	for processed < len(records) {
+		start := processed
+		end := start + maxRecords
+		if end > len(records) {
+			end = len(records)
+		}
+		chunkSize := end - start
+		chunkProcessed, err := handler(ctx, records[start:end])
+		if chunkProcessed < 0 || chunkProcessed > chunkSize {
+			return processed, errors.Join(err, fmt.Errorf("handler returned invalid processed count %d for %d records", chunkProcessed, chunkSize))
+		}
+		processed += chunkProcessed
+		if err != nil {
+			return processed, err
+		}
+		if chunkProcessed != chunkSize {
+			return processed, fmt.Errorf("handler processed %d of %d records without an error", chunkProcessed, chunkSize)
+		}
+	}
+	return processed, nil
 }
 
 func (c *Consumer) Stats() ConsumerStats {
@@ -433,13 +483,8 @@ func (c *Consumer) Close(ctx context.Context) error {
 	if c == nil || c.client == nil {
 		return nil
 	}
-	var commitErr error
 	c.once.Do(func() {
-		commitErr = c.client.CommitMarkedOffsets(ctx)
 		c.client.CloseAllowingRebalance()
 	})
-	if commitErr != nil {
-		return fmt.Errorf("commit Kafka offsets during shutdown: %w", commitErr)
-	}
 	return nil
 }

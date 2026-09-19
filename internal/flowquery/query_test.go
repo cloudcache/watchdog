@@ -269,7 +269,8 @@ func TestCompileStorageV2ScopedRawQueryProjectsMetricAndUsesScopedBudget(t *test
 			t.Fatalf("scoped raw query reads an unrequested metric via %q:\n%s", forbidden, compiled.Query.Body)
 		}
 	}
-	if setting(compiled.Query, "max_rows_to_read") != "200000000" || setting(compiled.Query, "max_bytes_to_read") != "8589934592" {
+	if setting(compiled.Query, "max_rows_to_read") != "250000000" || setting(compiled.Query, "max_bytes_to_read") != "17179869184" ||
+		setting(compiled.Query, "max_execution_time") != "30" {
 		t.Fatalf("scoped raw guards rows=%q bytes=%q", setting(compiled.Query, "max_rows_to_read"), setting(compiled.Query, "max_bytes_to_read"))
 	}
 }
@@ -397,10 +398,10 @@ func TestCompileStorageV2RawEndpointUsesBoundedCandidateThenExactBuckets(t *test
 	if queryParameter(compiled.Query, "candidate_n") != "'24'" {
 		t.Fatalf("candidate_n=%q", queryParameter(compiled.Query, "candidate_n"))
 	}
-	if setting(compiled.Query, "max_rows_to_read") != "400000000" {
+	if setting(compiled.Query, "max_rows_to_read") != "500000000" {
 		t.Fatalf("endpoint scan budget=%q", setting(compiled.Query, "max_rows_to_read"))
 	}
-	if setting(compiled.Query, "max_bytes_to_read") != "17179869184" {
+	if setting(compiled.Query, "max_bytes_to_read") != "34359738368" {
 		t.Fatalf("endpoint byte budget=%q", setting(compiled.Query, "max_bytes_to_read"))
 	}
 }

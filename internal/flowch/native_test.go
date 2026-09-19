@@ -39,7 +39,13 @@ type readinessExecutor struct {
 
 func (e readinessExecutor) Do(ctx context.Context, query ch.Query) error {
 	results := query.Result.(proto.Results)
-	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.requiredQuarantine, e.requiredCounters, e.forbiddenRecords, e.forbiddenReceipts} {
+	wantNames := []string{"required_records", "required_receipts", "required_counters", "required_quarantine", "forbidden_records", "forbidden_receipts"}
+	for index, want := range wantNames {
+		if results[index].Name != want {
+			return errors.New("readiness result columns do not match SELECT order")
+		}
+	}
+	for index, value := range []uint64{e.requiredRecords, e.requiredReceipts, e.requiredCounters, e.requiredQuarantine, e.forbiddenRecords, e.forbiddenReceipts} {
 		results[index].Data.(*proto.ColUInt64).Append(value)
 	}
 	return query.OnResult(ctx, proto.Block{Columns: 6, Rows: 1})
@@ -424,6 +430,14 @@ func assertColumnsMatchDDL(t *testing.T, schema, table string, input proto.Input
 		for index, name := range want {
 			if name == "record_count" {
 				want = append(want[:index+1], append([]string{"counter_record_count"}, want[index+1:]...)...)
+				break
+			}
+		}
+	}
+	if table == "flow_records" {
+		for index, name := range want {
+			if name == "sampling_source" {
+				want = append(want[:index+1], append([]string{"estimated_bytes_scale_ppm"}, want[index+1:]...)...)
 				break
 			}
 		}

@@ -21,6 +21,7 @@ type flowExporterRecord struct {
 	CollectorAgentID, CollectorName, ObservationDomain    sql.NullString
 	SourcePrefix, Protocol, SamplingMode                  string
 	DefaultSamplingRate, OwnershipEpoch                   uint64
+	EstimatedBytesScalePPM                                uint32
 	PublishedRowVersion, PublishedPlanVersion, RowVersion uint64
 	SamplingRules, Observations                           json.RawMessage
 	Enabled                                               bool
@@ -28,27 +29,28 @@ type flowExporterRecord struct {
 }
 
 type flowExporterDTO struct {
-	ID                   string                          `json:"id"`
-	DeviceID             string                          `json:"device_id"`
-	DeviceHost           string                          `json:"device_host"`
-	DeviceName           string                          `json:"device_name"`
-	CollectorAgentID     string                          `json:"collector_agent_id,omitempty"`
-	CollectorName        string                          `json:"collector_name,omitempty"`
-	SourcePrefix         string                          `json:"source_prefix"`
-	Protocol             string                          `json:"protocol"`
-	ObservationDomainID  *uint64                         `json:"observation_domain_id"`
-	SamplingMode         string                          `json:"sampling_mode"`
-	DefaultSamplingRate  uint64                          `json:"default_sampling_rate"`
-	SamplingRules        []flowplan.SamplingRule         `json:"sampling_rules"`
-	Observations         map[uint32]flowplan.Observation `json:"observations"`
-	Enabled              bool                            `json:"enabled"`
-	OwnershipEpoch       uint64                          `json:"ownership_epoch"`
-	PublishedRowVersion  uint64                          `json:"published_row_version"`
-	PublishedPlanVersion uint64                          `json:"published_plan_version"`
-	DeploymentState      string                          `json:"deployment_state"`
-	RowVersion           uint64                          `json:"row_version"`
-	CreatedAt            string                          `json:"created_at"`
-	UpdatedAt            string                          `json:"updated_at"`
+	ID                     string                          `json:"id"`
+	DeviceID               string                          `json:"device_id"`
+	DeviceHost             string                          `json:"device_host"`
+	DeviceName             string                          `json:"device_name"`
+	CollectorAgentID       string                          `json:"collector_agent_id,omitempty"`
+	CollectorName          string                          `json:"collector_name,omitempty"`
+	SourcePrefix           string                          `json:"source_prefix"`
+	Protocol               string                          `json:"protocol"`
+	ObservationDomainID    *uint64                         `json:"observation_domain_id"`
+	SamplingMode           string                          `json:"sampling_mode"`
+	DefaultSamplingRate    uint64                          `json:"default_sampling_rate"`
+	EstimatedBytesScalePPM uint32                          `json:"estimated_bytes_scale_ppm"`
+	SamplingRules          []flowplan.SamplingRule         `json:"sampling_rules"`
+	Observations           map[uint32]flowplan.Observation `json:"observations"`
+	Enabled                bool                            `json:"enabled"`
+	OwnershipEpoch         uint64                          `json:"ownership_epoch"`
+	PublishedRowVersion    uint64                          `json:"published_row_version"`
+	PublishedPlanVersion   uint64                          `json:"published_plan_version"`
+	DeploymentState        string                          `json:"deployment_state"`
+	RowVersion             uint64                          `json:"row_version"`
+	CreatedAt              string                          `json:"created_at"`
+	UpdatedAt              string                          `json:"updated_at"`
 }
 
 func (r flowExporterRecord) dto() flowExporterDTO {
@@ -66,7 +68,7 @@ func (r flowExporterRecord) dto() flowExporterDTO {
 		ID: r.ID, DeviceID: r.DeviceID, DeviceHost: r.DeviceHost, DeviceName: r.DeviceName,
 		CollectorAgentID: r.CollectorAgentID.String, CollectorName: r.CollectorName.String,
 		SourcePrefix: r.SourcePrefix, Protocol: r.Protocol, ObservationDomainID: domain,
-		SamplingMode: r.SamplingMode, DefaultSamplingRate: r.DefaultSamplingRate,
+		SamplingMode: r.SamplingMode, DefaultSamplingRate: r.DefaultSamplingRate, EstimatedBytesScalePPM: r.EstimatedBytesScalePPM,
 		SamplingRules: rules, Observations: observations, Enabled: r.Enabled,
 		OwnershipEpoch: r.OwnershipEpoch, PublishedRowVersion: r.PublishedRowVersion,
 		PublishedPlanVersion: r.PublishedPlanVersion, DeploymentState: r.deploymentState(),
@@ -127,24 +129,26 @@ func (v *optionalString) UnmarshalJSON(data []byte) error {
 }
 
 type flowExporterMutation struct {
-	ID                  string          `json:"id"`
-	DeviceID            *string         `json:"device_id"`
-	CollectorAgentID    optionalString  `json:"collector_agent_id"`
-	SourcePrefix        *string         `json:"source_prefix"`
-	Protocol            *string         `json:"protocol"`
-	ObservationDomainID optionalUint64  `json:"observation_domain_id"`
-	SamplingMode        *string         `json:"sampling_mode"`
-	DefaultSamplingRate *uint64         `json:"default_sampling_rate"`
-	SamplingRules       json.RawMessage `json:"sampling_rules"`
-	Observations        json.RawMessage `json:"observations"`
-	Enabled             *bool           `json:"enabled"`
-	OwnershipEpoch      *uint64         `json:"ownership_epoch"`
+	ID                     string          `json:"id"`
+	DeviceID               *string         `json:"device_id"`
+	CollectorAgentID       optionalString  `json:"collector_agent_id"`
+	SourcePrefix           *string         `json:"source_prefix"`
+	Protocol               *string         `json:"protocol"`
+	ObservationDomainID    optionalUint64  `json:"observation_domain_id"`
+	SamplingMode           *string         `json:"sampling_mode"`
+	DefaultSamplingRate    *uint64         `json:"default_sampling_rate"`
+	EstimatedBytesScalePPM *uint32         `json:"estimated_bytes_scale_ppm"`
+	SamplingRules          json.RawMessage `json:"sampling_rules"`
+	Observations           json.RawMessage `json:"observations"`
+	Enabled                *bool           `json:"enabled"`
+	OwnershipEpoch         *uint64         `json:"ownership_epoch"`
 }
 
 type flowExporterValues struct {
 	DeviceID, CollectorAgentID, SourcePrefix, Protocol, SamplingMode string
 	ObservationDomainID                                              *uint64
 	DefaultSamplingRate, OwnershipEpoch                              uint64
+	EstimatedBytesScalePPM                                           uint32
 	SamplingRules, Observations                                      string
 	Enabled                                                          bool
 }
@@ -261,7 +265,7 @@ func (s *Server) listFlowExporters(c *gin.Context) {
 
 const flowExporterSelect = `SELECT f.id,f.device_id,d.host,COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host),
 	f.collector_agent_id,a.name,f.source_prefix,f.protocol,CAST(f.observation_domain_id AS CHAR),f.sampling_mode,
-	f.default_sampling_rate,f.sampling_rules_json,f.observations_json,f.enabled,f.ownership_epoch,
+	f.default_sampling_rate,f.estimated_bytes_scale_ppm,f.sampling_rules_json,f.observations_json,f.enabled,f.ownership_epoch,
 	f.published_row_version,f.published_plan_version,f.row_version,f.created_at,f.updated_at
 	FROM flow_exporter_bindings f JOIN devices d ON d.id=f.device_id LEFT JOIN agents a ON a.id=f.collector_agent_id`
 
@@ -270,7 +274,7 @@ type rowScanner interface{ Scan(...any) error }
 func scanFlowExporter(row rowScanner) (flowExporterRecord, error) {
 	var r flowExporterRecord
 	err := row.Scan(&r.ID, &r.DeviceID, &r.DeviceHost, &r.DeviceName, &r.CollectorAgentID, &r.CollectorName,
-		&r.SourcePrefix, &r.Protocol, &r.ObservationDomain, &r.SamplingMode, &r.DefaultSamplingRate,
+		&r.SourcePrefix, &r.Protocol, &r.ObservationDomain, &r.SamplingMode, &r.DefaultSamplingRate, &r.EstimatedBytesScalePPM,
 		&r.SamplingRules, &r.Observations, &r.Enabled, &r.OwnershipEpoch, &r.PublishedRowVersion,
 		&r.PublishedPlanVersion, &r.RowVersion, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
@@ -320,10 +324,10 @@ func (s *Server) createFlowExporter(c *gin.Context) {
 	}
 	_, err = s.db.ExecContext(c.Request.Context(), `INSERT INTO flow_exporter_bindings
 		(id,device_id,collector_agent_id,source_prefix,protocol,observation_domain_id,observation_domain_key,
-		sampling_mode,default_sampling_rate,sampling_rules_json,observations_json,enabled,ownership_epoch,created_by,updated_by)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, values.DeviceID, nullableTextValue(values.CollectorAgentID),
+		sampling_mode,default_sampling_rate,estimated_bytes_scale_ppm,sampling_rules_json,observations_json,enabled,ownership_epoch,created_by,updated_by)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, values.DeviceID, nullableTextValue(values.CollectorAgentID),
 		values.SourcePrefix, values.Protocol, values.ObservationDomainID, observationDomainKey(values.ObservationDomainID),
-		values.SamplingMode, values.DefaultSamplingRate, values.SamplingRules, values.Observations, values.Enabled,
+		values.SamplingMode, values.DefaultSamplingRate, values.EstimatedBytesScalePPM, values.SamplingRules, values.Observations, values.Enabled,
 		values.OwnershipEpoch, principalUserID(c), principalUserID(c))
 	if err != nil {
 		writeSQLError(c, err)
@@ -374,10 +378,10 @@ func (s *Server) updateFlowExporter(c *gin.Context) {
 	}
 	result, err := s.db.ExecContext(c.Request.Context(), `UPDATE flow_exporter_bindings SET
 		device_id=?,collector_agent_id=?,source_prefix=?,protocol=?,observation_domain_id=?,observation_domain_key=?,
-		sampling_mode=?,default_sampling_rate=?,sampling_rules_json=?,observations_json=?,enabled=?,ownership_epoch=?,
+		sampling_mode=?,default_sampling_rate=?,estimated_bytes_scale_ppm=?,sampling_rules_json=?,observations_json=?,enabled=?,ownership_epoch=?,
 		updated_by=?,row_version=row_version+1 WHERE id=? AND row_version=?`, values.DeviceID,
 		nullableTextValue(values.CollectorAgentID), values.SourcePrefix, values.Protocol, values.ObservationDomainID,
-		observationDomainKey(values.ObservationDomainID), values.SamplingMode, values.DefaultSamplingRate,
+		observationDomainKey(values.ObservationDomainID), values.SamplingMode, values.DefaultSamplingRate, values.EstimatedBytesScalePPM,
 		values.SamplingRules, values.Observations, values.Enabled, values.OwnershipEpoch, principalUserID(c),
 		current.ID, current.RowVersion)
 	if err != nil {
@@ -448,7 +452,8 @@ func newFlowExporterValues(req flowExporterMutation) (flowExporterValues, error)
 		DeviceID: valueOr(req.DeviceID, ""), CollectorAgentID: optionalStringValue(req.CollectorAgentID, ""),
 		SourcePrefix: valueOr(req.SourcePrefix, ""), Protocol: valueOr(req.Protocol, ""),
 		SamplingMode: valueOr(req.SamplingMode, "sampled"), DefaultSamplingRate: valueOrUint64(req.DefaultSamplingRate, 0),
-		Enabled: valueOrBool(req.Enabled, true), OwnershipEpoch: valueOrUint64(req.OwnershipEpoch, 1),
+		EstimatedBytesScalePPM: valueOrUint32(req.EstimatedBytesScalePPM, flowplan.EstimateScaleOnePPM),
+		Enabled:                valueOrBool(req.Enabled, true), OwnershipEpoch: valueOrUint64(req.OwnershipEpoch, 1),
 		ObservationDomainID: req.ObservationDomainID.Value, SamplingRules: rawOrDefault(req.SamplingRules, `[]`),
 		Observations: rawOrDefault(req.Observations, `{}`),
 	}
@@ -465,10 +470,11 @@ func patchFlowExporterValues(req flowExporterMutation, current flowExporterRecor
 		CollectorAgentID: optionalStringValue(req.CollectorAgentID, current.CollectorAgentID.String),
 		SourcePrefix:     patchString(req.SourcePrefix, current.SourcePrefix), Protocol: patchString(req.Protocol, current.Protocol),
 		ObservationDomainID: domain, SamplingMode: patchString(req.SamplingMode, current.SamplingMode),
-		DefaultSamplingRate: valueOrUint64(req.DefaultSamplingRate, current.DefaultSamplingRate),
-		SamplingRules:       rawOrDefault(req.SamplingRules, string(current.SamplingRules)),
-		Observations:        rawOrDefault(req.Observations, string(current.Observations)),
-		Enabled:             valueOrBool(req.Enabled, current.Enabled), OwnershipEpoch: valueOrUint64(req.OwnershipEpoch, current.OwnershipEpoch),
+		DefaultSamplingRate:    valueOrUint64(req.DefaultSamplingRate, current.DefaultSamplingRate),
+		EstimatedBytesScalePPM: valueOrUint32(req.EstimatedBytesScalePPM, current.EstimatedBytesScalePPM),
+		SamplingRules:          rawOrDefault(req.SamplingRules, string(current.SamplingRules)),
+		Observations:           rawOrDefault(req.Observations, string(current.Observations)),
+		Enabled:                valueOrBool(req.Enabled, current.Enabled), OwnershipEpoch: valueOrUint64(req.OwnershipEpoch, current.OwnershipEpoch),
 	}
 	return validateFlowExporterValues(values)
 }
@@ -515,7 +521,8 @@ func validateFlowExporterValues(values flowExporterValues) (flowExporterValues, 
 			Protocol: protocol, SourcePrefix: values.SourcePrefix, ObservationDomainID: values.ObservationDomainID,
 			ExporterID: "validation", TargetID: values.DeviceID, DeviceID: values.DeviceID,
 			OwnershipEpoch: values.OwnershipEpoch, SamplingMode: mode, DefaultSamplingRate: values.DefaultSamplingRate,
-			SamplingRules: rules, Observations: observations, Enabled: values.Enabled,
+			EstimatedBytesScalePPM: values.EstimatedBytesScalePPM,
+			SamplingRules:          rules, Observations: observations, Enabled: values.Enabled,
 		}},
 	}, now)
 	if err != nil {
@@ -590,6 +597,13 @@ func optionalStringValue(value optionalString, fallback string) string {
 }
 
 func valueOrUint64(value *uint64, fallback uint64) uint64 {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func valueOrUint32(value *uint32, fallback uint32) uint32 {
 	if value == nil {
 		return fallback
 	}

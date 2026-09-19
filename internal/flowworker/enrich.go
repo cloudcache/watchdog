@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cloudcache/watchdog/internal/flowdimension"
+	"github.com/cloudcache/watchdog/internal/flowplan"
 )
 
 const (
@@ -102,6 +103,7 @@ type EnrichedRecord struct {
 	SamplingMode              uint8
 	SamplingRate              uint64
 	SamplingSource            uint8
+	EstimatedBytesScalePPM    uint32
 	EstimatedValid            bool
 	EstimatedBytes            uint64
 	EstimatedPackets          uint64
@@ -383,7 +385,7 @@ func enrichRecordWithSnapshots(decoded *Record, dimensionSnapshot DimensionSnaps
 		SourceASN: decoded.SourceASN, DestinationASN: decoded.DestinationASN,
 		RawBytes: decoded.RawBytes, RawPackets: decoded.RawPackets,
 		SamplingMode: uint8(decoded.SamplingMode), SamplingRate: decoded.SamplingRate,
-		SamplingSource: uint8(decoded.SamplingSource), EstimatedValid: decoded.EstimatedValid,
+		SamplingSource: uint8(decoded.SamplingSource), EstimatedBytesScalePPM: decoded.EstimatedBytesScalePPM, EstimatedValid: decoded.EstimatedValid,
 		EstimatedBytes: decoded.EstimatedBytes, EstimatedPackets: decoded.EstimatedPackets,
 		FlowDurationMS: decoded.FlowDurationMS, QualityFlags: decoded.QualityFlags,
 		SourceIDType: decoded.SourceIDType, SourceIDValue: decoded.SourceIDValue,
@@ -514,7 +516,7 @@ func validateRecord(batch *RecordBatch, record *Record, limits EnrichmentLimits)
 	}
 	switch record.SamplingMode {
 	case 0:
-		if record.EstimatedValid || record.SamplingRate != 0 || record.EstimatedBytes != 0 || record.EstimatedPackets != 0 {
+		if record.EstimatedValid || record.SamplingRate != 0 || record.EstimatedBytesScalePPM != 0 || record.EstimatedBytes != 0 || record.EstimatedPackets != 0 {
 			return errors.New("unknown sampling must not carry estimated counters")
 		}
 	case 1:
@@ -529,7 +531,7 @@ func validateRecord(batch *RecordBatch, record *Record, limits EnrichmentLimits)
 			return errors.New("invalid sampled counters require an explicit overflow marker")
 		}
 	case 2:
-		if !record.EstimatedValid || record.EstimatedBytes != record.RawBytes || record.EstimatedPackets != record.RawPackets {
+		if !record.EstimatedValid || (record.EstimatedBytesScalePPM != 0 && record.EstimatedBytesScalePPM != flowplan.EstimateScaleOnePPM) || record.EstimatedBytes != record.RawBytes || record.EstimatedPackets != record.RawPackets {
 			return errors.New("pre-scaled counters must not be multiplied again")
 		}
 	default:
@@ -545,7 +547,8 @@ func scaledCountersMatch(record *Record) bool {
 	if record.RawPackets != 0 && record.SamplingRate > math.MaxUint64/record.RawPackets {
 		return false
 	}
-	return record.EstimatedBytes == record.RawBytes*record.SamplingRate && record.EstimatedPackets == record.RawPackets*record.SamplingRate
+	estimatedBytes, ok := scaleEstimatedBytes(record.RawBytes*record.SamplingRate, record.EstimatedBytesScalePPM)
+	return ok && record.EstimatedBytes == estimatedBytes && record.EstimatedPackets == record.RawPackets*record.SamplingRate
 }
 
 func parseAddress16(value []byte) (netip.Addr, bool) {

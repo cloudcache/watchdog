@@ -22,6 +22,37 @@ func TestDefaultKafkaConfigsAreValid(t *testing.T) {
 	}
 }
 
+func TestConsumerPartitionBatchRecordsValidation(t *testing.T) {
+	config := DefaultConsumerConfig()
+	if config.PartitionBatchRecords != 4_096 {
+		t.Fatalf("default partition batch records=%d", config.PartitionBatchRecords)
+	}
+	config.PartitionBatchRecords = 0
+	if err := config.Validate(); err == nil {
+		t.Fatal("zero partition batch records was accepted")
+	}
+	config.PartitionBatchRecords = 1_000_001
+	if err := config.Validate(); err == nil {
+		t.Fatal("oversized partition batch records was accepted")
+	}
+}
+
+func TestConsumerFetchByteLimitsValidation(t *testing.T) {
+	config := DefaultConsumerConfig()
+	if config.FetchMaxPartitionBytes != 16<<20 || config.FetchMaxBytes != 64<<20 {
+		t.Fatalf("default fetch limits partition=%d broker=%d", config.FetchMaxPartitionBytes, config.FetchMaxBytes)
+	}
+	config.FetchMaxPartitionBytes = config.FetchMinBytes - 1
+	if err := config.Validate(); err == nil {
+		t.Fatal("partition maximum below fetch minimum was accepted")
+	}
+	config = DefaultConsumerConfig()
+	config.FetchMaxBytes = config.FetchMaxPartitionBytes - 1
+	if err := config.Validate(); err == nil {
+		t.Fatal("broker maximum below partition maximum was accepted")
+	}
+}
+
 func TestKafkaConfigValidation(t *testing.T) {
 	producer := DefaultProducerConfig()
 	producer.Kafka.SASL = SASLConfig{Mechanism: SASLSCRAMSHA256}
@@ -49,8 +80,12 @@ func TestKafkaConfigValidation(t *testing.T) {
 		t.Fatal("undersized fetch wait was accepted")
 	}
 	consumer = DefaultConsumerConfig()
-	consumer.TemplateReplayRecords = 0
+	consumer.TemplateReplayRecords = -1
 	if err := consumer.Validate(); err == nil {
-		t.Fatal("disabled template replay window was accepted")
+		t.Fatal("negative template replay window was accepted")
+	}
+	consumer = DefaultConsumerConfig()
+	if consumer.TemplateReplayRecords != 0 {
+		t.Fatalf("default template replay=%d, want disabled for stateless sFlow", consumer.TemplateReplayRecords)
 	}
 }

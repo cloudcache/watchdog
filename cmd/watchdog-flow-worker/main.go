@@ -59,13 +59,14 @@ type options struct {
 	controlPlaneServerName                                        string
 	controlPlaneTimeout, versionRefreshInterval                   time.Duration
 
-	brokers, topic, sourceStreamID, clientID, consumerGroup string
-	kafkaCAFile, kafkaCertFile, kafkaKeyFile                string
-	kafkaServerName, saslMechanism                          string
-	saslUsername, saslPasswordFile                          string
-	kafkaTLS                                                bool
-	fetchMinBytes, templateReplayRecords                    int64
-	fetchMaxWait, decoderStateTTL                           time.Duration
+	brokers, topic, sourceStreamID, clientID, consumerGroup                     string
+	kafkaCAFile, kafkaCertFile, kafkaKeyFile                                    string
+	kafkaServerName, saslMechanism                                              string
+	saslUsername, saslPasswordFile                                              string
+	kafkaTLS                                                                    bool
+	fetchMinBytes, fetchMaxBytes, fetchMaxPartitionBytes, templateReplayRecords int64
+	partitionBatchRecords                                                       int
+	fetchMaxWait, decoderStateTTL                                               time.Duration
 
 	clickHouseAddress, clickHouseDatabase                                    string
 	clickHouseUser, clickHousePasswordFile                                   string
@@ -107,8 +108,11 @@ func main() {
 	flag.StringVar(&opt.clientID, "kafka-client-id", "watchdog-flow-worker", "Kafka client ID")
 	flag.StringVar(&opt.consumerGroup, "kafka-consumer-group", "watchdog-flow-worker-v1", "Kafka consumer group")
 	flag.Int64Var(&opt.fetchMinBytes, "kafka-fetch-min-bytes", 1_000_000, "minimum Kafka fetch bytes")
+	flag.Int64Var(&opt.fetchMaxBytes, "kafka-fetch-max-bytes", 64<<20, "maximum bytes buffered from one Kafka broker fetch")
+	flag.Int64Var(&opt.fetchMaxPartitionBytes, "kafka-fetch-max-partition-bytes", 16<<20, "maximum bytes fetched from one Kafka partition")
 	flag.DurationVar(&opt.fetchMaxWait, "kafka-fetch-max-wait", time.Second, "maximum Kafka fetch wait")
-	flag.Int64Var(&opt.templateReplayRecords, "kafka-template-replay-records", 1_000_000, "records replayed before each committed partition offset to rebuild templates")
+	flag.IntVar(&opt.partitionBatchRecords, "kafka-partition-batch-records", 4_096, "maximum Kafka messages in one durable ClickHouse handler batch")
+	flag.Int64Var(&opt.templateReplayRecords, "kafka-template-replay-records", 0, "NetFlow/IPFIX records replayed before each committed partition offset to rebuild templates; 0 disables replay for sFlow")
 	flag.BoolVar(&opt.kafkaTLS, "kafka-tls", false, "enable Kafka TLS")
 	flag.StringVar(&opt.kafkaCAFile, "kafka-tls-ca", "", "Kafka TLS CA file")
 	flag.StringVar(&opt.kafkaCertFile, "kafka-tls-cert", "", "Kafka TLS client certificate file")
@@ -213,7 +217,7 @@ func run(opt options) error {
 		return errors.New("ClickHouse block limits are invalid")
 	}
 	if opt.check {
-		log.Printf("flow-worker configuration valid: plans=%d bootstrap_versions=%d geo_versions=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
+		log.Printf("flow-worker configuration valid: plans=%d enrichment_versions=%d legacy_geo_bundles=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
 		return nil
 	}
 	var barrierGuard *flowtombstone.Guard
@@ -291,7 +295,7 @@ func run(opt options) error {
 		metricsErrCh = result
 		log.Printf("flow-worker metrics listening: address=%s", metricsServer.Address())
 	}
-	log.Printf("flow-worker started: plans=%d bootstrap_versions=%d geo_versions=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
+	log.Printf("flow-worker started: plans=%d enrichment_versions=%d legacy_geo_bundles=%d remote_versions=%t group=%s", len(opt.planFiles), len(opt.versionPublications), len(opt.geoBundles), versionSync != nil, consumerConfig.ConsumerGroup)
 	runCtx, cancelRun := context.WithCancel(ctx)
 	var versionSyncDone <-chan struct{}
 	if versionSync != nil {
@@ -328,13 +332,17 @@ func run(opt options) error {
 }
 
 type flowWorkerPlanConfig struct {
-	FetchMinBytes  *int64 `json:"kafka_fetch_min_bytes"`
-	FetchMaxWaitMS *int64 `json:"kafka_fetch_max_wait_ms"`
-	BlockMaxRows   *int   `json:"clickhouse_block_max_rows"`
-	BlockMaxBytes  *int   `json:"clickhouse_block_max_bytes"`
+	FetchMinBytes          *int64 `json:"kafka_fetch_min_bytes"`
+	FetchMaxBytes          *int64 `json:"kafka_fetch_max_bytes"`
+	FetchMaxPartitionBytes *int64 `json:"kafka_fetch_max_partition_bytes"`
+	FetchMaxWaitMS         *int64 `json:"kafka_fetch_max_wait_ms"`
+	PartitionBatchRecords  *int   `json:"kafka_partition_batch_records"`
+	BlockMaxRows           *int   `json:"clickhouse_block_max_rows"`
+	BlockMaxBytes          *int   `json:"clickhouse_block_max_bytes"`
 }
 
 func applyFlowWorkerAgentPlan(opt *options, spec agentplan.Spec) error {
+	defaults := flowstream.DefaultConsumerConfig()
 	var config flowWorkerPlanConfig
 	if err := agentplan.DecodeConfig(spec, &config); err != nil {
 		return err
@@ -342,8 +350,26 @@ func applyFlowWorkerAgentPlan(opt *options, spec agentplan.Spec) error {
 	if config.FetchMinBytes != nil {
 		opt.fetchMinBytes = *config.FetchMinBytes
 	}
+	if config.FetchMaxBytes != nil {
+		opt.fetchMaxBytes = *config.FetchMaxBytes
+	}
+	if config.FetchMaxPartitionBytes != nil {
+		opt.fetchMaxPartitionBytes = *config.FetchMaxPartitionBytes
+	}
+	if opt.fetchMaxPartitionBytes == 0 {
+		opt.fetchMaxPartitionBytes = int64(defaults.FetchMaxPartitionBytes)
+	}
+	if opt.fetchMaxBytes == 0 {
+		opt.fetchMaxBytes = int64(defaults.FetchMaxBytes)
+	}
 	if config.FetchMaxWaitMS != nil {
 		opt.fetchMaxWait = time.Duration(*config.FetchMaxWaitMS) * time.Millisecond
+	}
+	if config.PartitionBatchRecords != nil {
+		opt.partitionBatchRecords = *config.PartitionBatchRecords
+	}
+	if opt.partitionBatchRecords == 0 {
+		opt.partitionBatchRecords = flowstream.DefaultConsumerConfig().PartitionBatchRecords
 	}
 	if config.BlockMaxRows != nil {
 		opt.blockMaxRows = *config.BlockMaxRows
@@ -351,7 +377,7 @@ func applyFlowWorkerAgentPlan(opt *options, spec agentplan.Spec) error {
 	if config.BlockMaxBytes != nil {
 		opt.blockMaxBytes = *config.BlockMaxBytes
 	}
-	if opt.fetchMinBytes < 1 || opt.fetchMaxWait <= 0 || opt.fetchMaxWait > 5*time.Minute {
+	if opt.fetchMinBytes < 1 || opt.fetchMaxPartitionBytes < opt.fetchMinBytes || opt.fetchMaxBytes < opt.fetchMaxPartitionBytes || opt.fetchMaxBytes > 1<<30 || opt.fetchMaxPartitionBytes > 1<<30 || opt.fetchMaxWait <= 0 || opt.fetchMaxWait > 5*time.Minute || opt.partitionBatchRecords < 1 || opt.partitionBatchRecords > 1_000_000 {
 		return errors.New("agent plan flow-worker Kafka fetch limits are invalid")
 	}
 	if opt.blockMaxRows < 1 || opt.blockMaxRows > 1_000_000 || opt.blockMaxBytes < 1 || opt.blockMaxBytes > 1<<30 {
@@ -407,7 +433,22 @@ func buildConsumerConfig(opt options) (flowstream.ConsumerConfig, error) {
 		return flowstream.ConsumerConfig{}, errors.New("Kafka fetch minimum bytes are invalid")
 	}
 	config.FetchMinBytes = int32(opt.fetchMinBytes)
+	if opt.fetchMaxBytes != 0 {
+		if opt.fetchMaxBytes < 1 || opt.fetchMaxBytes > 1<<30 {
+			return flowstream.ConsumerConfig{}, errors.New("Kafka fetch maximum bytes are invalid")
+		}
+		config.FetchMaxBytes = int32(opt.fetchMaxBytes)
+	}
+	if opt.fetchMaxPartitionBytes != 0 {
+		if opt.fetchMaxPartitionBytes < 1 || opt.fetchMaxPartitionBytes > 1<<30 {
+			return flowstream.ConsumerConfig{}, errors.New("Kafka fetch maximum partition bytes are invalid")
+		}
+		config.FetchMaxPartitionBytes = int32(opt.fetchMaxPartitionBytes)
+	}
 	config.FetchMaxWait = opt.fetchMaxWait
+	if opt.partitionBatchRecords != 0 {
+		config.PartitionBatchRecords = opt.partitionBatchRecords
+	}
 	config.TemplateReplayRecords = opt.templateReplayRecords
 	config.Kafka.TLS = flowstream.TLSConfig{
 		Enabled: opt.kafkaTLS, CAFile: strings.TrimSpace(opt.kafkaCAFile), CertFile: strings.TrimSpace(opt.kafkaCertFile),

@@ -57,6 +57,10 @@ type CompiledOverseas struct {
 	MaxResultRows  uint64
 	UsesRawFacts   bool
 	ArchiveThrough time.Time
+	// PostProcessGeoTopN is set for the all-raw Storage V2 plan. That plan reads
+	// the fact table once and returns the bounded country/region catalog; the
+	// runner then applies the requested Top N and additive _other grouping.
+	PostProcessGeoTopN bool
 }
 
 // CompileOverseas builds one latest-generation aggregate query for the
@@ -125,6 +129,8 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 	}
 	parameters = append(parameters, filterParameters...)
 	template := overseasLegacySourceSQL + overseasAnalysisSQL
+	archiveFilters := filters
+	rawFilters := filters
 	usesRawFacts := false
 	archiveThrough := time.Time{}
 	if request.StorageV2 {
@@ -145,11 +151,23 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(duration/time.Second)),
 		)
-		template = overseasStorageV2SourceSQL + overseasAnalysisSQL
+		archiveFilters, rawFilters, err = compileOverseasStorageV2Filters(request.Filters)
+		if err != nil {
+			return CompiledOverseas{}, err
+		}
+		if archiveThrough.Equal(from) {
+			template = overseasStorageV2RawSQL
+		} else {
+			template = overseasStorageV2SourceSQL + overseasAnalysisSQL
+		}
 		usesRawFacts = archiveThrough.Before(to)
 	}
 
 	valueExpression := "toFloat64(metric_total)"
+	rawMetricInput := metric.column
+	if request.Metric == MetricReceivedRecords {
+		rawMetricInput = "toUInt64(1)"
+	}
 	if metric.rate {
 		multiplier := uint64(1)
 		if request.Metric == MetricRawBitsPerSecond || request.Metric == MetricEstimatedBPS {
@@ -160,15 +178,19 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 	body := strings.NewReplacer(
 		"{{TABLE}}", table,
 		"{{FILTERS}}", strings.Join(filters, "\n      "),
+		"{{ARCHIVE_FILTERS}}", strings.Join(archiveFilters, "\n      "),
+		"{{RAW_FILTERS}}", strings.Join(rawFilters, "\n      "),
 		"{{METRIC_COLUMN}}", metric.column,
+		"{{RAW_METRIC_INPUT}}", rawMetricInput,
 		"{{VALUE_EXPRESSION}}", valueExpression,
 	).Replace(template)
 	identityScoped := len(request.Filters.DeviceIDs) > 0 || len(request.Filters.TargetIDs) > 0 || len(request.Filters.ExporterIDs) > 0
-	maxRowsToRead, maxBytesToRead := rawScanBudgets(usesRawFacts && identityScoped)
+	allRaw := request.StorageV2 && archiveThrough.Equal(from)
+	maxRowsToRead, maxBytesToRead := overseasScanBudgets(usesRawFacts && identityScoped)
 	query := ch.Query{
 		Body: body, Parameters: parameters,
 		Settings: []ch.Setting{
-			{Key: "max_execution_time", Value: "15", Important: true},
+			{Key: "max_execution_time", Value: rawExecutionTime(usesRawFacts && identityScoped), Important: true},
 			{Key: "max_memory_usage", Value: "4294967296", Important: true},
 			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
 			{Key: "result_overflow_mode", Value: "throw", Important: true},
@@ -184,8 +206,21 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		Query: query, From: from, To: to, Bucket: request.Bucket, BucketDuration: duration,
 		Metric: metric.definition, GeoLevel: request.GeoLevel, TopN: request.TopN,
 		IncludeOther: request.IncludeOther, EstimatedRows: uint64(estimatedRows), MaxResultRows: maxResultRows,
-		UsesRawFacts: usesRawFacts, ArchiveThrough: archiveThrough,
+		UsesRawFacts: usesRawFacts, ArchiveThrough: archiveThrough, PostProcessGeoTopN: allRaw,
 	}, nil
+}
+
+// overseasScanBudgets keeps unscoped requests on the ordinary fail-closed
+// budget. An identity-scoped overseas report may expand each accepted fact to
+// six result groupings, and ClickHouse accounts rows after that expansion
+// against max_rows_to_read. The all-raw plan still performs one physical fact
+// scan; the larger guard is therefore a result of the bounded expansion, not a
+// license to rescan the table.
+func overseasScanBudgets(identityScoped bool) (string, string) {
+	if identityScoped {
+		return endpointCandidateScanBudgets()
+	}
+	return rawScanBudgets(false)
 }
 
 func overseasGeoDimension(level OverseasGeoLevel) (Dimension, error) {
@@ -217,6 +252,26 @@ func compileOverseasFilters(filters OverseasFilters) ([]string, []proto.Paramete
 	return conditions, parameters, nil
 }
 
+// compileOverseasStorageV2Filters returns the same validated identity and
+// direction predicates for both physical sources. Keeping these predicates
+// below the raw ARRAY JOIN prevents one selected device from expanding every
+// device's records into three derived dimensions before it is filtered.
+func compileOverseasStorageV2Filters(filters OverseasFilters) (archive, raw []string, err error) {
+	detail := DetailFilters{
+		Directions: filters.Directions, Businesses: filters.Businesses, TargetIDs: filters.TargetIDs,
+		DeviceIDs: filters.DeviceIDs, ExporterIDs: filters.ExporterIDs,
+	}
+	archive, _, err = compileDetailFiltersForSource(ViewCustomer, detail)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw, _, err = compileDetailFilters(ViewCustomer, detail)
+	if err != nil {
+		return nil, nil, err
+	}
+	return archive, raw, nil
+}
+
 const overseasLegacySourceSQL = `WITH
   latest AS (
     SELECT bucket, max(generation) AS generation
@@ -231,12 +286,128 @@ const overseasLegacySourceSQL = `WITH
     INNER JOIN latest USING (bucket, generation)
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND business_direction IN ('in', 'out')
-	      AND dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
-	      {{FILTERS}}
-	  ),
-	  coverage AS (
-	    SELECT toUInt64(count()) AS covered_buckets FROM latest
-	  )`
+      AND dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
+      {{FILTERS}}
+  ),
+  coverage AS (
+    SELECT toUInt64(count()) AS covered_buckets FROM latest
+  )`
+
+// overseasStorageV2RawSQL is the hot Storage V2 path. ClickHouse 24.9 expands
+// non-materialized CTE references, so the older endpoint/Geo CTE fan-out read
+// the same 24-hour fact range roughly five times. This query emits the four KPI
+// groupings and two Geo groupings from each accepted fact in one ARRAY JOIN and
+// performs one physical flow_records scan. Geo cardinality is bounded by the
+// published country/region catalog; the runner applies Top N and additive
+// _other grouping without another ClickHouse read.
+const overseasStorageV2RawSQL = `WITH
+  raw_prepared AS (
+    SELECT
+      event_time,
+      toString(business_direction) AS source_direction,
+      category,
+      if(source_direction = 'in', src_ip, dst_ip) AS remote_ip,
+      if(source_direction = 'in', dst_ip, src_ip) AS local_ip,
+      if(
+        {geo_dimension:String} = 'geo.country',
+        remote_geo_country_id,
+        remote_geo_region_id
+      ) AS remote_geo_value,
+      dimension_snapshot_id, geo_version, classification_version,
+      {{RAW_METRIC_INPUT}} AS metric_input,
+      estimated_valid, quality_flags, received_time
+    FROM flow_records FINAL
+    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+      AND disposition = 'count'
+      AND business_direction IN ('in', 'out')
+      {{RAW_FILTERS}}
+  ),
+  raw_enriched AS (
+    SELECT *,
+      multiIf(
+        remote_ip = toIPv6('::'), 'unknown',
+        startsWith(toString(remote_ip), '::ffff:'), 'ipv4',
+        'ipv6'
+      ) AS remote_family
+    FROM raw_prepared
+  ),
+  grouped AS (
+    SELECT
+      toStartOfInterval(event_time, toIntervalSecond({source_seconds:UInt32}), 'UTC') AS bucket,
+      tupleElement(expansion, 1) AS row_kind,
+      tupleElement(expansion, 2) AS geo_scope,
+      tupleElement(expansion, 3) AS grouped_direction,
+      tupleElement(expansion, 4) AS grouped_family,
+      tupleElement(expansion, 5) AS geo_value,
+      CAST(dimension_snapshot_id AS String) AS dimension_snapshot_id,
+      CAST(geo_version AS String) AS geo_version,
+      classification_version,
+      sum(metric_input) AS metric_total,
+      uniqExactIf(toString(remote_ip), row_kind = 'kpi') AS observed_remote_ips,
+      uniqExactIf(toString(local_ip), row_kind = 'kpi') AS observed_local_hosts,
+      count() AS received_records,
+      countIf(NOT estimated_valid) AS unknown_sampling_records,
+      countIf(quality_flags != 0) AS quality_records,
+      max(received_time) AS generated_at
+    FROM raw_enriched
+    ARRAY JOIN arrayFilter(item -> tupleElement(item, 6), [
+      tuple('kpi', 'overseas', source_direction, remote_family, '', category = 'overseas'),
+      tuple('kpi', 'overseas', source_direction, 'all', '', category = 'overseas'),
+      tuple('kpi', 'overseas', 'combined', remote_family, '', category = 'overseas'),
+      tuple('kpi', 'overseas', 'combined', 'all', '', category = 'overseas'),
+      tuple(
+        'geo', if(empty(remote_geo_value), 'unknown_geo', 'overseas'), source_direction, 'all',
+        if(empty(remote_geo_value), '_unassigned', remote_geo_value),
+        category = 'overseas' OR empty(remote_geo_value)
+      ),
+      tuple(
+        'geo', if(empty(remote_geo_value), 'unknown_geo', 'overseas'), 'combined', 'all',
+        if(empty(remote_geo_value), '_unassigned', remote_geo_value),
+        category = 'overseas' OR empty(remote_geo_value)
+      )
+    ]) AS expansion
+    GROUP BY bucket, row_kind, geo_scope, grouped_direction, grouped_family, geo_value,
+      dimension_snapshot_id, geo_version, classification_version
+  )
+SELECT *
+FROM (
+  SELECT
+    bucket,
+    row_kind,
+    geo_scope,
+    grouped_direction AS direction,
+    grouped_family AS ip_family,
+    geo_value,
+    toUInt8(0) AS is_other,
+    dimension_snapshot_id,
+    geo_version,
+    classification_version,
+    {{VALUE_EXPRESSION}} AS value,
+    observed_remote_ips,
+    observed_local_hosts,
+    received_records,
+    unknown_sampling_records,
+    quality_records,
+    generated_at,
+    toUInt8(1) AS endpoint_consistent,
+    toUInt8(0) AS is_metadata,
+    toUInt64(0) AS covered_buckets
+  FROM grouped
+  UNION ALL
+  SELECT
+    toDateTime(0, 'UTC'), '', '', '', '', '', toUInt8(0),
+    '', '', toUInt32(0), toFloat64(0), toUInt64(0), toUInt64(0),
+    toUInt64(0), toUInt64(0), toUInt64(0), toDateTime64(0, 3, 'UTC'),
+    toUInt8(0), toUInt8(1),
+    toUInt64(intDiv(
+      dateDiff('second', {archive_through:DateTime('UTC')}, {to:DateTime('UTC')}),
+      toInt64({source_seconds:UInt32})
+    ))
+)
+ORDER BY
+  is_metadata ASC, bucket ASC, row_kind ASC, geo_scope ASC,
+  direction ASC, ip_family ASC, geo_value ASC,
+  dimension_snapshot_id ASC, geo_version ASC, classification_version ASC`
 
 const overseasStorageV2SourceSQL = `WITH
   archive_latest AS (
@@ -258,7 +429,23 @@ const overseasStorageV2SourceSQL = `WITH
     FROM {{TABLE}} AS source FINAL
     INNER JOIN archive_latest USING (bucket, generation)
     WHERE source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
+      AND source.business_direction IN ('in', 'out')
       AND source.dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})
+      {{ARCHIVE_FILTERS}}
+  ),
+  raw_base AS (
+    SELECT
+      event_time, target_id, device_id, exporter_id,
+      business_direction, category, business,
+      src_ip, dst_ip, remote_geo_country_id, remote_geo_region_id,
+      dimension_snapshot_id, geo_version, classification_version,
+      raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+      estimated_valid, quality_flags, received_time
+    FROM flow_records FINAL
+    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+      AND disposition = 'count'
+      AND business_direction IN ('in', 'out')
+      {{RAW_FILTERS}}
   ),
   raw_selected AS (
     SELECT
@@ -280,7 +467,7 @@ const overseasStorageV2SourceSQL = `WITH
       countIf(NOT estimated_valid) AS unknown_sampling_records,
       countIf(quality_flags != 0) AS quality_records,
       max(received_time) AS generated_at
-    FROM flow_records FINAL
+    FROM raw_base
     ARRAY JOIN [
       tuple('src_ip', toString(src_ip)),
       tuple('dst_ip', toString(dst_ip)),
@@ -293,8 +480,6 @@ const overseasStorageV2SourceSQL = `WITH
         )
       )
     ] AS dimension
-    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
-      AND disposition = 'count'
     GROUP BY bucket, target_id, device_id, exporter_id, business_direction,
       category, business, dimension_kind, dimension_value, dimension_snapshot_id,
       geo_version, classification_version
@@ -305,8 +490,6 @@ const overseasStorageV2SourceSQL = `WITH
       UNION ALL
       SELECT * FROM raw_selected
     )
-    WHERE business_direction IN ('in', 'out')
-      {{FILTERS}}
   ),
   coverage AS (
     SELECT assumeNotNull(

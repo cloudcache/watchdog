@@ -169,8 +169,8 @@ WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_re
 		Result: proto.Results{
 			{Name: "required_records", Data: &requiredRecords},
 			{Name: "required_receipts", Data: &requiredReceipts},
-			{Name: "required_quarantine", Data: &requiredQuarantine},
 			{Name: "required_counters", Data: &requiredCounters},
+			{Name: "required_quarantine", Data: &requiredQuarantine},
 			{Name: "forbidden_records", Data: &forbiddenRecords},
 			{Name: "forbidden_receipts", Data: &forbiddenReceipts},
 		},
@@ -301,6 +301,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 		samplingMode              proto.ColEnum
 		samplingRate              proto.ColUInt64
 		samplingSource            proto.ColEnum
+		estimatedBytesScalePPM    proto.ColUInt32
 		estimatedValid            proto.ColBool
 		estimatedBytes            proto.ColUInt64
 		estimatedPackets          proto.ColUInt64
@@ -446,6 +447,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 		samplingMode.Append(mode)
 		samplingRate.Append(ref.Record.SamplingRate)
 		samplingSource.Append(source)
+		estimatedBytesScalePPM.Append(ref.Record.EstimatedBytesScalePPM)
 		estimatedValid.Append(ref.Record.EstimatedValid)
 		estimatedBytes.Append(ref.Record.EstimatedBytes)
 		estimatedPackets.Append(ref.Record.EstimatedPackets)
@@ -518,7 +520,7 @@ func buildRecordInput(block PreparedBlock) (proto.Input, error) {
 		{Name: "observation_if_index", Data: observationIfIndex}, {Name: "ingress_if_index", Data: ingressIfIndex}, {Name: "egress_if_index", Data: egressIfIndex}, {Name: "observation_direction", Data: &observationDirection},
 		{Name: "src_ip", Data: srcIP}, {Name: "dst_ip", Data: dstIP}, {Name: "src_port", Data: srcPort}, {Name: "dst_port", Data: dstPort}, {Name: "ip_protocol", Data: ipProtocol}, {Name: "tcp_flags", Data: tcpFlags},
 		{Name: "source_asn", Data: sourceASN}, {Name: "destination_asn", Data: destinationASN}, {Name: "raw_bytes", Data: rawBytes}, {Name: "raw_packets", Data: rawPackets},
-		{Name: "sampling_mode", Data: &samplingMode}, {Name: "sampling_rate", Data: samplingRate}, {Name: "sampling_source", Data: &samplingSource},
+		{Name: "sampling_mode", Data: &samplingMode}, {Name: "sampling_rate", Data: samplingRate}, {Name: "sampling_source", Data: &samplingSource}, {Name: "estimated_bytes_scale_ppm", Data: &estimatedBytesScalePPM},
 		{Name: "estimated_valid", Data: estimatedValid}, {Name: "estimated_bytes", Data: estimatedBytes}, {Name: "estimated_packets", Data: estimatedPackets},
 		{Name: "flow_duration_ms", Data: flowDurationMS}, {Name: "quality_flags", Data: qualityFlags}, {Name: "source_id_type", Data: sourceIDType}, {Name: "source_id_value", Data: sourceIDValue},
 		{Name: "sample_sequence", Data: sampleSequence}, {Name: "sample_pool", Data: samplePool}, {Name: "exporter_drops", Data: exporterDrops}, {Name: "sample_index", Data: sampleIndex}, {Name: "quality_epoch", Data: qualityEpoch},

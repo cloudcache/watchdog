@@ -32,14 +32,14 @@ const (
 	// sampled records in 24 hours. Identity-scoped raw queries may therefore use
 	// this larger read budget. Unscoped queries keep the ordinary fail-closed
 	// guard so an interactive request cannot scan the whole installation.
-	maxIdentityScopedRawScanRows  = 200_000_000
-	maxIdentityScopedRawScanBytes = 8 << 30
+	maxIdentityScopedRawScanRows  = 250_000_000
+	maxIdentityScopedRawScanBytes = 16 << 30
 	// Endpoint Top-N deliberately trades a second identity-scoped read for a
 	// bounded candidate set: the first pass selects candidates and the second
 	// computes exact bucket values. Keep its cumulative read guard separate
 	// from ordinary one-pass Flow queries.
-	maxEndpointCandidateScanRows  = 400_000_000
-	maxEndpointCandidateScanBytes = 16 << 30
+	maxEndpointCandidateScanRows  = 500_000_000
+	maxEndpointCandidateScanBytes = 32 << 30
 	endpointCandidateMultiplier   = 8
 )
 
@@ -56,6 +56,13 @@ func rawScanBudgets(identityScoped bool) (string, string) {
 
 func endpointCandidateScanBudgets() (string, string) {
 	return strconv.Itoa(maxEndpointCandidateScanRows), strconv.FormatUint(maxEndpointCandidateScanBytes, 10)
+}
+
+func rawExecutionTime(identityScoped bool) string {
+	if identityScoped {
+		return "30"
+	}
+	return "15"
 }
 
 type Bucket string
@@ -539,7 +546,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		Body:       body,
 		Parameters: parameters,
 		Settings: []ch.Setting{
-			{Key: "max_execution_time", Value: "15", Important: true},
+			{Key: "max_execution_time", Value: rawExecutionTime(identityScopedRawQuery), Important: true},
 			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
 			{Key: "result_overflow_mode", Value: "throw", Important: true},
 			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},

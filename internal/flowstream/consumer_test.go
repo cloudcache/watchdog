@@ -17,7 +17,7 @@ type fakeConsumerClient struct {
 	mu        sync.Mutex
 	polled    bool
 	fetches   kgo.Fetches
-	marked    []*kgo.Record
+	committed []*kgo.Record
 	commitErr error
 	commits   int
 	allowed   int
@@ -32,14 +32,11 @@ func (f *fakeConsumerClient) PollFetches(context.Context) kgo.Fetches {
 	return f.fetches
 }
 
-func (f *fakeConsumerClient) MarkCommitRecords(records ...*kgo.Record) {
+func (f *fakeConsumerClient) CommitRecords(_ context.Context, records ...*kgo.Record) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.marked = append(f.marked, records...)
-}
-
-func (f *fakeConsumerClient) CommitMarkedOffsets(context.Context) error {
 	f.commits++
+	f.committed = append(f.committed, records...)
 	return f.commitErr
 }
 
@@ -72,8 +69,8 @@ func TestConsumerMarksOnlySuccessfullyProcessedRecords(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(client.marked) != 1 || client.marked[0] != first {
-		t.Fatalf("failed record was committed: %+v", client.marked)
+	if len(client.committed) != 1 || client.committed[0] != first {
+		t.Fatalf("failed record was committed: %+v", client.committed)
 	}
 	if !client.closed || client.commits != 1 || client.allowed != 1 {
 		t.Fatalf("unexpected lifecycle: %+v", client)
@@ -100,11 +97,30 @@ func TestConsumerProcessesAndMarksFetchedRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if processed != 2 || len(client.marked) != 2 {
-		t.Fatalf("processed=%d marked=%d", processed, len(client.marked))
+	if processed != 2 || len(client.committed) != 1 || client.committed[0] != second {
+		t.Fatalf("processed=%d committed=%+v", processed, client.committed)
 	}
 	if got := consumer.Stats(); got.Records != 2 || got.Bytes != uint64(len(first.Value)+len(second.Value)) || got.Errors != 0 {
 		t.Fatalf("unexpected stats: %+v", got)
+	}
+	if client.commits != 1 {
+		t.Fatalf("commits=%d, want one exact durable poll commit", client.commits)
+	}
+}
+
+func TestConsumerReturnsDurableOffsetCommitFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	want := errors.New("coordinator unavailable")
+	record := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 10, Value: []byte("first")}
+	client := &fakeConsumerClient{fetches: testFetches(record), commitErr: want}
+	consumer := newConsumerWithClient(client, nil)
+	err := consumer.Run(ctx, func(context.Context, *kgo.Record) error { return nil })
+	if !errors.Is(err, want) {
+		t.Fatalf("error=%v, want commit failure %v", err, want)
+	}
+	if len(client.committed) != 1 || client.allowed != 1 || client.commits != 1 {
+		t.Fatalf("unexpected lifecycle: committed=%d allowed=%d commits=%d", len(client.committed), client.allowed, client.commits)
 	}
 }
 
@@ -147,8 +163,8 @@ func TestConsumerSerializesEachPartitionAndRunsPartitionsConcurrently(t *testing
 	if len(order[0]) != 2 || order[0][0] != 10 || order[0][1] != 11 || len(order[1]) != 1 || order[1][0] != 20 {
 		t.Fatalf("partition order=%v", order)
 	}
-	if len(client.marked) != 3 {
-		t.Fatalf("marked=%d", len(client.marked))
+	if len(client.committed) != 2 || client.committed[0].Partition == client.committed[1].Partition {
+		t.Fatalf("committed partition watermarks=%+v", client.committed)
 	}
 }
 
@@ -170,14 +186,14 @@ func TestConsumerPartitionFailureDoesNotAbortHealthyPartitions(t *testing.T) {
 			close(p0errored)
 			return wantErr
 		}
-		<-p0errored          // partition 0 has already failed
-		return ctx.Err()     // must be nil: a sibling failure no longer cancels this partition
+		<-p0errored      // partition 0 has already failed
+		return ctx.Err() // must be nil: a sibling failure no longer cancels this partition
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("want partition 0 failure surfaced, got %v", err)
 	}
-	if len(client.marked) != 1 || client.marked[0] != p1 {
-		t.Fatalf("healthy partition 1 record was not committed: %+v", client.marked)
+	if len(client.committed) != 1 || client.committed[0] != p1 {
+		t.Fatalf("healthy partition 1 record was not committed: %+v", client.committed)
 	}
 }
 
@@ -200,8 +216,8 @@ func TestConsumerPartitionBatchMarksOnlyAfterDurableSuccess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if calls != 1 || len(client.marked) != 2 {
-			t.Fatalf("calls=%d marked=%d", calls, len(client.marked))
+		if calls != 1 || len(client.committed) != 1 || client.committed[0] != second {
+			t.Fatalf("calls=%d committed=%+v", calls, client.committed)
 		}
 	})
 
@@ -213,10 +229,44 @@ func TestConsumerPartitionBatchMarksOnlyAfterDurableSuccess(t *testing.T) {
 		if !errors.Is(err, want) {
 			t.Fatalf("error=%v", err)
 		}
-		if len(client.marked) != 0 {
-			t.Fatalf("failed durable batch marked %d records", len(client.marked))
+		if len(client.committed) != 0 {
+			t.Fatalf("failed durable batch committed %d records", len(client.committed))
 		}
 	})
+}
+
+func TestConsumerPartitionBatchCommitsDurableChunksBeforeLaterFailure(t *testing.T) {
+	records := []*kgo.Record{
+		{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 10},
+		{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 11},
+		{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 12},
+		{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 13},
+		{Topic: "watchdog.flow.raw-v1", Partition: 3, Offset: 14},
+	}
+	client := &fakeConsumerClient{fetches: testFetches(records...)}
+	consumer := newConsumerWithClient(client, nil)
+	consumer.partitionBatchRecords = 2
+	want := errors.New("ClickHouse disk full")
+	calls := 0
+	err := consumer.RunPartitionBatches(context.Background(), func(_ context.Context, chunk []*kgo.Record) error {
+		calls++
+		if calls == 3 {
+			return want
+		}
+		if len(chunk) != 2 {
+			t.Fatalf("durable chunk size=%d, want 2", len(chunk))
+		}
+		return nil
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("error=%v, want %v", err, want)
+	}
+	if calls != 3 || len(client.committed) != 1 || client.committed[0] != records[3] {
+		t.Fatalf("calls=%d committed=%+v, want final durable record offset 13", calls, client.committed)
+	}
+	if client.commits != 1 {
+		t.Fatalf("durable commits=%d, want 1", client.commits)
+	}
 }
 
 func TestRewindAssignedOffsetsRebuildsTemplateStateWithoutChangingResetSentinels(t *testing.T) {
@@ -273,8 +323,8 @@ func TestConsumerProcessesTemplateReplayButMarksOnlyAtOriginalWatermark(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(client.marked) != 1 || client.marked[0] != second {
-		t.Fatalf("marked replay records=%+v", client.marked)
+	if len(client.committed) != 1 || client.committed[0] != second {
+		t.Fatalf("committed replay records=%+v", client.committed)
 	}
 }
 

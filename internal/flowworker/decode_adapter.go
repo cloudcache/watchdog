@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"net/netip"
 	"time"
 
@@ -34,6 +35,7 @@ const (
 	QualityEventTimeFallback
 	QualityObservationAmbiguous
 	QualitySamplingSelectorUnavailable
+	QualityEstimateCalibrated
 )
 
 var (
@@ -173,6 +175,20 @@ func mapFlowMessage(binding flowplan.SourceBinding, decoded flowstream.DecodedBa
 	quality |= observationQuality
 	mode, rate, sourceKind, estimatedBytes, estimatedPackets, estimatedValid, samplingQuality := normalizeDecodedCounters(binding, decoded.ObservationDomainID, metadata, message)
 	quality |= samplingQuality
+	scalePPM := uint32(0)
+	if mode == SamplingSampled {
+		scalePPM = binding.EffectiveEstimatedBytesScalePPM()
+		if estimatedValid {
+			var ok bool
+			estimatedBytes, ok = scaleEstimatedBytes(estimatedBytes, scalePPM)
+			if !ok {
+				estimatedBytes, estimatedPackets, estimatedValid = 0, 0, false
+				quality |= QualityCounterOverflow
+			} else if scalePPM != flowplan.EstimateScaleOnePPM {
+				quality |= QualityEstimateCalibrated
+			}
+		}
+	}
 	return &Record{
 		RecordIndex:     index,
 		EventTimeUnixMS: eventTime.UnixMilli(),
@@ -183,7 +199,7 @@ func mapFlowMessage(binding flowplan.SourceBinding, decoded flowstream.DecodedBa
 		SourcePort: message.SrcPort, DestinationPort: message.DstPort,
 		IPProtocol: message.Proto, TCPFlags: message.TcpFlags,
 		RawBytes: message.Bytes, RawPackets: message.Packets,
-		SamplingMode: mode, SamplingRate: rate, SamplingSource: sourceKind,
+		SamplingMode: mode, SamplingRate: rate, SamplingSource: sourceKind, EstimatedBytesScalePPM: scalePPM,
 		EstimatedValid: estimatedValid, EstimatedBytes: estimatedBytes, EstimatedPackets: estimatedPackets,
 		FlowDurationMS: duration, QualityFlags: quality,
 		SourceASN: message.SrcAs, DestinationASN: message.DstAs,
@@ -191,6 +207,20 @@ func mapFlowMessage(binding flowplan.SourceBinding, decoded flowstream.DecodedBa
 		SampleSequence: metadata.SampleSequence, SamplePool: metadata.SamplePool,
 		ExporterDrops: metadata.ExporterDrops, SampleIndex: metadata.SampleIndex,
 	}, nil
+}
+
+func scaleEstimatedBytes(value uint64, scalePPM uint32) (uint64, bool) {
+	if scalePPM == 0 {
+		scalePPM = flowplan.EstimateScaleOnePPM
+	}
+	hi, lo := bits.Mul64(value, uint64(scalePPM))
+	lo, carry := bits.Add64(lo, uint64(flowplan.EstimateScaleOnePPM/2), 0)
+	hi += carry
+	if hi >= uint64(flowplan.EstimateScaleOnePPM) {
+		return 0, false
+	}
+	quotient, _ := bits.Div64(hi, lo, uint64(flowplan.EstimateScaleOnePPM))
+	return quotient, true
 }
 
 func flowTimes(message *flowstream.DecodedRecord, receivedAt time.Time) (time.Time, uint64, uint64) {

@@ -23,6 +23,9 @@ type SamplingMode uint8
 const (
 	SamplingModeSampled   SamplingMode = 1
 	SamplingModePreScaled SamplingMode = 2
+	EstimateScaleOnePPM                = uint32(1_000_000)
+	EstimateScaleMinPPM                = uint32(500_000)
+	EstimateScaleMaxPPM                = uint32(2_000_000)
 )
 
 type Observation struct {
@@ -39,12 +42,15 @@ type SourceBinding struct {
 	// OwnershipEpoch is increased by the control plane every time this
 	// exporter binding moves to another collector. Schema-v1 plans implicitly
 	// use epoch 1; schema-v2 plans must carry it explicitly.
-	OwnershipEpoch      uint64                 `json:"ownership_epoch,omitempty"`
-	SamplingMode        SamplingMode           `json:"sampling_mode"`
-	DefaultSamplingRate uint64                 `json:"default_sampling_rate,omitempty"`
-	SamplingRules       []SamplingRule         `json:"sampling_rules,omitempty"`
-	Observations        map[uint32]Observation `json:"observations,omitempty"`
-	Enabled             bool                   `json:"enabled"`
+	OwnershipEpoch      uint64       `json:"ownership_epoch,omitempty"`
+	SamplingMode        SamplingMode `json:"sampling_mode"`
+	DefaultSamplingRate uint64       `json:"default_sampling_rate,omitempty"`
+	// EstimatedBytesScalePPM is an evidence-backed correction applied only to
+	// sampled byte estimates. Zero is the wire-compatible identity value.
+	EstimatedBytesScalePPM uint32                 `json:"estimated_bytes_scale_ppm,omitempty"`
+	SamplingRules          []SamplingRule         `json:"sampling_rules,omitempty"`
+	Observations           map[uint32]Observation `json:"observations,omitempty"`
+	Enabled                bool                   `json:"enabled"`
 }
 
 type SamplingRule struct {
@@ -126,6 +132,12 @@ func compilePlan(plan Plan, now time.Time, requireActive bool) (*Registry, error
 		if source.SamplingMode == SamplingModePreScaled && source.DefaultSamplingRate != 0 {
 			return nil, fmt.Errorf("sources[%d].default_sampling_rate is invalid for pre-scaled counters", i)
 		}
+		if source.EstimatedBytesScalePPM != 0 && (source.EstimatedBytesScalePPM < EstimateScaleMinPPM || source.EstimatedBytesScalePPM > EstimateScaleMaxPPM) {
+			return nil, fmt.Errorf("sources[%d].estimated_bytes_scale_ppm must be between %d and %d", i, EstimateScaleMinPPM, EstimateScaleMaxPPM)
+		}
+		if source.SamplingMode == SamplingModePreScaled && source.EffectiveEstimatedBytesScalePPM() != EstimateScaleOnePPM {
+			return nil, fmt.Errorf("sources[%d].estimated_bytes_scale_ppm is invalid for pre-scaled counters", i)
+		}
 		rules := make(map[string]struct{}, len(source.SamplingRules))
 		for ruleIndex, rule := range source.SamplingRules {
 			if rule.Mode != SamplingModeSampled && rule.Mode != SamplingModePreScaled {
@@ -174,6 +186,13 @@ func compilePlan(plan Plan, now time.Time, requireActive bool) (*Registry, error
 		return compiled[i].ObservationDomainID != nil && compiled[j].ObservationDomainID == nil
 	})
 	return &Registry{plan: plan, bindings: compiled}, nil
+}
+
+func (b SourceBinding) EffectiveEstimatedBytesScalePPM() uint32 {
+	if b.EstimatedBytesScalePPM == 0 {
+		return EstimateScaleOnePPM
+	}
+	return b.EstimatedBytesScalePPM
 }
 
 func (b SourceBinding) EffectiveOwnershipEpoch() uint64 {

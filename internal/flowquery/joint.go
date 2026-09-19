@@ -207,7 +207,7 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		Query: ch.Query{
 			Body: body, Parameters: parameters,
 			Settings: []ch.Setting{
-				{Key: "max_execution_time", Value: "15", Important: true},
+				{Key: "max_execution_time", Value: rawExecutionTime(hasIdentityScope(request.Filters)), Important: true},
 				{Key: "max_result_rows", Value: fmt.Sprint(maxResultRows), Important: true},
 				{Key: "result_overflow_mode", Value: "throw", Important: true},
 				{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
