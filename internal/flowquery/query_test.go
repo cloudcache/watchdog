@@ -322,6 +322,64 @@ func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.
 	}
 }
 
+func TestCompileStorageV2RawEndpointUsesBoundedCandidateThenExactBuckets(t *testing.T) {
+	request := validRequest()
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Dimension = DimensionDestinationIP
+	request.Filters.DeviceIDs = []string{"device-a"}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := compiled.Query.Body
+	for _, required := range []string{
+		"candidate_keys AS",
+		"topKWeighted({candidate_n:UInt16})",
+		"series_key IN (SELECT series_key FROM candidate_keys)",
+		"bucketed AS",
+		"top_series AS",
+		"sum(estimated_bytes) AS rank_value",
+		"if(is_top, tupleElement(candidate_key, 1), '_other')",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("bounded endpoint query missing %q:\n%s", required, body)
+		}
+	}
+	for _, forbidden := range []string{"scored AS", "dense_rank() OVER"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("bounded endpoint query retained unbounded ranking %q:\n%s", forbidden, body)
+		}
+	}
+	if count := strings.Count(body, "AND device_id IN ({device_0:String})"); count != 2 {
+		t.Fatalf("device predicate must be applied to both bounded raw scans, count=%d:\n%s", count, body)
+	}
+	if queryParameter(compiled.Query, "candidate_n") != "'24'" {
+		t.Fatalf("candidate_n=%q", queryParameter(compiled.Query, "candidate_n"))
+	}
+	if setting(compiled.Query, "max_rows_to_read") != "150000000" {
+		t.Fatalf("endpoint scan budget=%q", setting(compiled.Query, "max_rows_to_read"))
+	}
+}
+
+func TestCompileStorageV2EndpointWithResidualFilterKeepsExactFallback(t *testing.T) {
+	request := validRequest()
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Dimension = DimensionSourceIP
+	request.Filters.DimensionValues = []string{"192.0.2.10"}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(compiled.Query.Body, "candidate_keys AS") || !strings.Contains(compiled.Query.Body, "scored AS") {
+		t.Fatalf("explicit endpoint filter must keep the exact residual-filter path:\n%s", compiled.Query.Body)
+	}
+	if setting(compiled.Query, "max_rows_to_read") != "50000000" {
+		t.Fatalf("fallback scan budget=%q", setting(compiled.Query, "max_rows_to_read"))
+	}
+}
+
 func TestCompileStorageV2RejectsUnalignedSplit(t *testing.T) {
 	request := validRequest()
 	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

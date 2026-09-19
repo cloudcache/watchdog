@@ -28,6 +28,13 @@ const (
 	maxValuesPerFilter  = 2_048
 	maxFilterValueBytes = 256
 	maxResultRows       = 250_000
+	// Endpoint Top-N uses two bounded raw scans: one memory-bounded heavy-hitter
+	// candidate pass and one exact bucket pass over only those candidates. The
+	// ordinary 50M guard cannot serve a selected device that legitimately emits
+	// more than 50M sampled records in 24 hours, while 150M still fails closed
+	// before an unscoped multi-device scan can run away.
+	maxEndpointCandidateScanRows = 150_000_000
+	endpointCandidateMultiplier  = 8
 )
 
 type Bucket string
@@ -429,6 +436,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	body := fmt.Sprintf(querySQL, table, table, strings.Join(conditions, "\n    "), metric.column, valueExpression)
 	usesRawFacts := false
 	archiveThrough := time.Time{}
+	endpointCandidateQuery := false
 	if request.StorageV2 {
 		archiveThrough = request.ArchiveThrough.UTC()
 		if archiveThrough.IsZero() {
@@ -456,11 +464,31 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(sourceDuration/time.Second)),
 		)
-		body = fmt.Sprintf(storageV2QuerySQL, table, table,
-			strings.Join(archiveFilters, "\n      "), dimensionExpression,
-			strings.Join(rawFilters, "\n      "), strings.Join(residualFilters, "\n    "),
-			metric.column, valueExpression)
+		endpointCandidateQuery = archiveThrough.Equal(from) &&
+			(request.Dimension == DimensionSourceIP || request.Dimension == DimensionDestinationIP) &&
+			len(residualFilters) == 0
+		if endpointCandidateQuery {
+			candidateCount := uint64(request.TopN) * endpointCandidateMultiplier
+			parameters = append(parameters, uintParameter("candidate_n", candidateCount))
+			rankWeight := metric.column
+			if request.Metric == MetricReceivedRecords {
+				rankWeight = "toUInt64(1)"
+			}
+			body = fmt.Sprintf(storageV2RawEndpointQuerySQL,
+				dimensionExpression, rankWeight, strings.Join(rawFilters, "\n      "),
+				dimensionExpression, strings.Join(rawFilters, "\n      "),
+				metric.column, valueExpression)
+		} else {
+			body = fmt.Sprintf(storageV2QuerySQL, table, table,
+				strings.Join(archiveFilters, "\n      "), dimensionExpression,
+				strings.Join(rawFilters, "\n      "), strings.Join(residualFilters, "\n    "),
+				metric.column, valueExpression)
+		}
 		usesRawFacts = archiveThrough.Before(to)
+	}
+	maxRowsToRead := "50000000"
+	if endpointCandidateQuery {
+		maxRowsToRead = strconv.Itoa(maxEndpointCandidateScanRows)
 	}
 	query := ch.Query{
 		Body:       body,
@@ -469,7 +497,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			{Key: "max_execution_time", Value: "15", Important: true},
 			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
 			{Key: "result_overflow_mode", Value: "throw", Important: true},
-			{Key: "max_rows_to_read", Value: "50000000", Important: true},
+			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
 			{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
 			// Keep a hard memory guard even though ranking and output now share
@@ -905,6 +933,126 @@ FROM (
       toUInt64(intDiv(dateDiff('second', {archive_through:DateTime('UTC')}, {to:DateTime('UTC')}), toInt64({source_seconds:UInt32})))
     )
   )
+ORDER BY
+  is_metadata ASC, bucket ASC, is_other ASC, value DESC, dimension_value ASC,
+  dimension_snapshot_id ASC, geo_version ASC, classification_version ASC`
+
+// storageV2RawEndpointQuerySQL is the interactive source/destination-IP path
+// for an all-raw Storage V2 interval. Building an exact GROUP BY state for
+// every endpoint before ranking is pathological on sampled transit traffic:
+// a single selected device can have tens of millions of distinct endpoints in
+// 24 hours. The first scan therefore keeps a bounded weighted heavy-hitter
+// candidate set. The second scan computes exact per-bucket counters for those
+// candidates and one additive `_other` series; exact Top N selection is then
+// performed over that bounded result. This keeps memory proportional to
+// top_n*8 rather than endpoint cardinality while preserving exact values and
+// total conservation for every returned bucket.
+const storageV2RawEndpointQuerySQL = `WITH
+  candidate_keys AS (
+    SELECT arrayJoin(
+      topKWeighted({candidate_n:UInt16})(
+        tuple(
+          CAST(%s AS String),
+          CAST(dimension_snapshot_id AS String),
+          CAST(geo_version AS String),
+          classification_version
+        ),
+        %s
+      )
+    ) AS series_key
+    FROM flow_records FINAL
+    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+      AND disposition = 'count'
+      %s
+  ),
+  tagged AS (
+    SELECT
+      toDateTime(
+        toUnixTimestamp({from:DateTime('UTC')}) +
+        intDiv(toUnixTimestamp(event_time) - toUnixTimestamp({from:DateTime('UTC')}), {bucket_seconds:UInt32}) * {bucket_seconds:UInt32},
+        'UTC'
+      ) AS output_bucket,
+      tuple(
+        CAST(%s AS String),
+        CAST(dimension_snapshot_id AS String),
+        CAST(geo_version AS String),
+        classification_version
+      ) AS series_key,
+      series_key IN (SELECT series_key FROM candidate_keys) AS is_candidate,
+      raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+      estimated_valid, quality_flags, received_time
+    FROM flow_records FINAL
+    WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
+      AND disposition = 'count'
+      %s
+  ),
+  bucketed AS (
+    SELECT
+      output_bucket,
+      if(
+        is_candidate,
+        series_key,
+        tuple(
+          '_other', tupleElement(series_key, 2), tupleElement(series_key, 3), tupleElement(series_key, 4)
+        )
+      ) AS candidate_key,
+      sum(raw_bytes) AS raw_bytes,
+      sum(raw_packets) AS raw_packets,
+      sum(estimated_bytes) AS estimated_bytes,
+      sum(estimated_packets) AS estimated_packets,
+      count() AS received_records,
+      countIf(NOT estimated_valid) AS unknown_sampling_records,
+      countIf(quality_flags != 0) AS quality_records,
+      max(received_time) AS generated_at
+    FROM tagged
+    WHERE {include_other:UInt8} = 1 OR is_candidate
+    GROUP BY output_bucket, candidate_key
+  ),
+  top_series AS (
+    SELECT candidate_key AS series_key, sum(%s) AS rank_value
+    FROM bucketed
+    WHERE tupleElement(candidate_key, 1) != '_other'
+    GROUP BY series_key
+    ORDER BY rank_value DESC, series_key ASC
+    LIMIT {top_n:UInt16}
+  ),
+  ranked_buckets AS (
+    SELECT *, candidate_key IN (SELECT series_key FROM top_series) AS is_top
+    FROM bucketed
+  ),
+  series_rows AS (
+    SELECT
+      output_bucket,
+      if(is_top, tupleElement(candidate_key, 1), '_other') AS grouped_dimension_value,
+      if(is_top, toUInt8(0), toUInt8(1)) AS is_other,
+      tupleElement(candidate_key, 2) AS dimension_snapshot_id,
+      tupleElement(candidate_key, 3) AS geo_version,
+      tupleElement(candidate_key, 4) AS classification_version,
+      %s AS value,
+      sum(received_records) AS received_records,
+      sum(unknown_sampling_records) AS unknown_sampling_records,
+      sum(quality_records) AS quality_records,
+      max(generated_at) AS generated_at
+    FROM ranked_buckets
+    WHERE {include_other:UInt8} = 1 OR is_top
+    GROUP BY output_bucket, is_top, grouped_dimension_value,
+      dimension_snapshot_id, geo_version, classification_version
+  )
+SELECT *
+FROM (
+  SELECT
+    output_bucket AS bucket, grouped_dimension_value AS dimension_value, is_other,
+    dimension_snapshot_id, geo_version, classification_version,
+    value, received_records, unknown_sampling_records, quality_records, generated_at,
+    toUInt8(0) AS is_metadata, toUInt64(0) AS covered_buckets
+  FROM series_rows
+  UNION ALL
+  SELECT
+    toDateTime(0, 'UTC'), '', toUInt8(0), '', '', toUInt32(0),
+    toFloat64(0), toUInt64(0), toUInt64(0), toUInt64(0), toDateTime64(0, 3, 'UTC'),
+    toUInt8(1),
+    toUInt64(intDiv(dateDiff('second', {archive_through:DateTime('UTC')}, {to:DateTime('UTC')}), toInt64({source_seconds:UInt32})))
+)
 ORDER BY
   is_metadata ASC, bucket ASC, is_other ASC, value DESC, dimension_value ASC,
   dimension_snapshot_id ASC, geo_version ASC, classification_version ASC`
