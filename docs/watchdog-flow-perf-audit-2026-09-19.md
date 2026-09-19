@@ -327,7 +327,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 2026-09-19 的进一步故障取证确认了两次真实 `MEMORY_LIMIT_EXCEEDED`：分别读取 15,751,262 行/811.23MiB 与 20,938,826 行/1.05GiB，均在 `AggregatingTransform` 将中间状态扩张到约 4.03/4.08GiB 时触发 4GiB 硬上限。失败 SQL 仍是旧部署形状：先按 `dst_ip` 聚合全量事实，随后才在外层按设备过滤。处置第一步是部署 `a777ac83` 的源扫描过滤下推，并让主查询、联合查询与境外查询在 1GiB 时启用 external group-by/external sort。
 
-过滤下推和落盘仍不足以闭环端点查询：同设备当前 24h 范围包含 66,210,292 条事实和 18,374,764 个不同目标 IP；全库为 69,720,428 条事实和 19,431,102 个不同目标 IP。按小时+IP 精确聚合再窗口排名的只读探针即使启用 external group/sort 仍在 15 秒超时。因此源/目的 IP 的 raw-only Storage V2 路径改为两遍有界算法：第一遍以 `topKWeighted(TopN*8)` 获取固定大小候选，第二遍对候选计算精确桶值，并把非候选及候选中未进入最终 Top N 的事实按版本汇入 `_other`。普通查询仍保留 50M rows 上限；仅该有设备过滤、内存有界的双扫描端点路径使用 150M 总读行上限，4GiB read/memory 与 15s 上限不变。真实 ClickHouse 集成验证 Top N、`_other`、records 和完整度守恒；生产 SLO 仍须部署后记录。
+过滤下推和落盘仍不足以闭环端点查询：同设备当前 24h 范围包含 66,210,292 条事实和 18,374,764 个不同目标 IP；全库为 69,720,428 条事实和 19,431,102 个不同目标 IP。按小时+IP 精确聚合再窗口排名的只读探针即使启用 external group/sort 仍在 15 秒超时。因此源/目的 IP 的 raw-only Storage V2 路径改为两遍有界算法：第一遍以 `topKWeighted(TopN*8)` 获取固定大小候选，第二遍只读取当前请求指标并计算候选的精确桶值，同时把非候选及候选中未进入最终 Top N 的事实按版本汇入 `_other`。该路径必须明确选择 device、target 或 exporter；未限定身份的查询仍保留 50M rows/4GiB read 上限。有界双扫描使用 200M 总读行、8GiB 累计列读取上限，内存仍为 4GiB、执行时限仍为 15s。真实 ClickHouse 集成验证 Top N、`_other`、records 和完整度守恒；生产同形只读探针在 71,819,059 条设备事实、约 1,986 万目标 IP 的 24h 范围内用时 4.522s。
 
 同一个 Kafka offset 窄窗口（11,000,000～11,001,000）返回相同的 3,889 条事实时：
 
@@ -361,10 +361,10 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 ### PERF-Q1B 24h 查询聚合内存闭环
 
 - [x] **故障证据**：固定两条生产失败 query，确认不是结果行过多，而是高基数端点聚合在 `AggregatingTransform` 内达到 4GiB；同时确认生产仍使用过滤后置的旧 SQL。
-- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。普通路径保留 50M rows 上限；端点双扫描路径单独使用 150M 总读行预算，4GiB read/memory、15s 上限不变。
-- [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值；端点编译器断言两遍扫描均先应用设备过滤、候选数固定、无 `dense_rank` 高基数状态，带显式 IP/version 残余筛选时仍回退精确路径。
+- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。该路径必须明确选择 device/target/exporter，且第二遍只投影请求指标；普通路径保留 50M rows/4GiB read 上限，端点双扫描使用 200M rows/8GiB 累计读取预算，4GiB memory 和 15s 上限不变。
+- [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值；端点编译器断言两遍扫描均先应用设备过滤、候选数固定、只投影当前指标且无 `dense_rank` 高基数状态；未选择设备或带显式 IP/version 残余筛选时仍回退普通精确门禁路径。
 - [x] **真实 ClickHouse 集成**：隔离数据库写入三个目标 IP，验证候选查询的 Top 1 精确值、版本化 `_other`、records 和 bucket completeness 守恒。
-- [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；以同设备、24h、同 Top-N 重放，核对结果与可完成小窗口等价，并记录 `read_rows/read_bytes/memory_usage/duration`。
+- [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；同设备 24h 同形只读探针已在 4.522s 完成，仍需经认证 API 重放并记录 `system.query_log` 的 `read_rows/read_bytes/memory_usage/duration`。
 - [ ] **回归/提交门禁**：`flowquery/server` 通过后独立提交；生产仍超过 50M/15s 的全设备或高基数查询不得再抬同步上限，应进入两段式 Top-N、热查询层或异步导出工作包。
 
 ### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环

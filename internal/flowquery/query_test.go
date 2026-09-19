@@ -336,10 +336,12 @@ func TestCompileStorageV2RawEndpointUsesBoundedCandidateThenExactBuckets(t *test
 	for _, required := range []string{
 		"candidate_keys AS",
 		"topKWeighted({candidate_n:UInt16})",
-		"series_key IN (SELECT series_key FROM candidate_keys)",
+		"endpoint_value IN (SELECT endpoint_value FROM candidate_keys)",
+		"estimated_bytes AS metric_value",
+		"sum(metric_value) AS metric_value",
 		"bucketed AS",
 		"top_series AS",
-		"sum(estimated_bytes) AS rank_value",
+		"sum(metric_value) AS rank_value",
 		"if(is_top, tupleElement(candidate_key, 1), '_other')",
 	} {
 		if !strings.Contains(body, required) {
@@ -357,8 +359,28 @@ func TestCompileStorageV2RawEndpointUsesBoundedCandidateThenExactBuckets(t *test
 	if queryParameter(compiled.Query, "candidate_n") != "'24'" {
 		t.Fatalf("candidate_n=%q", queryParameter(compiled.Query, "candidate_n"))
 	}
-	if setting(compiled.Query, "max_rows_to_read") != "150000000" {
+	if setting(compiled.Query, "max_rows_to_read") != "200000000" {
 		t.Fatalf("endpoint scan budget=%q", setting(compiled.Query, "max_rows_to_read"))
+	}
+	if setting(compiled.Query, "max_bytes_to_read") != "8589934592" {
+		t.Fatalf("endpoint byte budget=%q", setting(compiled.Query, "max_bytes_to_read"))
+	}
+}
+
+func TestCompileStorageV2RawEndpointWithoutIdentityScopeKeepsExactGuardedPath(t *testing.T) {
+	request := validRequest()
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Dimension = DimensionDestinationIP
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(compiled.Query.Body, "candidate_keys AS") || !strings.Contains(compiled.Query.Body, "scored AS") {
+		t.Fatalf("unscoped endpoint query must retain the ordinary guarded path:\n%s", compiled.Query.Body)
+	}
+	if setting(compiled.Query, "max_rows_to_read") != "50000000" || setting(compiled.Query, "max_bytes_to_read") != "4294967296" {
+		t.Fatalf("unscoped guards rows=%q bytes=%q", setting(compiled.Query, "max_rows_to_read"), setting(compiled.Query, "max_bytes_to_read"))
 	}
 }
 

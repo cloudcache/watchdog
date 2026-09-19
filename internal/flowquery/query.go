@@ -31,10 +31,13 @@ const (
 	// Endpoint Top-N uses two bounded raw scans: one memory-bounded heavy-hitter
 	// candidate pass and one exact bucket pass over only those candidates. The
 	// ordinary 50M guard cannot serve a selected device that legitimately emits
-	// more than 50M sampled records in 24 hours, while 150M still fails closed
-	// before an unscoped multi-device scan can run away.
-	maxEndpointCandidateScanRows = 150_000_000
-	endpointCandidateMultiplier  = 8
+	// more than 50M sampled records in 24 hours. The endpoint path is enabled
+	// only with an explicit device/target/exporter scope; its two raw scans have
+	// separate row/read-byte budgets while retaining the ordinary 4 GiB memory
+	// and 15 second execution guards.
+	maxEndpointCandidateScanRows  = 200_000_000
+	maxEndpointCandidateScanBytes = 8 << 30
+	endpointCandidateMultiplier   = 8
 )
 
 type Bucket string
@@ -464,20 +467,30 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(sourceDuration/time.Second)),
 		)
-		endpointCandidateQuery = archiveThrough.Equal(from) &&
+		endpointScoped := len(request.Filters.DeviceIDs) > 0 || len(request.Filters.TargetIDs) > 0 || len(request.Filters.ExporterIDs) > 0
+		endpointCandidateQuery = archiveThrough.Equal(from) && endpointScoped &&
 			(request.Dimension == DimensionSourceIP || request.Dimension == DimensionDestinationIP) &&
 			len(residualFilters) == 0
 		if endpointCandidateQuery {
 			candidateCount := uint64(request.TopN) * endpointCandidateMultiplier
 			parameters = append(parameters, uintParameter("candidate_n", candidateCount))
-			rankWeight := metric.column
+			metricInput := metric.column
 			if request.Metric == MetricReceivedRecords {
-				rankWeight = "toUInt64(1)"
+				metricInput = "toUInt64(1)"
+			}
+			candidateValueExpression := "toFloat64(sum(metric_value))"
+			if metric.rate {
+				multiplier := uint64(1)
+				if request.Metric == MetricRawBitsPerSecond || request.Metric == MetricEstimatedBPS {
+					multiplier = 8
+				}
+				denominator := "greatest(toUInt32(1), least({bucket_seconds:UInt32}, toUInt32(dateDiff('second', output_bucket, {to:DateTime('UTC')}))))"
+				candidateValueExpression = fmt.Sprintf("toFloat64(sum(metric_value)) * %d / %s", multiplier, denominator)
 			}
 			body = fmt.Sprintf(storageV2RawEndpointQuerySQL,
-				dimensionExpression, rankWeight, strings.Join(rawFilters, "\n      "),
-				dimensionExpression, strings.Join(rawFilters, "\n      "),
-				metric.column, valueExpression)
+				dimensionExpression, metricInput, strings.Join(rawFilters, "\n      "),
+				dimensionExpression, metricInput, strings.Join(rawFilters, "\n      "),
+				candidateValueExpression)
 		} else {
 			body = fmt.Sprintf(storageV2QuerySQL, table, table,
 				strings.Join(archiveFilters, "\n      "), dimensionExpression,
@@ -487,8 +500,10 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		usesRawFacts = archiveThrough.Before(to)
 	}
 	maxRowsToRead := "50000000"
+	maxBytesToRead := "4294967296"
 	if endpointCandidateQuery {
 		maxRowsToRead = strconv.Itoa(maxEndpointCandidateScanRows)
+		maxBytesToRead = strconv.FormatUint(maxEndpointCandidateScanBytes, 10)
 	}
 	query := ch.Query{
 		Body:       body,
@@ -498,7 +513,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
 			{Key: "result_overflow_mode", Value: "throw", Important: true},
 			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
-			{Key: "max_bytes_to_read", Value: "4294967296", Important: true},
+			{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
 			// Keep a hard memory guard even though ranking and output now share
 			// one FINAL scan through a window-ranked pipeline.
@@ -942,24 +957,20 @@ ORDER BY
 // every endpoint before ranking is pathological on sampled transit traffic:
 // a single selected device can have tens of millions of distinct endpoints in
 // 24 hours. The first scan therefore keeps a bounded weighted heavy-hitter
-// candidate set. The second scan computes exact per-bucket counters for those
+// candidate set. The second scan computes exact per-bucket values for those
 // candidates and one additive `_other` series; exact Top N selection is then
 // performed over that bounded result. This keeps memory proportional to
-// top_n*8 rather than endpoint cardinality while preserving exact values and
-// total conservation for every returned bucket.
+// top_n*8 rather than endpoint cardinality. Only the requested metric is read
+// and aggregated on the second pass; values and total conservation are exact
+// for every returned bucket.
 const storageV2RawEndpointQuerySQL = `WITH
   candidate_keys AS (
     SELECT arrayJoin(
       topKWeighted({candidate_n:UInt16})(
-        tuple(
-          CAST(%s AS String),
-          CAST(dimension_snapshot_id AS String),
-          CAST(geo_version AS String),
-          classification_version
-        ),
+        CAST(%s AS String),
         %s
       )
-    ) AS series_key
+    ) AS endpoint_value
     FROM flow_records FINAL
     WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
@@ -972,14 +983,15 @@ const storageV2RawEndpointQuerySQL = `WITH
         intDiv(toUnixTimestamp(event_time) - toUnixTimestamp({from:DateTime('UTC')}), {bucket_seconds:UInt32}) * {bucket_seconds:UInt32},
         'UTC'
       ) AS output_bucket,
+      CAST(%s AS String) AS endpoint_value,
       tuple(
-        CAST(%s AS String),
+        endpoint_value,
         CAST(dimension_snapshot_id AS String),
         CAST(geo_version AS String),
         classification_version
       ) AS series_key,
-      series_key IN (SELECT series_key FROM candidate_keys) AS is_candidate,
-      raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+      endpoint_value IN (SELECT endpoint_value FROM candidate_keys) AS is_candidate,
+      %s AS metric_value,
       estimated_valid, quality_flags, received_time
     FROM flow_records FINAL
     WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
@@ -996,10 +1008,7 @@ const storageV2RawEndpointQuerySQL = `WITH
           '_other', tupleElement(series_key, 2), tupleElement(series_key, 3), tupleElement(series_key, 4)
         )
       ) AS candidate_key,
-      sum(raw_bytes) AS raw_bytes,
-      sum(raw_packets) AS raw_packets,
-      sum(estimated_bytes) AS estimated_bytes,
-      sum(estimated_packets) AS estimated_packets,
+      sum(metric_value) AS metric_value,
       count() AS received_records,
       countIf(NOT estimated_valid) AS unknown_sampling_records,
       countIf(quality_flags != 0) AS quality_records,
@@ -1009,7 +1018,7 @@ const storageV2RawEndpointQuerySQL = `WITH
     GROUP BY output_bucket, candidate_key
   ),
   top_series AS (
-    SELECT candidate_key AS series_key, sum(%s) AS rank_value
+    SELECT candidate_key AS series_key, sum(metric_value) AS rank_value
     FROM bucketed
     WHERE tupleElement(candidate_key, 1) != '_other'
     GROUP BY series_key
