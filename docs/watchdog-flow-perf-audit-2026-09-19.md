@@ -356,8 +356,8 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 ### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环
 
-- [ ] **设计/证据**：以设备绑定为作用域，冻结七牛客户的 IPv4、原生 IPv6 CIDR 清单及边界样本；核对 MySQL 草稿、已批准 WADS 地址快照、Flow 配对版本、worker ACK/LKG 四个版本号，不把全局 Geo 地址库当客户碎片地址的维护入口。
-- [ ] **编码**：统一地址规范为 16 字节可比较形式；IPv4 与 IPv4-mapped IPv6 只在协议边界显式 `Unmap`，原生 IPv6 不降级、不加/减伪前缀；worker 对源/目的地址各做一次 LPM，最长前缀命中结果同时供客户归属、方向和六分类使用。
+- [x] **设计/本地证据**：以设备绑定为作用域，冻结七牛客户的 IPv4 `120.199.32.128/25`、原生 IPv6 `2409:8728:8ff:1077::/64` 及边界样本；确认生产 MySQL 草稿已有双栈 CIDR，但当前 worker 静态 bootstrap 产物只有 IPv4，且未启用 control-plane 版本拉取。生产 WADS/配对版本/ACK/LKG 仍须发布核对，不把全局 Geo 地址库当客户碎片地址的维护入口。
+- [x] **编码与本地回归**：统一地址规范为 16 字节可比较形式；IPv4 与 IPv4-mapped IPv6 只在协议边界显式 `Unmap`，原生 IPv6 不降级、不加/减伪前缀；worker 对源/目的地址做 LPM，最长前缀命中结果供客户归属、方向和六分类使用。`6b6bb622` 已增加 classification、worker enrichment、Gin→worker 配对版本三层双栈回归测试。
 - [ ] **写入校验**：在 `flow_records` 核对原始 src/dst、local/remote、device/exporter、business、category、address/dimension snapshot 与 classification version；若旧事实版本不含新客户边界，明确走历史重分类，不允许查询层临时猜归属。
 - [ ] **查询校验**：源 IP、目的 IP、多维、六报表和导出均显示“七牛”而非 `_unassigned`；IPv4/IPv6 使用相同客户口径，展示层将 `::ffff:x.x.x.x` 规范为 IPv4 文本但不误改原生 IPv6。
 - [ ] **单元测试**：覆盖 IPv4、IPv4-mapped IPv6、原生 IPv6、CIDR 首尾地址、相邻不命中、重叠前缀最长匹配、同客户多 CIDR、同设备多客户、跨设备同 CIDR 隔离。
@@ -366,15 +366,29 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 ### PERF-RECON1 172.57.1.2 的 SNMP ↔ sFlow 端口守恒对账
 
-- [ ] **身份与范围冻结**：设备 `172.57.1.2` 与 `103.83.64.2` 是两台独立设备；前者通过自身接口地址 `100.64.20.2` 向 collector 发送 sFlow。冻结实际启用 sFlow 的 10 个 ifIndex、同一 UTC `[from,to)` 窗口、SNMP 采样步长、Flow exporter/device 映射和分类版本。
-- [ ] **SNMP 口径**：按端口用 `ifHCOutOctets` 差分得到字节数，识别 counter reset/wrap、`ifCounterDiscontinuityTime`、缺桶和端口状态变化；不得把瞬时 bps 相加当窗口字节，也不得混入未开启 sFlow 的端口。
-- [ ] **sFlow 口径**：按同一设备和 10 个端口核对 datagram agent/source、input/output ifIndex、sample pool/sequence、sampling rate、raw bytes/packets 与 estimated bytes/packets；逐层统计 UDP 接收、decode reject、unknown sampling、Kafka produce/consume、CH accepted/reconciled/drop。
+- [x] **身份与范围冻结**：设备 `172.57.1.2` 与 `103.83.64.2` 是两台独立设备；前者通过自身接口地址 `100.64.20.2` 向 collector 发送 sFlow。首个生产基线冻结 ifIndex `72..81`（`25GE1/0/1..10`）及 UTC `[2026-09-19 00:00:00,01:00:00)`；Flow 必须按 `egress_if_index` 对账，不能拿 observation ifIndex 或业务方向替代物理端口流出。
+- [x] **SNMP 口径与基线**：同窗已按发布 generation 的 `snmp_interface_traffic_5m FINAL` 读取 12 个 5 分钟桶；10 端口流出为 `9.203–9.264 Gbps`，coverage 最低 `0.8052`、reset/gap 均为 0。后续实现仍须按 `ifHCOutOctets` 差分语义识别 reset/wrap、`ifCounterDiscontinuityTime`、缺桶和端口状态变化；不得把瞬时 bps 相加当窗口字节。
+- [x] **sFlow 事实基线**：同窗 `flow_records FINAL` 按 device+`egress_if_index` 得到 `8.144–8.218 Gbps`、各端口约 33.8–34.1 万记录、sampling rate 恒为 `8192`，相对 SNMP 约 `88%–89%`。这证明 10 端口并非完全未覆盖，但存在稳定偏差；业务方向/客户归属筛选造成的二次减量必须与物理端口事实分开核对。UDP 接收、sequence gap、collector/kernel drop、Kafka/worker lag、CH reject 仍待补齐。
+- [x] **4096 变更复测**：设备在 `2026-09-19 01:55:00 UTC` 切换；单个完整 5 分钟桶内 4096 记录约 61.2–62.1k/端口，接近此前 8192 的 31.8–32.6k/端口两倍，估算总量未随倍率翻倍或减半。`01:50` 的 8192 桶逐端口 Flow/SNMP 为 `96.8%–98.5%`，`01:55` 混合切换桶为 `96.5%–97.9%`；最近 15 分钟无 `mapping_rejected`，有 120 个零 flow-record 的 `empty` 回执。需观察更多纯 4096 完整桶，且不能把相邻时段自然流量/覆盖变化误归因于采样率。
 - [ ] **方向与端口映射**：明确“设备端口流出”和“本地网络视角流出”不是天然同义；分别产出 observation-port 守恒表与业务方向守恒表，验证 input/output ifIndex 的选择，不允许因客户 CIDR 未命中而让总量消失。
 - [ ] **差额分类**：逐端口计算 `flow_estimated_out_bytes / snmp_ifHCOutOctets_delta`，把差额归入 exporter 未覆盖、ifIndex 错配、采样率未知/变化、序列缺口、collector/kernel drop、Kafka/worker lag、CH reject、查询漏筛或二层同流多端口计数；只报告差异，不自动调平。
 - [ ] **实现/API**：复用现有 SNMP CH reader 与 Flow fact reader，提供有界同窗 reconciliation 结果（设备、端口、SNMP、Flow、比率、证据/质量标志）；长窗口和批量端口通过 operation job 渐进执行、可取消/重试/导出，不占 HTTP 生命周期。
 - [ ] **单元测试**：10 端口、不同采样率、sampling unknown、sequence gap、counter reset/wrap、缺桶、端口 down、IPv4/IPv6、重复 Kafka 消费与同一流经多端口场景。
 - [ ] **真实集成**：真实 SNMP CH + Flow CH 同窗对账；核对 receipts 的 count/counter 与事实一致；注入丢包/缺采样/错 ifIndex 后只产生对应问题，不修改原始数据。
 - [ ] **性能/回归/提交门禁**：对账必须按 device+ifIndex+time 裁剪，记录 read_rows/P95；跑 snmpch/flowch/flowquery/billing/server 以及真实 CH 回归后独立提交。容差由生产基线和采样统计确定，不在代码中拍脑袋写死。
+
+### PERF-SFC1 sFlow 接口 counter 真值、覆盖与校准闭环
+
+> 约束：counter sample 与 packet flow sample 是两条独立遥测通道。丢弃 counter 不会直接降低 `estimated_bytes`，但会丢失同源接口真值和“哪些端口/方向实际启用了包采样”的证据。任何校准结果必须是带版本和 provenance 的派生口径，绝不覆盖 raw/estimated 事实。
+
+- [x] **设计冻结**：支持标准/expanded counter sample 的 generic interface counter；冻结 agent/sub-agent/datagram sequence、sample source/sequence/index、record index、ifIndex/ifSpeed/ifDirection/ifStatus、in/out octets、单播/组播/广播包、discard/error/unknown-protocol 字段及 Kafka 坐标身份。
+- [x] **解码**：fast sFlow 解码器已读取 generic interface counter；未知的合法 counter record 只跳过该 record，并覆盖标准/expanded、counter-only、多 record 和截断测试。当前只完成 decoder carrier，counter-only 只有在下一个 Kafka→worker→CH 切片完成后才能从 `empty` 改为 `persisted`，避免假回执。继续保留 flow sample 原有零拷贝路径。
+- [ ] **可靠传输/回执**：CounterRecord 随原 datagram 经 Kafka→worker；回执分别记录 flow fact count 与 counter record count，重放以 Kafka 坐标幂等，crash/rebalance/CH timeout 后两类事实与回执最终收敛。
+- [ ] **ClickHouse 存储**：新增累计量表 `sflow_interface_counters`，以 device/exporter+ifIndex+event time 查询，以 Kafka 坐标去重；差分层处理 32/64 位 wrap、reset、乱序、迟到和 discontinuity。不得无来源标记地混写现有 SNMP 表。
+- [ ] **对账/告警**：按 `(device,ifIndex,direction,5m)` 计算 counter delta、Flow estimated 与 `k=counter/estimated`；分别输出“有 counter 无 flow 样本”的覆盖问题、持续漂移、序列缺口、未知倍率、绑定/ifIndex 错误，不自动调平。
+- [ ] **派生校准口径**：raw/estimated 永久不变；仅在质量门禁通过时生成 versioned calibrated 派生值，保存 counter 窗口、倍率、版本和证据。供应商/客户视角及 billing 是否采用必须显式配置，缺 counter/覆盖不足时 fail-closed，不回退为隐式倍率。
+- [ ] **单元测试**：标准/expanded、counter-only、混合 sample、多 record、未知 record、截断、IPv4/IPv6 agent；差分、wrap/reset、迟到/重复、单/双向覆盖、零 estimated、质量阈值和 raw 不可变。
+- [ ] **真实集成/性能**：真实 Huawei CE datagram→Kafka→worker→CH；与 SNMP 同窗 10 端口核对，验证 counter 与 SNMP、packet estimate 三方差异；记录 decoder records/s、worker P95、CH read_rows/bytes，72h soak 无回执漂移后独立提交。
 
 ### PERF-Q2 查询、聚类与存储后续闭环
 

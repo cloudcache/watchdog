@@ -27,9 +27,10 @@ import (
 // These are package-level sentinels, not per-call errors.New, so the happy path
 // allocates nothing.
 var (
-	errSFlowFallback        = errors.New("sflow: fall back to the reference decoder")
-	errSFlowTruncatedSample = errors.New("sflow: truncated flow sample")
-	errSFlowTruncatedRecord = errors.New("sflow: truncated flow record")
+	errSFlowFallback         = errors.New("sflow: fall back to the reference decoder")
+	errSFlowTruncatedSample  = errors.New("sflow: truncated flow sample")
+	errSFlowTruncatedRecord  = errors.New("sflow: truncated flow record")
+	errSFlowTruncatedCounter = errors.New("sflow: truncated counter record")
 )
 
 // sflowCursor is a bounds-checked big-endian reader over one XDR-encoded slice.
@@ -46,6 +47,15 @@ func (c *sflowCursor) u32() (uint32, bool) {
 	}
 	v := uint32(c.buf[c.off])<<24 | uint32(c.buf[c.off+1])<<16 | uint32(c.buf[c.off+2])<<8 | uint32(c.buf[c.off+3])
 	c.off += 4
+	return v, true
+}
+
+func (c *sflowCursor) u64() (uint64, bool) {
+	if c.off+8 > len(c.buf) {
+		return 0, false
+	}
+	v := binary.BigEndian.Uint64(c.buf[c.off : c.off+8])
+	c.off += 8
 	return v, true
 }
 
@@ -113,6 +123,7 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 
 	d.recordBacking = growRecords(d.recordBacking, int(samplesCount))
 	d.sflowMetadata = d.sflowMetadata[:0]
+	d.sflowCounterBacking = d.sflowCounterBacking[:0]
 	d.sflowAgentIP = agentIP.Unmap()
 	d.sflowSubAgent = subAgentID
 	d.sflowSequence = sequence
@@ -140,14 +151,143 @@ func (d *Decoder) decodeSFlowV5Fast(payload []byte, timeReceivedNs uint64) error
 			record.SamplerAddress = agentBytes
 			d.sflowMetadata = append(d.sflowMetadata, metadata)
 			out++
-		case sflow.SAMPLE_FORMAT_COUNTER, sflow.SAMPLE_FORMAT_EXPANDED_COUNTER, sflow.SAMPLE_FORMAT_DROP:
-			// Valid samples, but GoFlow2's producer maps neither counters nor drops.
+		case sflow.SAMPLE_FORMAT_COUNTER, sflow.SAMPLE_FORMAT_EXPANDED_COUNTER:
+			if err := d.decodeSFlowCounterSample(sflowCursor{buf: body}, format, subAgentID, uint32(i)); err != nil {
+				return err
+			}
+		case sflow.SAMPLE_FORMAT_DROP:
+			// Drop samples are valid but are not interface counters.
 		default:
 			return errSFlowFallback // GoFlow2's DecodeSample errors on unknown formats.
 		}
 	}
 	d.recordBacking = d.recordBacking[:out]
 	return nil
+}
+
+func (d *Decoder) decodeSFlowCounterSample(c sflowCursor, format, subAgentID, sampleIndex uint32) error {
+	var sequence, sourceIDType, sourceIDValue, recordsCount uint32
+	if format == sflow.SAMPLE_FORMAT_COUNTER {
+		if c.remaining() < 12 {
+			return errSFlowTruncatedCounter
+		}
+		sequence = binary.BigEndian.Uint32(c.buf[c.off : c.off+4])
+		sourceID := binary.BigEndian.Uint32(c.buf[c.off+4 : c.off+8])
+		sourceIDType, sourceIDValue = sourceID>>24, sourceID&0x00ffffff
+		recordsCount = binary.BigEndian.Uint32(c.buf[c.off+8 : c.off+12])
+		c.off += 12
+	} else {
+		if c.remaining() < 16 {
+			return errSFlowTruncatedCounter
+		}
+		sequence = binary.BigEndian.Uint32(c.buf[c.off : c.off+4])
+		sourceIDType = binary.BigEndian.Uint32(c.buf[c.off+4 : c.off+8])
+		sourceIDValue = binary.BigEndian.Uint32(c.buf[c.off+8 : c.off+12])
+		recordsCount = binary.BigEndian.Uint32(c.buf[c.off+12 : c.off+16])
+		c.off += 16
+	}
+	if recordsCount > 1000 {
+		return fmt.Errorf("sflow: too many counter records: %d", recordsCount)
+	}
+
+	for recordIndex := uint32(0); recordIndex < recordsCount; recordIndex++ {
+		if c.remaining() < 8 {
+			return errSFlowTruncatedCounter
+		}
+		dataFormat := binary.BigEndian.Uint32(c.buf[c.off : c.off+4])
+		recordLength := binary.BigEndian.Uint32(c.buf[c.off+4 : c.off+8])
+		c.off += 8
+		body, ok := c.take(int(recordLength))
+		if !ok {
+			return errSFlowTruncatedCounter
+		}
+		// dataFormat encodes enterprise in the high 20 bits and format in the
+		// low 12. Only enterprise 0 / generic interface counters are needed for
+		// portable interface truth; all other legal records remain skippable.
+		if dataFormat>>12 != 0 || dataFormat&0x0fff != sflow.COUNTER_TYPE_IF {
+			continue
+		}
+		counter, err := decodeSFlowGenericInterfaceCounter(body)
+		if err != nil {
+			return err
+		}
+		counter.SubAgentID = subAgentID
+		counter.SourceIDType = sourceIDType
+		counter.SourceIDValue = sourceIDValue
+		counter.SampleSequence = sequence
+		counter.SampleIndex = sampleIndex
+		counter.RecordIndex = recordIndex
+		d.sflowCounterBacking = append(d.sflowCounterBacking, counter)
+	}
+	return nil
+}
+
+func decodeSFlowGenericInterfaceCounter(data []byte) (DecodedCounterRecord, error) {
+	// The generic interface counter record is fixed-width XDR (88 bytes).
+	if len(data) < 88 {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	c := sflowCursor{buf: data}
+	var result DecodedCounterRecord
+	var ok bool
+	if result.IfIndex, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfType, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfSpeed, ok = c.u64(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfDirection, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfStatus, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInOctets, ok = c.u64(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInUcastPkts, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInMulticastPkts, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInBroadcastPkts, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInDiscards, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInErrors, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfInUnknownProtos, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfOutOctets, ok = c.u64(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfOutUcastPkts, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfOutMulticastPkts, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfOutBroadcastPkts, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfOutDiscards, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfOutErrors, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	if result.IfPromiscuousMode, ok = c.u32(); !ok {
+		return DecodedCounterRecord{}, errSFlowTruncatedCounter
+	}
+	return result, nil
 }
 
 func (d *Decoder) decodeSFlowFlowSample(c sflowCursor, record *DecodedRecord, format, subAgentID uint32, timeReceivedNs uint64, sampleIndex int) (DecodedRecordMetadata, error) {

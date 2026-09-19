@@ -4,6 +4,7 @@
 package flowstream
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -58,6 +59,88 @@ func TestSFlowFastMatchesGoFlow2(t *testing.T) {
 				t.Fatalf("metadata differs:\nfast=%+v\nslow=%+v", fastBatch.RecordMetadata, slowBatch.RecordMetadata)
 			}
 		})
+	}
+}
+
+func TestSFlowFastDecodesGenericInterfaceCounters(t *testing.T) {
+	decoder, err := NewDecoder(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+
+	first := sflow.IfCounters{
+		IfIndex: 72, IfType: 6, IfSpeed: 10_000_000_000, IfDirection: 1, IfStatus: 3,
+		IfInOctets: 101, IfInUcastPkts: 102, IfInMulticastPkts: 103, IfInBroadcastPkts: 104,
+		IfInDiscards: 105, IfInErrors: 106, IfInUnknownProtos: 107,
+		IfOutOctets: 201, IfOutUcastPkts: 202, IfOutMulticastPkts: 203, IfOutBroadcastPkts: 204,
+		IfOutDiscards: 205, IfOutErrors: 206, IfPromiscuousMode: 2,
+	}
+	second := first
+	second.IfIndex = 73
+	second.IfInOctets = 301
+	second.IfOutOctets = 401
+
+	packet := sflow.Packet{
+		Version: 5, IPVersion: 1, AgentIP: decoderutils.IPAddress{192, 0, 2, 9},
+		SubAgentId: 7, SequenceNumber: 108, Uptime: 1000,
+		Samples: []interface{}{
+			sflow.CounterSample{
+				Header: sflow.SampleHeader{SampleSequenceNumber: 40, SourceIdType: 0, SourceIdValue: 72},
+				Records: []sflow.CounterRecord{
+					{Data: first},
+					{Header: sflow.RecordHeader{DataFormat: sflow.COUNTER_TYPE_ETH}, Data: sflow.EthernetCounters{}},
+				},
+			},
+			sflow.CounterSample{
+				Header:  sflow.SampleHeader{Format: sflow.SAMPLE_FORMAT_EXPANDED_COUNTER, SampleSequenceNumber: 41, SourceIdType: 3, SourceIdValue: 73},
+				Records: []sflow.CounterRecord{{Data: second}},
+			},
+		},
+	}
+	payload, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := decoder.DecodeValue(rawFlowValue(t, flowpb.RawFlow_DECODER_SFLOW, payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Records) != 0 {
+		t.Fatalf("flow records=%d, want 0", len(batch.Records))
+	}
+	if len(batch.CounterRecords) != 2 {
+		t.Fatalf("counter records=%d, want 2: %+v", len(batch.CounterRecords), batch.CounterRecords)
+	}
+	wantFirst := DecodedCounterRecord{
+		SubAgentID: 7, SourceIDValue: 72, SampleSequence: 40, SampleIndex: 0, RecordIndex: 0,
+		IfIndex: 72, IfType: 6, IfSpeed: 10_000_000_000, IfDirection: 1, IfStatus: 3,
+		IfInOctets: 101, IfInUcastPkts: 102, IfInMulticastPkts: 103, IfInBroadcastPkts: 104,
+		IfInDiscards: 105, IfInErrors: 106, IfInUnknownProtos: 107,
+		IfOutOctets: 201, IfOutUcastPkts: 202, IfOutMulticastPkts: 203, IfOutBroadcastPkts: 204,
+		IfOutDiscards: 205, IfOutErrors: 206, IfPromiscuousMode: 2,
+	}
+	if !reflect.DeepEqual(batch.CounterRecords[0], wantFirst) {
+		t.Fatalf("standard counter differs:\ngot =%+v\nwant=%+v", batch.CounterRecords[0], wantFirst)
+	}
+	wantSecond := wantFirst
+	wantSecond.SourceIDType = 3
+	wantSecond.SourceIDValue = 73
+	wantSecond.SampleSequence = 41
+	wantSecond.SampleIndex = 1
+	wantSecond.IfIndex = 73
+	wantSecond.IfInOctets = 301
+	wantSecond.IfOutOctets = 401
+	if !reflect.DeepEqual(batch.CounterRecords[1], wantSecond) {
+		t.Fatalf("expanded counter differs:\ngot =%+v\nwant=%+v", batch.CounterRecords[1], wantSecond)
+	}
+}
+
+func TestSFlowGenericInterfaceCounterRejectsTruncation(t *testing.T) {
+	for length := 0; length < 88; length++ {
+		if _, err := decodeSFlowGenericInterfaceCounter(make([]byte, length)); !errors.Is(err, errSFlowTruncatedCounter) {
+			t.Fatalf("length %d: error=%v, want %v", length, err, errSFlowTruncatedCounter)
+		}
 	}
 }
 

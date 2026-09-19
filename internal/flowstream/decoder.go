@@ -37,6 +37,39 @@ type DecodedBatch struct {
 	AgentIP             netip.Addr
 	Records             []DecodedRecord
 	RecordMetadata      []DecodedRecordMetadata
+	CounterRecords      []DecodedCounterRecord
+}
+
+// DecodedCounterRecord is one generic-interface counter record carried by an
+// sFlow counter sample. Values are cumulative device counters; consumers must
+// difference adjacent records and handle reset/wrap before deriving rates.
+type DecodedCounterRecord struct {
+	SubAgentID     uint32
+	SourceIDType   uint32
+	SourceIDValue  uint32
+	SampleSequence uint32
+	SampleIndex    uint32
+	RecordIndex    uint32
+
+	IfIndex            uint32
+	IfType             uint32
+	IfSpeed            uint64
+	IfDirection        uint32
+	IfStatus           uint32
+	IfInOctets         uint64
+	IfInUcastPkts      uint32
+	IfInMulticastPkts  uint32
+	IfInBroadcastPkts  uint32
+	IfInDiscards       uint32
+	IfInErrors         uint32
+	IfInUnknownProtos  uint32
+	IfOutOctets        uint64
+	IfOutUcastPkts     uint32
+	IfOutMulticastPkts uint32
+	IfOutBroadcastPkts uint32
+	IfOutDiscards      uint32
+	IfOutErrors        uint32
+	IfPromiscuousMode  uint32
 }
 
 // DecodedRecord is the carrier for one decoded flow record: a plain Go value
@@ -139,12 +172,13 @@ type Decoder struct {
 	// Scratch is the one GoFlow2 message reused only for SampledHeader records
 	// (fed to the hardened ParseSampledHeader). sflowMetadata / sflow{AgentIP,
 	// SubAgent,Sequence} are its reused outputs and datagram identity.
-	fastSFlow          bool
-	sflowHeaderScratch protoproducer.ProtoProducerMessage
-	sflowMetadata      []DecodedRecordMetadata
-	sflowAgentIP       netip.Addr
-	sflowSubAgent      uint32
-	sflowSequence      uint32
+	fastSFlow           bool
+	sflowHeaderScratch  protoproducer.ProtoProducerMessage
+	sflowMetadata       []DecodedRecordMetadata
+	sflowCounterBacking []DecodedCounterRecord
+	sflowAgentIP        netip.Addr
+	sflowSubAgent       uint32
+	sflowSequence       uint32
 }
 
 // maxInternedIDs bounds the collector/listener identity cache so hostile input
@@ -278,7 +312,7 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 			return DecodedBatch{}, ferr
 		}
 		d.recordBacking = records
-		return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, 0, 0, netip.Addr{}, records, nil), nil
+		return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, 0, 0, netip.Addr{}, records, nil, nil), nil
 	}
 
 	// Fast path: hand-written sFlow v5 framing decoder, reusing GoFlow2's hardened
@@ -291,7 +325,7 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 			if len(d.recordBacking) != len(d.sflowMetadata) {
 				return DecodedBatch{}, errors.New("sflow fast path records and sample metadata are inconsistent")
 			}
-			return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.sflowSubAgent, d.sflowSequence, d.sflowAgentIP, d.recordBacking, d.sflowMetadata), nil
+			return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.sflowSubAgent, d.sflowSequence, d.sflowAgentIP, d.recordBacking, d.sflowMetadata, d.sflowCounterBacking), nil
 		}
 		if !errors.Is(err, errSFlowFallback) {
 			return DecodedBatch{}, err
@@ -331,10 +365,10 @@ func (d *Decoder) Decode(raw *flowpb.RawFlow) (DecodedBatch, error) {
 	if flowType == goflowpb.FlowMessage_SFLOW_5 && len(records) != len(metadata) {
 		return DecodedBatch{}, errors.New("GoFlow2 sFlow records and sample metadata are inconsistent")
 	}
-	return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.metadata.subAgentID, d.metadata.datagramSequence, d.metadata.agentIP, records, metadata), nil
+	return d.makeBatch(raw, source, receivedAt, flowType, observationDomainID, d.metadata.subAgentID, d.metadata.datagramSequence, d.metadata.agentIP, records, metadata, nil), nil
 }
 
-func (d *Decoder) makeBatch(raw *flowpb.RawFlow, source netip.AddrPort, receivedAt time.Time, flowType goflowpb.FlowMessage_FlowType, observationDomainID uint64, subAgentID, datagramSequence uint32, agentIP netip.Addr, records []DecodedRecord, metadata []DecodedRecordMetadata) DecodedBatch {
+func (d *Decoder) makeBatch(raw *flowpb.RawFlow, source netip.AddrPort, receivedAt time.Time, flowType goflowpb.FlowMessage_FlowType, observationDomainID uint64, subAgentID, datagramSequence uint32, agentIP netip.Addr, records []DecodedRecord, metadata []DecodedRecordMetadata, counters []DecodedCounterRecord) DecodedBatch {
 	return DecodedBatch{
 		CollectorID:         raw.CollectorId,
 		ListenerID:          raw.ListenerId,
@@ -348,6 +382,7 @@ func (d *Decoder) makeBatch(raw *flowpb.RawFlow, source netip.AddrPort, received
 		AgentIP:             agentIP,
 		Records:             records,
 		RecordMetadata:      metadata,
+		CounterRecords:      counters,
 	}
 }
 
