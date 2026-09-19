@@ -592,7 +592,7 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Labels</Trans> (key=value, comma separated)
+							<Trans>Labels (key=value, comma separated)</Trans>
 						</Label>
 						<Input
 							value={form.labels}
@@ -602,7 +602,7 @@ const AddressPrefixes = memo(function AddressPrefixes() {
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							ASN (<Trans>optional</Trans>)
+							<Trans>ASN (optional)</Trans>
 						</Label>
 						<Input
 							inputMode="numeric"

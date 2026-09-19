@@ -217,7 +217,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 			<div className="grid gap-4 rounded-md border border-border p-4">
 				<h2 className="text-base font-medium">SNMP</h2>
 				<div className="grid gap-4 md:grid-cols-[1fr_10rem]">
-					<Field label="SNMP Profile">
+					<Field label={t`SNMP Profile`}>
 						<Select
 							value={snmpProfileID || "none"}
 							onValueChange={(value) => setSNMPProfileID(value === "none" ? "" : value)}
@@ -226,7 +226,9 @@ export default memo(({ id }: DeviceSNMPProps) => {
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="none">none</SelectItem>
+								<SelectItem value="none">
+									<Trans>None</Trans>
+								</SelectItem>
 								{profiles.map((profile) => (
 									<SelectItem key={profile.ID ?? profile.id} value={profile.ID ?? profile.id ?? ""}>
 										{profile.Name ?? profile.name ?? profile.ID ?? profile.id} (
@@ -236,7 +238,7 @@ export default memo(({ id }: DeviceSNMPProps) => {
 							</SelectContent>
 						</Select>
 					</Field>
-					<Field label="SNMP Port">
+					<Field label={t`SNMP Port`}>
 						<Input
 							type="number"
 							min={1}
@@ -246,17 +248,17 @@ export default memo(({ id }: DeviceSNMPProps) => {
 						/>
 					</Field>
 				</div>
-				<Field label="Community Override">
+				<Field label={t`Community Override`}>
 					<Input type="password" value={snmpCommunity} onChange={(event) => setSNMPCommunity(event.target.value)} />
 				</Field>
 				<div className="grid gap-3 md:grid-cols-3">
 					<InfoCell
-						label="Selected profile"
+						label={t`Selected profile`}
 						value={selectedProfile?.Name ?? selectedProfile?.name ?? snmpProfileID}
 						mono
 					/>
-					<InfoCell label="Effective port" value={snmpPort} mono />
-					<InfoCell label="Secret update" value={snmpCommunity ? "pending" : "unchanged"} />
+					<InfoCell label={t`Effective port`} value={snmpPort} mono />
+					<InfoCell label={t`Secret update`} value={snmpCommunity ? t`pending` : t`unchanged`} />
 				</div>
 			</div>
 		</div>
@@ -281,7 +283,17 @@ function InfoCell({ label, value, mono }: { label: string; value?: string; mono?
 	)
 }
 
-function InfoLinkCell({ label, value, detail, href }: { label: string; value?: string; detail?: string; href: string }) {
+function InfoLinkCell({
+	label,
+	value,
+	detail,
+	href,
+}: {
+	label: string
+	value?: string
+	detail?: string
+	href: string
+}) {
 	const content = (
 		<>
 			<div className="mt-1 truncate text-sm">{value || "-"}</div>

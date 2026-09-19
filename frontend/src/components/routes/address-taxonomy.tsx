@@ -428,6 +428,7 @@ export default memo(function AddressTaxonomy({ kind, fixedKind }: { kind: Taxono
 				level: t`Level`,
 				parent: t`Parent`,
 				shortName: t`Short name`,
+				flowISPID: t`Flow ISP ID`,
 				category: t`Category`,
 				geography: t`Geography`,
 				families: t`Families`,
@@ -594,12 +595,13 @@ function TaxonomyEditor({
 	onSave: () => void
 	onCancel: () => void
 }) {
+	const { t } = useLingui()
 	return (
 		<div className="grid gap-3 rounded-md border border-border bg-card p-4 md:grid-cols-3">
-			<FormInput label="Code" value={form.code} onChange={(code) => setForm({ ...form, code })} />
-			<FormInput label="Name" value={form.name} onChange={(name) => setForm({ ...form, name })} />
+			<FormInput label={t`Code`} value={form.code} onChange={(code) => setForm({ ...form, code })} />
+			<FormInput label={t`Name`} value={form.name} onChange={(name) => setForm({ ...form, name })} />
 			<FormInput
-				label="Sort order"
+				label={t`Sort order`}
 				value={form.sortOrder}
 				onChange={(sortOrder) => setForm({ ...form, sortOrder })}
 				inputMode="numeric"
@@ -627,11 +629,11 @@ function TaxonomyEditor({
 					)}
 					{["continent", "search_engine", "cloud_provider", "natural_region"].includes(form.kind) ? null : (
 						<ReferenceField
-							label="Parent geography"
+							label={t`Parent geography`}
 							kind="geography"
 							value={form.parentID}
 							onChange={(parentID) => setForm({ ...form, parentID })}
-							placeholder="Choose parent geography"
+							placeholder={t`Choose parent geography`}
 							options={geoOptions.map((item) => ({
 								id: item.id,
 								label: `${item.kind} · ${item.name}`,
@@ -641,7 +643,7 @@ function TaxonomyEditor({
 						/>
 					)}
 					<FormInput
-						label="Short name"
+						label={t`Short name`}
 						value={form.shortName}
 						onChange={(shortName) => setForm({ ...form, shortName })}
 					/>
@@ -650,45 +652,53 @@ function TaxonomyEditor({
 			{kind === "operators" ? (
 				<>
 					<FormInput
-						label="Flow ISP ID"
-						value={form.flowISPID ? String(form.flowISPID) : "Assigned on create"}
+						label={t`Flow ISP ID`}
+						value={form.flowISPID ? String(form.flowISPID) : t`Assigned on create`}
 						onChange={() => undefined}
 						readOnly
 					/>
 					<FormInput
-						label="Short name"
+						label={t`Short name`}
 						value={form.shortName}
 						onChange={(shortName) => setForm({ ...form, shortName })}
 					/>
-					<FormInput label="Category" value={form.category} onChange={(category) => setForm({ ...form, category })} />
-					<FormInput label="ASNs (comma separated)" value={form.asns} onChange={(asns) => setForm({ ...form, asns })} />
+					<FormInput
+						label={t`Category`}
+						value={form.category}
+						onChange={(category) => setForm({ ...form, category })}
+					/>
+					<FormInput
+						label={t`ASNs (comma separated)`}
+						value={form.asns}
+						onChange={(asns) => setForm({ ...form, asns })}
+					/>
 				</>
 			) : null}
 			{kind === "lines" ? (
 				<>
 					<ReferenceField
-						label="Parent line"
+						label={t`Parent line`}
 						kind="line"
 						value={form.parentID}
 						onChange={(parentID) => setForm({ ...form, parentID })}
-						placeholder="Choose parent line"
+						placeholder={t`Choose parent line`}
 						options={lineOptions.map((item) => ({ id: item.id, label: item.name, description: item.code }))}
 						excludeIDs={form.id ? [form.id] : []}
 					/>
 					<ReferenceField
-						label="Operator"
+						label={t`Operator`}
 						kind="operator"
 						value={form.operatorID}
 						onChange={(operatorID) => setForm({ ...form, operatorID })}
-						placeholder="Choose operator"
+						placeholder={t`Choose operator`}
 						options={operatorOptions.map((item) => ({ id: item.id, label: item.name, description: item.code }))}
 					/>
 					<ReferenceField
-						label="Address set"
+						label={t`Address set`}
 						kind="address-set"
 						value={form.addressSetID}
 						onChange={(addressSetID) => setForm({ ...form, addressSetID })}
-						placeholder="Choose address set"
+						placeholder={t`Choose address set`}
 						options={setOptions.map((item) => ({ id: item.id, label: item.name }))}
 					/>
 					<div className="grid gap-2 md:col-span-3">
@@ -708,7 +718,7 @@ function TaxonomyEditor({
 							kind="geography"
 							value={form.geoNodeIDs}
 							onChange={(geoNodeIDs) => setForm({ ...form, geoNodeIDs })}
-							placeholder="Choose geography combination"
+							placeholder={t`Choose geography combination`}
 							multiple
 							initialOptions={geoOptions.map((item) => ({
 								id: item.id,
@@ -740,7 +750,7 @@ function TaxonomyEditor({
 							kind="operator"
 							value={form.operatorIDs}
 							onChange={(operatorIDs) => setForm({ ...form, operatorIDs })}
-							placeholder="Add operators to the selector"
+							placeholder={t`Add operators to the selector`}
 							multiple
 							initialOptions={operatorOptions.map((item) => ({
 								id: item.id,
@@ -750,7 +760,7 @@ function TaxonomyEditor({
 						/>
 					</div>
 					<FormInput
-						label="Selector ASNs (comma separated)"
+						label={t`Selector ASNs (comma separated)`}
 						value={form.asns}
 						onChange={(asns) => setForm({ ...form, asns })}
 					/>
@@ -762,7 +772,7 @@ function TaxonomyEditor({
 							kind="line"
 							value={form.excludeLineIDs}
 							onChange={(excludeLineIDs) => setForm({ ...form, excludeLineIDs })}
-							placeholder="Subtract these groups"
+							placeholder={t`Subtract these groups`}
 							multiple
 							excludeIDs={form.id ? [form.id] : []}
 							initialOptions={lineOptions.map((item) => ({ id: item.id, label: item.name, description: item.code }))}
@@ -879,6 +889,7 @@ type TaxonomyColumnLabels = {
 	level: string
 	parent: string
 	shortName: string
+	flowISPID: string
 	category: string
 	geography: string
 	families: string
@@ -904,7 +915,7 @@ function taxonomyColumns(kind: TaxonomyKind, labels: TaxonomyColumnLabels) {
 				]
 			: kind === "operators"
 				? [
-						{ field: "flowISPID", title: "Flow ISP ID", width: 120, style: denseCellStyle() },
+						{ field: "flowISPID", title: labels.flowISPID, width: 120, style: denseCellStyle() },
 						{ field: "category", title: labels.category, width: 130, style: denseCellStyle() },
 						{ field: "asns", title: "ASNs", width: 260, style: denseCellStyle() },
 					]

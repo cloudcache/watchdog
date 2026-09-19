@@ -185,12 +185,12 @@ export default memo(({ id }: NetworkPortFormProps) => {
 			<div className="grid gap-3 md:grid-cols-3">
 				<InfoCell label={t`Device`} value={device?.SysName ?? device?.sys_name ?? device?.Name ?? device?.name} />
 				<InfoCell label={t`Device ID`} value={currentDeviceID} mono />
-				<InfoCell label="Port ID" value={form.id} mono />
+				<InfoCell label={t`Port ID`} value={form.id} mono />
 			</div>
 
 			<div className="grid gap-4 rounded-md border border-border p-4">
 				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-					<Field label="Port ID">
+					<Field label={t`Port ID`}>
 						<Input value={form.id} disabled />
 					</Field>
 					<Field label={t`ifIndex`}>

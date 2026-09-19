@@ -1207,14 +1207,18 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 				{plan && (
 					<>
-						<Badge variant="outline">{plan.source} source</Badge>
-						<Badge variant="outline">{formatDuration(plan.step_seconds)} display</Badge>
+						<Badge variant="outline">
+							<Trans>{plan.source} source</Trans>
+						</Badge>
+						<Badge variant="outline">
+							<Trans>{formatDuration(plan.step_seconds)} display step</Trans>
+						</Badge>
 						<span>{formatRange(plan.effective_from, plan.effective_to)}</span>
 					</>
 				)}
 				{completeness && (
 					<Badge variant={completeness.partial ? "warning" : "success"}>
-						{(completeness.complete_ratio * 100).toFixed(1)}% complete
+						<Trans>{(completeness.complete_ratio * 100).toFixed(1)}% complete</Trans>
 					</Badge>
 				)}
 				{response?.data?.mixed_versions && (
@@ -1380,9 +1384,9 @@ function OverseasSummary({
 		.filter((point) => point.kind === "geo" && point.direction === "combined" && point.bucket === latestGeoBucket)
 		.sort((left, right) => right.value - left.value)
 	const geoLabel = (point: OverseasPoint) => {
-		if (point.geo_scope === "unknown_geo") return "Unknown geography"
-		if (point.other) return "Other"
-		return response?.meta.geo_labels?.[`${point.geo_version}:${point.geo_value}`]?.name ?? point.geo_value ?? "Unknown"
+		if (point.geo_scope === "unknown_geo") return t`Unknown geography`
+		if (point.other) return t`Other`
+		return response?.meta.geo_labels?.[`${point.geo_version}:${point.geo_value}`]?.name ?? point.geo_value ?? t`Unknown`
 	}
 
 	return (
@@ -1398,12 +1402,12 @@ function OverseasSummary({
 				</div>
 				<div className="flex items-end gap-2">
 					<OptionSelect
-						label="Geo level"
+						label={t`Geo level`}
 						value={geoLevel}
 						onChange={onGeoLevelChange}
 						options={[
-							{ value: "country", label: "Country" },
-							{ value: "region", label: "Region" },
+							{ value: "country", label: t`Country` },
+							{ value: "region", label: t`Region` },
 						]}
 						width="w-40"
 					/>
@@ -1430,36 +1434,52 @@ function OverseasSummary({
 				<>
 					<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 						<Badge variant={response.data.rollup_completeness.complete ? "success" : "warning"}>
-							{(response.data.rollup_completeness.ratio * 100).toFixed(1)}% complete
+							<Trans>{(response.data.rollup_completeness.ratio * 100).toFixed(1)}% complete</Trans>
 						</Badge>
-						<Badge variant="outline">{response.meta.source} source</Badge>
-						{response.data.mixed_versions && <Badge variant="warning">Mixed classification versions</Badge>}
+						<Badge variant="outline">
+							<Trans>{response.meta.source} source</Trans>
+						</Badge>
+						{response.data.mixed_versions && (
+							<Badge variant="warning">
+								<Trans>Mixed classification versions</Trans>
+							</Badge>
+						)}
 						{latestBucket && <span>{new Date(latestBucket).toLocaleString()}</span>}
 					</div>
 					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 						<FlowMetricCard label={t`Inbound`} value={formatFlowValue(directionValue("in"), unit)} />
 						<FlowMetricCard label={t`Outbound`} value={formatFlowValue(directionValue("out"), unit)} />
-						<FlowMetricCard label="Observed remote IPs" value={observedRemoteIPs.toLocaleString()} />
-						<FlowMetricCard label="Observed local hosts" value={observedLocalHosts.toLocaleString()} />
+						<FlowMetricCard label={t`Observed remote IPs`} value={observedRemoteIPs.toLocaleString()} />
+						<FlowMetricCard label={t`Observed local hosts`} value={observedLocalHosts.toLocaleString()} />
 					</div>
 					<div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-						<span>{receivedRecords.toLocaleString()} sampled records</span>
-						<span>{ratio(unknownSamplingRecords, receivedRecords)} unknown sampling</span>
+						<span>
+							<Trans>{receivedRecords.toLocaleString()} sampled records</Trans>
+						</span>
+						<span>
+							<Trans>{ratio(unknownSamplingRecords, receivedRecords)} unknown sampling</Trans>
+						</span>
 					</div>
 					<div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
 						<div className="rounded-md border border-border p-3">
-							<h3 className="mb-2 text-sm font-medium">Traffic trend</h3>
+							<h3 className="mb-2 text-sm font-medium">
+								<Trans>Traffic trend</Trans>
+							</h3>
 							{directionSeries.length === 0 && !loading ? (
 								<div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-									No overseas points found
+									<Trans>No overseas points found</Trans>
 								</div>
 							) : null}
 							<div ref={chartRef} className={directionSeries.length > 0 ? "h-72" : "h-0"} />
 						</div>
 						<div className="rounded-md border border-border p-3">
-							<h3 className="mb-2 text-sm font-medium">Top {geoLevel === "country" ? "countries" : "regions"}</h3>
+							<h3 className="mb-2 text-sm font-medium">
+								{geoLevel === "country" ? <Trans>Top countries</Trans> : <Trans>Top regions</Trans>}
+							</h3>
 							{geoRows.length === 0 ? (
-								<p className="py-8 text-center text-sm text-muted-foreground">No geography points found</p>
+								<p className="py-8 text-center text-sm text-muted-foreground">
+									<Trans>No geography points found</Trans>
+								</p>
 							) : (
 								<div className="grid gap-2">
 									{geoRows.map((point, index) => {
@@ -1484,7 +1504,9 @@ function OverseasSummary({
 				</>
 			)}
 			{!response && !error && !loading && (
-				<p className="py-8 text-center text-sm text-muted-foreground">No overseas result loaded</p>
+				<p className="py-8 text-center text-sm text-muted-foreground">
+					<Trans>No overseas result loaded</Trans>
+				</p>
 			)}
 		</section>
 	)
@@ -1553,7 +1575,9 @@ function AddressSetChecklist({
 			</Label>
 			<div className="h-28 overflow-y-auto rounded-md border border-input bg-background p-2">
 				{items.length === 0 ? (
-					<p className="text-xs text-muted-foreground">No address sets</p>
+					<p className="text-xs text-muted-foreground">
+						<Trans>No address sets</Trans>
+					</p>
 				) : (
 					items.map((item, index) => (
 						<div key={item.id} className="flex items-center gap-2 py-1 text-xs">

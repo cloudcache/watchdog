@@ -42,7 +42,9 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 		)
 		return (
 			<CommandDialog open={open} onOpenChange={setOpen}>
-				<DialogDescription className="sr-only">Command palette</DialogDescription>
+				<DialogDescription className="sr-only">
+					<Trans>Command palette</Trans>
+				</DialogDescription>
 				<CommandInput placeholder={t`Search for systems or settings...`} />
 				<CommandList>
 					<CommandGroup heading={t`Pages / Settings`}>

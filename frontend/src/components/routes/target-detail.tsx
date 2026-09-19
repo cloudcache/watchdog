@@ -278,7 +278,9 @@ export default memo(({ id }: TargetDetailProps) => {
 				{error ? <div className="text-sm text-destructive">{error}</div> : null}
 				<div ref={chartRef} className="h-[360px] w-full" />
 				{!loading && !error && series.every((item) => item.values.length === 0) ? (
-					<div className="text-sm text-muted-foreground">NA</div>
+					<div className="text-sm text-muted-foreground">
+						<Trans>No data</Trans>
+					</div>
 				) : null}
 			</div>
 
@@ -299,7 +301,10 @@ export default memo(({ id }: TargetDetailProps) => {
 							</div>
 						) : (
 							deleteImpacts.map((impact) => (
-								<div key={impact.resource_type} className="flex items-start justify-between gap-3 rounded-md border border-border p-2">
+								<div
+									key={impact.resource_type}
+									className="flex items-start justify-between gap-3 rounded-md border border-border p-2"
+								>
 									<div className="min-w-0">
 										<div className="font-medium">{impactLabel(impact.resource_type)}</div>
 										{impact.items?.length ? (

@@ -263,7 +263,9 @@ export default memo(({ id }: DashboardFormProps) => {
 											</div>
 											<div className="flex shrink-0 items-center gap-1">
 												{reference?.exists ? (
-													<Badge variant="success">{reference.series?.length ?? 0} series</Badge>
+													<Badge variant="success">
+														<Trans>{reference.series?.length ?? 0} series</Trans>
+													</Badge>
 												) : null}
 												{missing ? (
 													<Badge variant="destructive">

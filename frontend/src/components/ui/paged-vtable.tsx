@@ -1,3 +1,4 @@
+import { Trans } from "@lingui/react/macro"
 import { SearchIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -240,7 +241,11 @@ export function PagedVTable({
 				</div>
 			</div>
 			<div className="overflow-hidden rounded-md bg-card">
-				{loading ? <div className="p-3 text-sm text-muted-foreground">Loading...</div> : null}
+				{loading ? (
+					<div className="p-3 text-sm text-muted-foreground">
+						<Trans>Loading...</Trans>
+					</div>
+				) : null}
 				{!loading && searchedRecords.length === 0 ? (
 					<div className="p-4 text-sm text-muted-foreground">{emptyText}</div>
 				) : null}
@@ -261,10 +266,12 @@ export function PagedVTable({
 							else setPage((value) => Math.max(0, value - 1))
 						}}
 					>
-						Previous
+						<Trans>Previous</Trans>
 					</Button>
 					<span className="min-w-24 text-center text-muted-foreground">
-						Page {safePage + 1} of {pageCount}
+						<Trans>
+							Page {safePage + 1} of {pageCount}
+						</Trans>
 					</span>
 					<Button
 						variant="outline"
@@ -275,7 +282,7 @@ export function PagedVTable({
 							else setPage((value) => Math.min(pageCount - 1, value + 1))
 						}}
 					>
-						Next
+						<Trans>Next</Trans>
 					</Button>
 				</div>
 			) : null}

@@ -96,15 +96,17 @@ export default memo(() => {
 	}, [t])
 
 	useEffect(() => {
-		document.title = `Watchdog / Watchdog`
+		document.title = `${t`Platform Overview`} / Watchdog`
 		refresh()
-	}, [refresh])
+	}, [refresh, t])
 
 	return (
 		<div className="grid gap-4">
 			<div className="flex items-center gap-2">
 				<LayoutDashboardIcon className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-				<h1 className="text-xl font-semibold tracking-normal">Watchdog</h1>
+				<h1 className="text-xl font-semibold tracking-normal">
+					<Trans>Platform Overview</Trans>
+				</h1>
 			</div>
 
 			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

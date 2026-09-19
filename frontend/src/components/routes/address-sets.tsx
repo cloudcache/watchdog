@@ -409,7 +409,7 @@ export default memo(function AddressSets() {
 					</div>
 					<div className="grid gap-2">
 						<Label>
-							<Trans>Label selector</Trans> (key=value1|value2)
+							<Trans>Label selector (key=value1|value2)</Trans>
 						</Label>
 						<Input
 							value={form.labels}

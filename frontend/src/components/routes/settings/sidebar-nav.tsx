@@ -1,3 +1,4 @@
+import { t } from "@lingui/core/macro"
 import { useStore } from "@nanostores/react"
 import type React from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -27,7 +28,7 @@ export function SidebarNav({ className, items, ...props }: SidebarNavProps) {
 			<div className="md:hidden">
 				<Select onValueChange={navigate} value={page?.path}>
 					<SelectTrigger className="w-full my-3.5">
-						<SelectValue placeholder="Select page" />
+						<SelectValue placeholder={t`Select page`} />
 					</SelectTrigger>
 					<SelectContent>
 						{items.map((item) => {

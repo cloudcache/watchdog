@@ -1,3 +1,4 @@
+import { t } from "@lingui/core/macro"
 import { Trans } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { getPagePath } from "@nanostores/router"
@@ -105,7 +106,7 @@ export default function Navbar() {
 
 			<Link
 				href={basePath}
-				aria-label="Home"
+				aria-label={t`Home`}
 				className="p-2 ps-0 me-3 group"
 				onMouseEnter={runOnce(() => import("@/components/routes/targets"))}
 			>
@@ -129,11 +130,11 @@ export default function Navbar() {
 			<div className="ms-auto flex items-center text-xl md:hidden">
 				<LanguageToggle />
 				<ModeToggle />
-				<Button variant="ghost" size="icon" onClick={() => setCommandPaletteOpen(true)} aria-label="Search">
+				<Button variant="ghost" size="icon" onClick={() => setCommandPaletteOpen(true)} aria-label={t`Search`}>
 					<SearchIcon className="h-[1.2rem] w-[1.2rem]" />
 				</Button>
 				<DropdownMenu>
-					<DropdownMenuTrigger className="ms-2" aria-label="Open Menu">
+					<DropdownMenuTrigger className="ms-2" aria-label={t`Open menu`}>
 						<MenuIcon />
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="min-w-56">
@@ -141,7 +142,7 @@ export default function Navbar() {
 							<Trans>Overview</Trans>
 						</DropdownMenuLabel>
 						<NavItem href={getPagePath($router, "watchdog_overview")} icon={LayoutDashboardIcon}>
-							Watchdog
+							<Trans>Platform Overview</Trans>
 						</NavItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel>
@@ -189,30 +190,40 @@ export default function Navbar() {
 				<Link
 					href={getPagePath($router, "watchdog_overview")}
 					className={cn(buttonVariants({ variant: "ghost" }), "gap-2 px-2.5")}
-					aria-label="Watchdog"
+					aria-label={t`Platform Overview`}
 				>
 					<LayoutDashboardIcon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
-					<span className="hidden xl:inline">Watchdog</span>
-				</Link>
-				{can("device.view") ? <DesktopNavMenu label={<Trans>Targets</Trans>} icon={CrosshairIcon}>
-					<ResourceItems />
-				</DesktopNavMenu> : null}
-				{can("device.view") ? <DesktopNavMenu label={<Trans>Analysis</Trans>} icon={BarChart3Icon}>
-					<AnalysisItems />
-				</DesktopNavMenu> : null}
-				{canViewFlow() || canManageAddressLibrary() ? <DesktopNavMenu label={<Trans>Flow</Trans>} icon={ActivityIcon}>
-					<FlowItems />
-				</DesktopNavMenu> : null}
-				{canAny("device.view", "flow.export.customer", "flow.export.supplier", "flow.export.raw") ? <Link
-					href={getPagePath($router, "exports")}
-					className={cn(buttonVariants({ variant: "ghost" }), "gap-2 px-2.5")}
-					aria-label="Exports"
-				>
-					<FileDownIcon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
 					<span className="hidden xl:inline">
-						<Trans>Data</Trans>
+						<Trans>Platform Overview</Trans>
 					</span>
-				</Link> : null}
+				</Link>
+				{can("device.view") ? (
+					<DesktopNavMenu label={<Trans>Targets</Trans>} icon={CrosshairIcon}>
+						<ResourceItems />
+					</DesktopNavMenu>
+				) : null}
+				{can("device.view") ? (
+					<DesktopNavMenu label={<Trans>Analysis</Trans>} icon={BarChart3Icon}>
+						<AnalysisItems />
+					</DesktopNavMenu>
+				) : null}
+				{canViewFlow() || canManageAddressLibrary() ? (
+					<DesktopNavMenu label={<Trans>Flow</Trans>} icon={ActivityIcon}>
+						<FlowItems />
+					</DesktopNavMenu>
+				) : null}
+				{canAny("device.view", "flow.export.customer", "flow.export.supplier", "flow.export.raw") ? (
+					<Link
+						href={getPagePath($router, "exports")}
+						className={cn(buttonVariants({ variant: "ghost" }), "gap-2 px-2.5")}
+						aria-label={t`Exports`}
+					>
+						<FileDownIcon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
+						<span className="hidden xl:inline">
+							<Trans>Data</Trans>
+						</span>
+					</Link>
+				) : null}
 				<LanguageToggle />
 				<ModeToggle />
 				<UserMenu />
@@ -273,27 +284,41 @@ function AnalysisItems() {
 function FlowItems() {
 	return (
 		<DropdownMenuGroup>
-			{canViewFlow() ? <NavItem href={getPagePath($router, "flow_overview")} icon={ActivityIcon}>
-				<Trans>Flow Overview</Trans>
-			</NavItem> : null}
-			{canViewFlow() ? <NavItem href={getPagePath($router, "flow_dimensions")} icon={BarChart3Icon}>
-				<Trans>Multi-dimensional Analysis</Trans>
-			</NavItem> : null}
-			{canViewFlow() ? <NavItem href={getPagePath($router, "flow_source")} icon={SearchIcon}>
-				<Trans>Source IP Analysis</Trans>
-			</NavItem> : null}
-			{canViewFlow() ? <NavItem href={getPagePath($router, "flow_destination")} icon={CrosshairIcon}>
-				<Trans>Destination IP Analysis</Trans>
-			</NavItem> : null}
-			{canViewFlow() ? <NavItem href={getPagePath($router, "flow_overseas")} icon={GlobeIcon}>
-				<Trans>Overseas Traffic</Trans>
-			</NavItem> : null}
-			{can("flow.vpn.view") ? <NavItem href={getPagePath($router, "flow_vpn")} icon={ShieldCheckIcon}>
-				<Trans>VPN Risk</Trans>
-			</NavItem> : null}
-			{canViewFlow() ? <NavItem href={getPagePath($router, "flow_filters")} icon={BookmarkIcon}>
-				<Trans>Saved Filters</Trans>
-			</NavItem> : null}
+			{canViewFlow() ? (
+				<NavItem href={getPagePath($router, "flow_overview")} icon={ActivityIcon}>
+					<Trans>Flow Overview</Trans>
+				</NavItem>
+			) : null}
+			{canViewFlow() ? (
+				<NavItem href={getPagePath($router, "flow_dimensions")} icon={BarChart3Icon}>
+					<Trans>Multi-dimensional Analysis</Trans>
+				</NavItem>
+			) : null}
+			{canViewFlow() ? (
+				<NavItem href={getPagePath($router, "flow_source")} icon={SearchIcon}>
+					<Trans>Source IP Analysis</Trans>
+				</NavItem>
+			) : null}
+			{canViewFlow() ? (
+				<NavItem href={getPagePath($router, "flow_destination")} icon={CrosshairIcon}>
+					<Trans>Destination IP Analysis</Trans>
+				</NavItem>
+			) : null}
+			{canViewFlow() ? (
+				<NavItem href={getPagePath($router, "flow_overseas")} icon={GlobeIcon}>
+					<Trans>Overseas Traffic</Trans>
+				</NavItem>
+			) : null}
+			{can("flow.vpn.view") ? (
+				<NavItem href={getPagePath($router, "flow_vpn")} icon={ShieldCheckIcon}>
+					<Trans>VPN Risk</Trans>
+				</NavItem>
+			) : null}
+			{canViewFlow() ? (
+				<NavItem href={getPagePath($router, "flow_filters")} icon={BookmarkIcon}>
+					<Trans>Saved Filters</Trans>
+				</NavItem>
+			) : null}
 			{canManageAddressLibrary() ? (
 				<>
 					<DropdownMenuSeparator />
@@ -313,7 +338,7 @@ function UserMenu() {
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<button aria-label="User Actions" className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}>
+				<button aria-label={t`User menu`} className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}>
 					<UserIcon className="h-[1.2rem] w-[1.2rem]" />
 				</button>
 			</DropdownMenuTrigger>
@@ -351,51 +376,77 @@ function AdminSubmenu() {
 function AdminDropdownContent() {
 	return (
 		<>
-			{can("bill.view") ? <DropdownMenuLabel>
-				<Trans>Access & Billing</Trans>
-			</DropdownMenuLabel> : null}
-			{can("bill.view") ? <NavItem href={getPagePath($router, "billing")} icon={ReceiptTextIcon}>
-				<Trans>Billing</Trans>
-			</NavItem> : null}
-			{can("role.view") ? <NavItem href={getPagePath($router, "permissions")} icon={ShieldCheckIcon}>
-				<Trans>Permissions</Trans>
-			</NavItem> : null}
+			{can("bill.view") ? (
+				<DropdownMenuLabel>
+					<Trans>Access & Billing</Trans>
+				</DropdownMenuLabel>
+			) : null}
+			{can("bill.view") ? (
+				<NavItem href={getPagePath($router, "billing")} icon={ReceiptTextIcon}>
+					<Trans>Billing</Trans>
+				</NavItem>
+			) : null}
+			{can("role.view") ? (
+				<NavItem href={getPagePath($router, "permissions")} icon={ShieldCheckIcon}>
+					<Trans>Permissions</Trans>
+				</NavItem>
+			) : null}
 			{can("device.update") ? <DropdownMenuSeparator /> : null}
-			{can("device.update") ? <DropdownMenuLabel>
-				<Trans>Network Configuration</Trans>
-			</DropdownMenuLabel> : null}
-			{can("device.update") ? <NavItem href={getPagePath($router, "snmp_profiles")} icon={SlidersHorizontalIcon}>
-				<Trans>SNMP Profiles</Trans>
-			</NavItem> : null}
-			{can("device.update") ? <NavItem href={getPagePath($router, "snmp_mib_modules")} icon={DatabaseIcon}>
-				<Trans>MIB Modules</Trans>
-			</NavItem> : null}
-			{can("device.update") ? <NavItem href={getPagePath($router, "traffic_defaults")} icon={GaugeIcon}>
-				<Trans>Traffic Defaults</Trans>
-			</NavItem> : null}
+			{can("device.update") ? (
+				<DropdownMenuLabel>
+					<Trans>Network Configuration</Trans>
+				</DropdownMenuLabel>
+			) : null}
+			{can("device.update") ? (
+				<NavItem href={getPagePath($router, "snmp_profiles")} icon={SlidersHorizontalIcon}>
+					<Trans>SNMP Profiles</Trans>
+				</NavItem>
+			) : null}
+			{can("device.update") ? (
+				<NavItem href={getPagePath($router, "snmp_mib_modules")} icon={DatabaseIcon}>
+					<Trans>MIB Modules</Trans>
+				</NavItem>
+			) : null}
+			{can("device.update") ? (
+				<NavItem href={getPagePath($router, "traffic_defaults")} icon={GaugeIcon}>
+					<Trans>Traffic Defaults</Trans>
+				</NavItem>
+			) : null}
 			{can("job.manage") ? <DropdownMenuSeparator /> : null}
-			{can("job.manage") ? <DropdownMenuLabel>
-				<Trans>Data Management</Trans>
-			</DropdownMenuLabel> : null}
-			{can("job.manage") ? <NavItem href={getPagePath($router, "retention")} icon={DatabaseIcon}>
-				<Trans>Retention</Trans>
-			</NavItem> : null}
+			{can("job.manage") ? (
+				<DropdownMenuLabel>
+					<Trans>Data Management</Trans>
+				</DropdownMenuLabel>
+			) : null}
+			{can("job.manage") ? (
+				<NavItem href={getPagePath($router, "retention")} icon={DatabaseIcon}>
+					<Trans>Retention</Trans>
+				</NavItem>
+			) : null}
 			<DropdownMenuSeparator />
 			<DropdownMenuLabel>
 				<Trans>Platform</Trans>
 			</DropdownMenuLabel>
-			{canAny("user.view", "role.view") ? <NavItem href={getPagePath($router, "users_admin")} icon={UsersIcon}>
-				<Trans>Users & Roles</Trans>
-			</NavItem> : null}
-			{can("audit.view") ? <NavItem href={getPagePath($router, "audit_logs")} icon={ScrollTextIcon}>
-				<Trans>Audit Logs</Trans>
-			</NavItem> : null}
-			{can("job.view") ? <NavItem href={getPagePath($router, "operation_jobs")} icon={ServerCogIcon}>
-				<Trans>Background Jobs</Trans>
-			</NavItem> : null}
-			{can("agent.view") ? <NavItem href={getPagePath($router, "agents")} icon={BotIcon}>
-				<Trans>Agents</Trans>
-			</NavItem> : null}
+			{canAny("user.view", "role.view") ? (
+				<NavItem href={getPagePath($router, "users_admin")} icon={UsersIcon}>
+					<Trans>Users & Roles</Trans>
+				</NavItem>
+			) : null}
+			{can("audit.view") ? (
+				<NavItem href={getPagePath($router, "audit_logs")} icon={ScrollTextIcon}>
+					<Trans>Audit Logs</Trans>
+				</NavItem>
+			) : null}
+			{can("job.view") ? (
+				<NavItem href={getPagePath($router, "operation_jobs")} icon={ServerCogIcon}>
+					<Trans>Background Jobs</Trans>
+				</NavItem>
+			) : null}
+			{can("agent.view") ? (
+				<NavItem href={getPagePath($router, "agents")} icon={BotIcon}>
+					<Trans>Agents</Trans>
+				</NavItem>
+			) : null}
 		</>
 	)
 }
@@ -405,7 +456,16 @@ function canViewFlow() {
 }
 
 function canViewAdministration() {
-	return canAny("user.view", "role.view", "bill.view", "device.update", "job.view", "job.manage", "audit.view", "agent.view")
+	return canAny(
+		"user.view",
+		"role.view",
+		"bill.view",
+		"device.update",
+		"job.view",
+		"job.manage",
+		"audit.view",
+		"agent.view"
+	)
 }
 
 const Kbd = ({ children }: { children: React.ReactNode }) => (
