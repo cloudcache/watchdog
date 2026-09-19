@@ -47,9 +47,17 @@ npm --prefix frontend run dev
 ```
 
 The frontend listens on `127.0.0.1:8090`; the API listens on
-`127.0.0.1:8091`. `frontend/public/watchdog-config.js` contains the direct
-`API_URL`. CORS is controlled by `server.origins`; no proxy or static-file
-server is involved.
+`127.0.0.1:8091`. The browser reaches the API on the frontend's own origin:
+the Vite dev server proxies `/api/` to `127.0.0.1:8091` (`vite.config.ts`),
+so no CORS entry is needed. `server.origins` only matters for a split-origin
+setup in which `frontend/public/watchdog-config.js` names an explicit
+`API_URL`.
+
+For a deployment, build the frontend (`npm --prefix frontend run build`) and
+serve `frontend/dist` with nginx using `deploy/nginx/watchdog.conf`: it proxies
+`/api/` to the API on loopback, answers deep links with `index.html`, and marks
+`index.html` / `watchdog-config.js` as `no-cache` so a redeploy never leaves
+open tabs on stale bundles. The backend itself never hosts static files.
 
 ## 3. First installation and login
 

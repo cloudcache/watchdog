@@ -13,6 +13,13 @@ export default defineConfig({
 	// routing under a sub-path is handled separately at runtime by
 	// WATCHDOG.BASE_PATH, not by the asset base.
 	base: "/",
+	// The dev server mirrors production: the API is reached on the same origin
+	// under /api/, so neither CORS nor a hard-coded API port is involved.
+	server: {
+		proxy: {
+			"/api": "http://127.0.0.1:8091",
+		},
+	},
 	plugins: [
 		react({
 			plugins: [["@lingui/swc-plugin", {}]],

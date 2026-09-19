@@ -14,8 +14,7 @@ import { api } from "@/lib/api"
 // of the client; requests must carry the session cookie (withCredentials) and the
 // double-submit CSRF token, exactly like api.send does for other mutations.
 function tusUploadEndpoint(): string {
-	const base = (globalThis.WATCHDOG?.API_URL ?? "").replace(/\/+$/, "")
-	return `${base}/api/v1/address-imports/uploads/`
+	return api.buildURL("/api/v1/address-imports/uploads/")
 }
 
 function readCsrfToken(): string {
