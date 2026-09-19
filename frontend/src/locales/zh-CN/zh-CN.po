@@ -8526,3 +8526,27 @@ msgstr "高峰时段结束"
 #: src/components/routes/flow-reports.tsx
 msgid "Only include the selected peak period"
 msgstr "仅统计所选高峰时段"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Flow processing worker"
+msgstr "Flow 处理服务"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select the Flow worker responsible for this device"
+msgstr "请选择负责此设备的 Flow 处理服务"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select the worker responsible for this device"
+msgstr "请选择负责此设备的处理服务"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Only this worker can pull and acknowledge publications for the selected device."
+msgstr "只有该处理服务可以拉取并确认所选设备的发布版本。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "No active Flow processing worker is registered."
+msgstr "尚未注册运行中的 Flow 处理服务。"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Worker"
+msgstr "处理服务"

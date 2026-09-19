@@ -373,6 +373,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 - [x] **设计/本地证据**：以设备绑定为作用域，冻结七牛客户的 IPv4 `120.199.32.128/25`、原生 IPv6 `2409:8728:8ff:1077::/64` 及边界样本；确认生产 MySQL 草稿已有双栈 CIDR，但当前 worker 静态 bootstrap 产物只有 IPv4，且未启用 control-plane 版本拉取。生产 WADS/配对版本/ACK/LKG 仍须发布核对，不把全局 Geo 地址库当客户碎片地址的维护入口。
 - [x] **编码与本地回归**：统一地址规范为 16 字节可比较形式；IPv4 与 IPv4-mapped IPv6 只在协议边界显式 `Unmap`，原生 IPv6 不降级、不加/减伪前缀；worker 对源/目的地址做 LPM，最长前缀命中结果供客户归属、方向和六分类使用。`6b6bb622` 已增加 classification、worker enrichment、Gin→worker 配对版本三层双栈回归测试。
+- [x] **定向发布生命周期**：客户 CIDR 修改时选择负责该设备的 worker，事务内固定 profile/WADS 并排队异步生成不可变签名配对；publication-target 控制该 worker 的 list/object/ACK。单 worker 自动选择且可修复迁移后注册造成的空绑定，多 worker 必须显式选择；禁止全量广播，也禁止因唯一 worker 无历史绑定而让其无法下载。真实 MySQL 覆盖目标隔离、下载/安装 ACK、LKG 和双栈制品内容。
 - [ ] **写入校验**：在 `flow_records` 核对原始 src/dst、local/remote、device/exporter、business、category、address/dimension snapshot 与 classification version；若旧事实版本不含新客户边界，明确走历史重分类，不允许查询层临时猜归属。
 - [ ] **查询校验**：源 IP、目的 IP、多维、六报表和导出均显示“七牛”而非 `_unassigned`；IPv4/IPv6 使用相同客户口径，展示层将 `::ffff:x.x.x.x` 规范为 IPv4 文本但不误改原生 IPv6。
 - [ ] **单元测试**：覆盖 IPv4、IPv4-mapped IPv6、原生 IPv6、CIDR 首尾地址、相邻不命中、重叠前缀最长匹配、同客户多 CIDR、同设备多客户、跨设备同 CIDR 隔离。

@@ -221,6 +221,17 @@ func (s *Server) activateAddressDimension(c *gin.Context) {
 		writeAddressDimensionError(c, err)
 		return
 	}
+	job, err := s.enqueueFlowEnrichmentForActivation(ctx, currentPrincipal(c).UserID, activation.EffectiveFrom)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errFlowEnrichmentNoTargets) {
+		writeFlowEnrichmentError(c, err)
+		return
+	}
+	if errors.Is(err, errFlowEnrichmentNoTargets) {
+		c.Header("X-Watchdog-Flow-Publication-Warning", "flow worker binding is required")
+	}
+	if job.ID != "" {
+		c.Header("X-Watchdog-Operation-ID", job.ID)
+	}
 	c.JSON(http.StatusOK, activation)
 }
 

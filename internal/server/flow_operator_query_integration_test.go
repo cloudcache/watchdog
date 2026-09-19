@@ -58,6 +58,9 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 		if _, err := db.Exec(`DELETE FROM flow_enrichment_publication_acks`); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := db.Exec(`DELETE FROM flow_enrichment_publication_targets`); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := db.Exec(`DELETE FROM flow_enrichment_publications`); err != nil {
 			t.Fatal(err)
 		}
@@ -122,6 +125,12 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	seedTarget := func(t *testing.T, publicationID, workerID string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO flow_enrichment_publication_targets (publication_id,worker_id) VALUES (?,?)`, publicationID, workerID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	markACKFailedAfterInstall := func(t *testing.T, publicationID, workerID string) {
 		t.Helper()
 		if _, err := db.Exec(`UPDATE flow_enrichment_publication_acks
@@ -148,6 +157,7 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 		seedSnapshot(t, snapshot, 1, from.Add(-48*time.Hour))
 		seedPublication(t, publication, snapshot, 7, from.Add(-24*time.Hour))
 		worker := seedWorker(t)
+		seedTarget(t, publication, worker)
 		seedInstalledACK(t, publication, worker)
 
 		binding, err := resolveFlowOperatorQueryBinding(ctx, db, op, from, to)
@@ -208,6 +218,8 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 		seedPublication(t, publicationA, snapshotA, 8, from.Add(-time.Hour))
 		seedPublication(t, publicationB, snapshotB, 9, from.Add(30*time.Minute))
 		worker := seedWorker(t)
+		seedTarget(t, publicationA, worker)
+		seedTarget(t, publicationB, worker)
 		seedInstalledACK(t, publicationA, worker)
 		seedInstalledACK(t, publicationB, worker)
 
@@ -241,20 +253,23 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 		seedSnapshot(t, snapshot, 1, from.Add(-48*time.Hour))
 		seedPublication(t, publication, snapshot, 10, from.Add(30*time.Minute))
 		worker := seedWorker(t)
+		seedTarget(t, publication, worker)
 		seedInstalledACK(t, publication, worker)
 		if _, err := resolveFlowOperatorQueryBinding(ctx, db, op, from, to); !errors.Is(err, errFlowOperatorUnavailable) {
 			t.Fatalf("coverage gap err = %v", err)
 		}
 	})
 
-	t.Run("publication not installed on all workers is unavailable", func(t *testing.T) {
+	t.Run("publication not installed on every targeted worker is unavailable", func(t *testing.T) {
 		reset()
 		op := seedOperator(t, "op-test-e", 42, true)
 		snapshot, publication := newID(), newID()
 		seedSnapshot(t, snapshot, 1, from.Add(-48*time.Hour))
 		seedPublication(t, publication, snapshot, 11, from.Add(-time.Hour))
 		installed := seedWorker(t)
-		_ = seedWorker(t)
+		missing := seedWorker(t)
+		seedTarget(t, publication, installed)
+		seedTarget(t, publication, missing)
 		seedInstalledACK(t, publication, installed)
 		if _, err := resolveFlowOperatorQueryBinding(ctx, db, op, from, to); !errors.Is(err, errFlowOperatorUnavailable) {
 			t.Fatalf("incomplete rollout err = %v", err)
@@ -268,6 +283,7 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 		seedSnapshot(t, snapshot, 1, from.Add(-48*time.Hour))
 		seedPublication(t, publication, snapshot, 12, from.Add(-time.Hour))
 		worker := seedWorker(t)
+		seedTarget(t, publication, worker)
 		seedInstalledACK(t, publication, worker)
 		markACKFailedAfterInstall(t, publication, worker)
 		if _, err := resolveFlowOperatorQueryBinding(ctx, db, op, from, to); err != nil {
@@ -275,7 +291,7 @@ func TestResolveFlowOperatorQueryBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("no active flow workers is unavailable", func(t *testing.T) {
+	t.Run("publication without a target worker is unavailable", func(t *testing.T) {
 		reset()
 		op := seedOperator(t, "op-test-g", 42, true)
 		snapshot, publication := newID(), newID()

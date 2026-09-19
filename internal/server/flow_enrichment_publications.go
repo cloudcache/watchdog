@@ -40,6 +40,8 @@ var (
 	errFlowEnrichmentConflict    = errors.New("flow enrichment publication conflicts with current state")
 	errFlowEnrichmentDimension   = errors.New("flow enrichment publication requires an approved WADS snapshot")
 	errFlowEnrichmentAckConflict = errors.New("flow enrichment acknowledgement does not match the publication")
+	errFlowEnrichmentSuperseded  = errors.New("flow enrichment publish request was superseded by a newer profile")
+	errFlowEnrichmentNoTargets   = errors.New("flow enrichment publication has no bound Flow workers")
 )
 
 type flowClassificationProfileDraft struct {
@@ -205,6 +207,13 @@ func (s *Server) startFlowEnrichment(ctx context.Context) error {
 	s.flowTrustBundle = append([]byte(nil), canonical...)
 	s.flowTrustChecksum = checksum
 	s.flowTrustGeneration = bundle.Generation
+	// Upgrade/fresh-start reconciliation: if a profile and active WADS already
+	// exist, converge them through the same idempotent asynchronous publisher.
+	// The operation key prevents a restart from creating duplicate versions.
+	if _, err := s.enqueueFlowEnrichmentForActivation(ctx, "", time.Now().UTC().Truncate(time.Minute).Add(time.Minute)); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errFlowEnrichmentNoTargets) {
+		return fmt.Errorf("enqueue current Flow enrichment pair: %w", err)
+	}
 	return nil
 }
 
@@ -364,6 +373,11 @@ func (s *Server) putFlowClassificationProfile(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
+	job, err := enqueueFlowEnrichmentPublishTx(c.Request.Context(), tx, actor, time.Time{})
+	if err != nil {
+		writeFlowEnrichmentError(c, err)
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		writeSQLError(c, err)
 		return
@@ -373,6 +387,7 @@ func (s *Server) putFlowClassificationProfile(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
+	c.Header("X-Watchdog-Operation-ID", job.ID)
 	c.Header("ETag", etag(profile.RowVersion))
 	c.JSON(http.StatusOK, profile)
 }
@@ -580,16 +595,25 @@ func (s *Server) publishFlowEnrichmentMode(c *gin.Context, bootstrap bool) {
 		fail(c, http.StatusBadRequest, "invalid_request", "effective_from must be a UTC minute boundary")
 		return
 	}
-	effectiveFrom := selectionTime
 	actor := stringValue(principalUserID(c))
-	tx, err := s.db.BeginTx(c.Request.Context(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	publication, err := s.createFlowEnrichmentPublication(c.Request.Context(), bootstrap, false, selectionTime, 0, "", nil, actor)
 	if err != nil {
-		writeSQLError(c, err)
+		writeFlowEnrichmentError(c, err)
 		return
 	}
-	committed := false
-	publicationID := newID()
-	savedRef := ""
+	c.Header("Location", "/api/v1/flow/enrichment-publications/"+publication.ID)
+	c.JSON(http.StatusCreated, publication)
+}
+
+func (s *Server) createFlowEnrichmentPublication(ctx context.Context, bootstrap, automatic bool, requested time.Time, expectedProfileVersion uint64, expectedDimensionSnapshotID string, expectedWorkerIDs []string, actor string) (publication flowEnrichmentPublication, returnErr error) {
+	if len(s.agentPlanSigner.PrivateKey) != ed25519.PrivateKeySize || s.addressPublisher == nil {
+		return publication, errors.New("Flow enrichment signing or address publication is not configured")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return publication, err
+	}
+	publicationID, savedRef, committed := newID(), "", false
 	defer func() {
 		_ = tx.Rollback()
 		if committed || savedRef == "" {
@@ -600,122 +624,128 @@ func (s *Server) publishFlowEnrichmentMode(c *gin.Context, bootstrap bool) {
 			_ = s.addressObjects.RemoveDimensionObject(savedRef)
 		}
 	}()
-	if err := lockFlowEnrichment(c.Request.Context(), tx); err != nil {
-		writeSQLError(c, err)
-		return
+	if err := lockFlowEnrichment(ctx, tx); err != nil {
+		return publication, err
 	}
 	profile := flowClassificationProfile{}
 	if !bootstrap {
-		profile, err = scanFlowClassificationProfile(tx.QueryRowContext(c.Request.Context(), `SELECT device_profiles,
+		profile, err = scanFlowClassificationProfile(tx.QueryRowContext(ctx, `SELECT device_profiles,
 			definition_digest,row_version,COALESCE(created_by,''),COALESCE(updated_by,''),created_at,updated_at
 			FROM flow_classification_profiles WHERE id=1 FOR UPDATE`))
 		if err != nil {
-			writeFlowEnrichmentError(c, err)
-			return
+			return publication, err
+		}
+		if expectedProfileVersion != 0 && profile.RowVersion != expectedProfileVersion {
+			return publication, errFlowEnrichmentSuperseded
 		}
 	} else {
 		var profileCount, publicationCount int
-		if err := tx.QueryRowContext(c.Request.Context(), `SELECT
-			(SELECT COUNT(*) FROM flow_classification_profiles WHERE id=1),
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM flow_classification_profiles WHERE id=1),
 			(SELECT COUNT(*) FROM flow_enrichment_publications)`).Scan(&profileCount, &publicationCount); err != nil {
-			writeSQLError(c, err)
-			return
+			return publication, err
 		}
 		if profileCount != 0 || publicationCount != 0 {
-			writeFlowEnrichmentError(c, errFlowEnrichmentConflict)
-			return
+			return publication, errFlowEnrichmentConflict
 		}
 	}
-	snapshot, err := getActiveFlowAddressSnapshot(c.Request.Context(), tx, selectionTime)
+	var currentVersion uint64
+	var latestEffective sql.NullTime
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(classification_version),0),MAX(effective_from) FROM flow_enrichment_publications`).Scan(&currentVersion, &latestEffective); err != nil {
+		return publication, err
+	}
+	if currentVersion >= uint64(^uint32(0)) {
+		return publication, errFlowEnrichmentConflict
+	}
+	effectiveFrom := requested.UTC()
+	if automatic {
+		minimum := time.Now().UTC().Truncate(time.Minute).Add(time.Minute)
+		if effectiveFrom.Before(minimum) {
+			effectiveFrom = minimum
+		}
+		if latestEffective.Valid && !effectiveFrom.After(latestEffective.Time.UTC()) {
+			effectiveFrom = latestEffective.Time.UTC().Truncate(time.Minute).Add(time.Minute)
+		}
+	} else if latestEffective.Valid && !effectiveFrom.After(latestEffective.Time.UTC()) {
+		return publication, errFlowEnrichmentConflict
+	}
+	snapshot, err := getActiveFlowAddressSnapshot(ctx, tx, effectiveFrom)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeFlowEnrichmentError(c, errFlowEnrichmentDimension)
-		} else {
-			writeSQLError(c, err)
+			return publication, errFlowEnrichmentDimension
 		}
-		return
+		return publication, err
 	}
 	if bootstrap {
-		// Cover records received after snapshot activation, including a Kafka
-		// backlog accumulated while the precise device profile was unavailable.
 		effectiveFrom = snapshot.EffectiveFrom.UTC()
+	}
+	if expectedDimensionSnapshotID != "" && snapshot.ID != expectedDimensionSnapshotID {
+		return publication, errFlowEnrichmentSuperseded
 	}
 	if snapshot.Status != address.AddressDimensionStatusActive || snapshot.ApprovalState != address.AddressDimensionApprovalApproved ||
 		snapshot.ObjectDeletedAt.Valid || snapshot.ObjectFormat != address.AddressSnapshotObjectFormat ||
 		snapshot.ObjectFormatVersion != uint64(flowdimension.AddressSnapshotFormatVersion) || !flowSHA256(snapshot.Checksum) {
-		writeFlowEnrichmentError(c, errFlowEnrichmentDimension)
-		return
+		return publication, errFlowEnrichmentDimension
 	}
 	var deviceProfiles []flowdimension.ClassificationDeviceProfile
 	if !bootstrap {
 		snapshotPath, err := s.addressObjects.ResolveDimensionObject(snapshot.ObjectRef)
 		if err != nil {
-			writeFlowEnrichmentError(c, fmt.Errorf("%w: %v", errFlowEnrichmentDimension, err))
-			return
+			return publication, fmt.Errorf("%w: %v", errFlowEnrichmentDimension, err)
 		}
 		snapshotPrefixes, err := loadFlowAddressSnapshotPrefixes(snapshotPath, snapshot.Checksum)
 		if err != nil {
-			writeFlowEnrichmentError(c, fmt.Errorf("%w: %v", errFlowEnrichmentDimension, err))
-			return
+			return publication, fmt.Errorf("%w: %v", errFlowEnrichmentDimension, err)
 		}
-		deviceProfiles, err = resolveFlowClassificationDeviceProfiles(c.Request.Context(), tx, profile.Definition.DeviceProfiles, true, snapshotPrefixes)
+		deviceProfiles, err = resolveFlowClassificationDeviceProfiles(ctx, tx, profile.Definition.DeviceProfiles, true, snapshotPrefixes)
 		if err != nil {
-			writeFlowEnrichmentError(c, err)
-			return
+			return publication, err
 		}
 	}
-	var currentVersion uint64
-	var latestEffective sql.NullTime
-	if err := tx.QueryRowContext(c.Request.Context(), `SELECT COALESCE(MAX(classification_version),0),MAX(effective_from) FROM flow_enrichment_publications`).Scan(&currentVersion, &latestEffective); err != nil {
-		writeSQLError(c, err)
-		return
+	targets, err := flowEnrichmentTargets(ctx, tx, profile.Definition.DeviceProfiles, bootstrap)
+	if err != nil {
+		return publication, err
 	}
-	if currentVersion >= uint64(^uint32(0)) || (latestEffective.Valid && !effectiveFrom.After(latestEffective.Time.UTC())) {
-		writeFlowEnrichmentError(c, errFlowEnrichmentConflict)
-		return
+	if len(expectedWorkerIDs) != 0 && !equalFlowWorkerTargets(targets, expectedWorkerIDs) {
+		return publication, errFlowEnrichmentSuperseded
+	}
+	if len(targets) == 0 {
+		return publication, errFlowEnrichmentNoTargets
 	}
 	classificationVersion := uint32(currentVersion + 1)
 	classificationData, classificationChecksum, err := flowdimension.EncodeClassificationBundle(flowdimension.ClassificationDefinition{
 		Version: classificationVersion, EffectiveFrom: effectiveFrom, DimensionSnapshotID: snapshot.ID,
-		DeviceProfiles: deviceProfiles,
-		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
+		DeviceProfiles: deviceProfiles, InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
 	})
 	if err != nil {
-		writeFlowEnrichmentError(c, err)
-		return
+		return publication, err
 	}
-	object, err := s.addressObjects.SaveDimensionObject(c.Request.Context(), publicationID, classificationData)
+	object, err := s.addressObjects.SaveDimensionObject(ctx, publicationID, classificationData)
 	if err != nil {
-		writeFlowEnrichmentError(c, err)
-		return
+		return publication, err
 	}
 	savedRef = object.Ref
 	if object.Checksum != classificationChecksum {
-		writeFlowEnrichmentError(c, errors.New("classification checksum changed while saving"))
-		return
+		return publication, errors.New("classification checksum changed while saving")
 	}
-	signedAt := time.Now().UTC().Truncate(time.Millisecond)
-	publication := flowEnrichmentPublication{
+	publication = flowEnrichmentPublication{
 		ID: publicationID, PairSchemaVersion: flowEnrichmentPairSchemaVersion,
 		ClassificationVersion: classificationVersion, EffectiveFrom: effectiveFrom, ProfileRowVersion: profile.RowVersion,
 		DimensionSnapshotID: snapshot.ID, DimensionVersion: snapshot.Version, DimensionEffectiveFrom: snapshot.EffectiveFrom.UTC(),
 		DimensionObjectRef: snapshot.ObjectRef, DimensionObjectFormat: snapshot.ObjectFormat,
 		DimensionObjectFormatVersion: uint16(snapshot.ObjectFormatVersion), DimensionChecksum: snapshot.Checksum,
-		ClassificationSchemaVersion: uint16(flowdimension.ClassificationSchemaVersion),
-		ClassificationObjectRef:     object.Ref, ClassificationChecksum: object.Checksum,
-		SignatureAlgorithm: flowworker.EnrichmentVersionSignatureAlgorithm, SigningKeyID: s.agentPlanSigner.KeyID,
-		SignedAt: signedAt, CreatedBy: actor,
+		ClassificationSchemaVersion: uint16(flowdimension.ClassificationSchemaVersion), ClassificationObjectRef: object.Ref,
+		ClassificationChecksum: object.Checksum, SignatureAlgorithm: flowworker.EnrichmentVersionSignatureAlgorithm,
+		SigningKeyID: s.agentPlanSigner.KeyID, SignedAt: time.Now().UTC().Truncate(time.Millisecond), CreatedBy: actor,
 	}
 	if bootstrap {
 		publication.ClassificationSchemaVersion = uint16(flowdimension.LegacyClassificationSchemaVersion)
 	}
 	payload, err := flowworker.EnrichmentVersionSigningPayload(publication.signedEnvelope())
 	if err != nil {
-		writeFlowEnrichmentError(c, err)
-		return
+		return publication, err
 	}
 	publication.Signature = ed25519.Sign(s.agentPlanSigner.PrivateKey, payload)
-	_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO flow_enrichment_publications
+	_, err = tx.ExecContext(ctx, `INSERT INTO flow_enrichment_publications
 		(id,pair_schema_version,classification_version,effective_from,profile_row_version,dimension_snapshot_id,dimension_version,
 		dimension_effective_from,dimension_object_ref,dimension_object_format,dimension_object_format_version,dimension_checksum,
 		classification_schema_version,classification_object_ref,classification_checksum,signature_algorithm,signing_key_id,signature,signed_at,created_by)
@@ -726,27 +756,133 @@ func (s *Server) publishFlowEnrichmentMode(c *gin.Context, bootstrap bool) {
 		publication.ClassificationSchemaVersion, publication.ClassificationObjectRef, publication.ClassificationChecksum,
 		publication.SignatureAlgorithm, publication.SigningKeyID, publication.Signature, publication.SignedAt, actor)
 	if err != nil {
-		writeFlowEnrichmentError(c, err)
-		return
+		return publication, err
+	}
+	for _, workerID := range targets {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO flow_enrichment_publication_targets (publication_id,worker_id) VALUES (?,?)`, publication.ID, workerID); err != nil {
+			return publication, err
+		}
 	}
 	auditAction := "flow.enrichment_publication.created"
 	if bootstrap {
 		auditAction = "flow.enrichment_publication.bootstrap_created"
 	}
-	if err := insertFlowEnrichmentAudit(c.Request.Context(), tx, actor, auditAction, "flow_enrichment", publication.ID, map[string]any{
+	if err := insertFlowEnrichmentAudit(ctx, tx, actor, auditAction, "flow_enrichment", publication.ID, map[string]any{
 		"classification_version": publication.ClassificationVersion, "dimension_snapshot_id": publication.DimensionSnapshotID,
-		"dimension_version": publication.DimensionVersion, "effective_from": publication.EffectiveFrom,
+		"dimension_version": publication.DimensionVersion, "effective_from": publication.EffectiveFrom, "worker_ids": targets,
 	}); err != nil {
-		writeSQLError(c, err)
-		return
+		return publication, err
 	}
 	if err := tx.Commit(); err != nil {
-		writeSQLError(c, err)
-		return
+		return publication, err
 	}
 	committed = true
-	c.Header("Location", "/api/v1/flow/enrichment-publications/"+publication.ID)
-	c.JSON(http.StatusCreated, publication)
+	return publication, nil
+}
+
+func equalFlowWorkerTargets(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func flowEnrichmentTargets(ctx context.Context, tx *sql.Tx, profiles []flowClassificationDeviceProfileDraft, bootstrap bool) ([]string, error) {
+	seen := map[string]struct{}{}
+	if bootstrap {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT b.worker_id FROM flow_worker_device_bindings b JOIN agents a ON a.id=b.worker_id
+			WHERE a.kind='flow_worker' AND a.status='active' ORDER BY b.worker_id`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			seen[id] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		// Bootstrap exists only before a device profile can be published. On a
+		// fresh installation there may therefore be no device binding yet. A
+		// single worker is unambiguous; multiple workers must first be assigned to
+		// devices instead of receiving a platform-wide broadcast.
+		if len(seen) == 0 {
+			workerID, err := soleActiveFlowWorker(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
+			seen[workerID] = struct{}{}
+		}
+	} else {
+		for _, profile := range profiles {
+			var workerID, kind, status string
+			err := tx.QueryRowContext(ctx, `SELECT b.worker_id,a.kind,a.status FROM flow_worker_device_bindings b
+				JOIN agents a ON a.id=b.worker_id WHERE b.device_id=?`, profile.DeviceID).Scan(&workerID, &kind, &status)
+			if errors.Is(err, sql.ErrNoRows) || (err == nil && (kind != "flow_worker" || status != "active")) {
+				// Old installations and workers registered after the schema migration
+				// may not have a binding yet. With exactly one active worker the
+				// placement is deterministic, so persist it and let that worker pull
+				// this immutable publication. Multiple workers remain an explicit
+				// administrator choice made when the device boundaries are saved.
+				workerID, err = soleActiveFlowWorker(ctx, tx)
+				if err != nil {
+					if errors.Is(err, errFlowEnrichmentNoTargets) {
+						return nil, fmt.Errorf("%w: device %s requires an explicit worker selection", errFlowEnrichmentNoTargets, profile.DeviceID)
+					}
+					return nil, err
+				}
+				if _, err = tx.ExecContext(ctx, `INSERT INTO flow_worker_device_bindings (device_id,worker_id)
+					VALUES (?,?) ON DUPLICATE KEY UPDATE worker_id=VALUES(worker_id),row_version=row_version+1`, profile.DeviceID, workerID); err != nil {
+					return nil, err
+				}
+			} else if err != nil {
+				return nil, err
+			}
+			seen[workerID] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for id := range seen {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func soleActiveFlowWorker(ctx context.Context, tx *sql.Tx) (string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE kind='flow_worker' AND status='active' ORDER BY id LIMIT 2`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	workers := make([]string, 0, 2)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		workers = append(workers, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if len(workers) != 1 {
+		return "", errFlowEnrichmentNoTargets
+	}
+	return workers[0], nil
 }
 
 func lockFlowEnrichment(ctx context.Context, tx *sql.Tx) error {
@@ -1085,7 +1221,9 @@ func (s *Server) fetchFlowWorkerPublications(c *gin.Context) {
 		return
 	}
 	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT `+flowEnrichmentPublicationColumns+`
-		FROM flow_enrichment_publications WHERE classification_version>? ORDER BY classification_version ASC LIMIT ?`, after, limit+1)
+		FROM flow_enrichment_publications
+		WHERE id IN (SELECT publication_id FROM flow_enrichment_publication_targets WHERE worker_id=?)
+		  AND classification_version>? ORDER BY classification_version ASC LIMIT ?`, c.Param("id"), after, limit+1)
 	if err != nil {
 		writeSQLError(c, err)
 		return
@@ -1153,6 +1291,16 @@ func (s *Server) fetchFlowWorkerObject(c *gin.Context) {
 	}
 	publication, err := s.readFlowEnrichmentPublication(c.Request.Context(), c.Param("publication_id"), false)
 	if err != nil {
+		writeSQLError(c, err)
+		return
+	}
+	var targeted int
+	if err := s.db.QueryRowContext(c.Request.Context(), `SELECT 1 FROM flow_enrichment_publication_targets
+		WHERE publication_id=? AND worker_id=?`, publication.ID, c.Param("id")).Scan(&targeted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fail(c, http.StatusNotFound, "not_found", "Flow enrichment publication is not assigned to this worker")
+			return
+		}
 		writeSQLError(c, err)
 		return
 	}
@@ -1228,6 +1376,16 @@ func (s *Server) acknowledgeFlowWorkerPublication(c *gin.Context) {
 		return
 	}
 	workerID := c.Param("id")
+	var targeted int
+	if err := tx.QueryRowContext(c.Request.Context(), `SELECT 1 FROM flow_enrichment_publication_targets
+		WHERE publication_id=? AND worker_id=? FOR UPDATE`, publication.ID, workerID).Scan(&targeted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeFlowEnrichmentError(c, errFlowEnrichmentAckConflict)
+			return
+		}
+		writeSQLError(c, err)
+		return
+	}
 	var state string
 	var attemptedAt time.Time
 	var downloadedAt, installedAt sql.NullTime
@@ -1352,6 +1510,8 @@ func writeFlowEnrichmentError(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, "version_conflict", err.Error())
 	case errors.Is(err, errFlowEnrichmentDimension):
 		fail(c, http.StatusPreconditionFailed, "address_snapshot_unavailable", err.Error())
+	case errors.Is(err, errFlowEnrichmentNoTargets):
+		fail(c, http.StatusUnprocessableEntity, "flow_worker_required", err.Error())
 	case errors.Is(err, sql.ErrNoRows):
 		fail(c, http.StatusPreconditionFailed, "classification_profile_unavailable", "add customer source ranges for at least one Flow device before publishing")
 	case errors.As(err, &mysqlErr) && mysqlErr.Number == 1062:

@@ -117,7 +117,7 @@ func TestBuildNativeConfigUsesDefaultDatabaseAndSecretFile(t *testing.T) {
 
 func TestEmbeddedMigrationSetAndGeneratedOwnerAreValid(t *testing.T) {
 	migrations, err := flowch.LoadMigrations(clickhousemigration.Files, ".")
-	if err != nil || len(migrations) != 17 {
+	if err != nil || len(migrations) != 19 {
 		t.Fatalf("migrations=%d error=%v", len(migrations), err)
 	}
 	owner, err := newLockOwner()

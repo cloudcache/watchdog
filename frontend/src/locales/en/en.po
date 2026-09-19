@@ -9495,3 +9495,27 @@ msgstr "Peak-period end"
 #: src/components/routes/flow-reports.tsx
 msgid "Only include the selected peak period"
 msgstr "Only include the selected peak period"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Flow processing worker"
+msgstr "Flow processing worker"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select the Flow worker responsible for this device"
+msgstr "Select the Flow worker responsible for this device"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Select the worker responsible for this device"
+msgstr "Select the worker responsible for this device"
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Only this worker can pull and acknowledge publications for the selected device."
+msgstr "Only this worker can pull and acknowledge publications for the selected device."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "No active Flow processing worker is registered."
+msgstr "No active Flow processing worker is registered."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Worker"
+msgstr "Worker"

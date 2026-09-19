@@ -236,6 +236,7 @@ func (s *Server) newRouter() *gin.Engine {
 	// FlowQueryService replacing the retired hub QueryGateway stack.
 	s.registerFlowRoutes(auth)
 	s.registerFlowStorageLifecycleRoutes(auth)
+	s.registerFlowWorkerBindingRoutes(auth)
 	flowEnrichment := auth.Group("/flow")
 	flowEnrichment.GET("/classification-profile", s.requirePermission("address.view"), s.getFlowClassificationProfile)
 	flowEnrichment.PUT("/classification-profile", s.requirePermission("address.manage"), s.putFlowClassificationProfile)

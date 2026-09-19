@@ -21,8 +21,8 @@ import (
 
 // flow_operator_query.go pins an operator-scoped Flow query to one customer ISP
 // identity and to every immutable AddressSnap + classification publication pair
-// effective over the requested range. A pair is queryable only after every active
-// flow worker has reported an installed_at milestone for that exact publication.
+// effective over the requested range. A pair is queryable only after every worker
+// targeted by that publication has reported an installed_at milestone.
 // remote_isp_id (the flowquery `isp` field) is the customer ISP identity that
 // matches an operator's global flow_isp_id.
 
@@ -43,7 +43,7 @@ type flowOperatorQueryBinding struct {
 }
 
 // resolveFlowOperatorQueryBinding uses one repeatable-read snapshot so the operator
-// identity, the effective pair timeline, the active worker set and the
+// identity, the effective pair timeline, the targeted worker set and the
 // install ACK counts cannot be combined from different control-plane moments.
 func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID string, from, to time.Time) (flowOperatorQueryBinding, error) {
 	if db == nil || ctx == nil || strings.TrimSpace(operatorID) == "" || from.IsZero() || to.IsZero() || !to.After(from) {
@@ -134,18 +134,9 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 		}
 	}
 
-	var expectedWorkers uint32
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM agents WHERE kind = 'flow_worker' AND status = 'active'`).Scan(&expectedWorkers); err != nil {
-		return flowOperatorQueryBinding{}, err
-	}
-	if expectedWorkers == 0 {
-		return flowOperatorQueryBinding{}, errFlowOperatorUnavailable
-	}
-
-	// Per publication, count active flow workers that have ever installed the exact
-	// pair. installed_at is an irreversible milestone: a later failed refresh may
-	// update state/error fields but must not erase readiness for the installed pair.
+	// Per publication, compare the immutable target set with workers that have
+	// installed the exact pair. A worker added elsewhere in the installation must
+	// not block an unrelated device's historical query.
 	placeholders := make([]string, len(publicationIDs))
 	args := make([]any, len(publicationIDs))
 	for i, id := range publicationIDs {
@@ -153,26 +144,27 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 		args[i] = id
 	}
 	readyRows, err := tx.QueryContext(ctx, `
-		SELECT acks.publication_id, COUNT(DISTINCT acks.worker_id)
-		FROM flow_enrichment_publication_acks AS acks
-		JOIN agents AS workers ON workers.id = acks.worker_id
-		WHERE acks.publication_id IN (`+strings.Join(placeholders, ",")+`)
-		  AND acks.installed_at IS NOT NULL
-		  AND workers.kind = 'flow_worker' AND workers.status = 'active'
-		GROUP BY acks.publication_id
+		SELECT targets.publication_id, COUNT(*),
+		       SUM(CASE WHEN acks.installed_at IS NOT NULL THEN 1 ELSE 0 END)
+		FROM flow_enrichment_publication_targets AS targets
+		LEFT JOIN flow_enrichment_publication_acks AS acks
+		  ON acks.publication_id=targets.publication_id AND acks.worker_id=targets.worker_id
+		WHERE targets.publication_id IN (`+strings.Join(placeholders, ",")+`)
+		GROUP BY targets.publication_id
 	`, args...)
 	if err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
-	readyByID := make(map[string]uint32, len(publicationIDs))
+	type readiness struct{ expected, ready uint32 }
+	readyByID := make(map[string]readiness, len(publicationIDs))
 	for readyRows.Next() {
 		var id string
-		var ready uint32
-		if err := readyRows.Scan(&id, &ready); err != nil {
+		var item readiness
+		if err := readyRows.Scan(&id, &item.expected, &item.ready); err != nil {
 			readyRows.Close()
 			return flowOperatorQueryBinding{}, err
 		}
-		readyByID[id] = ready
+		readyByID[id] = item
 	}
 	if err := readyRows.Close(); err != nil {
 		return flowOperatorQueryBinding{}, err
@@ -180,9 +172,14 @@ func resolveFlowOperatorQueryBinding(ctx context.Context, db *sql.DB, operatorID
 	if err := readyRows.Err(); err != nil {
 		return flowOperatorQueryBinding{}, err
 	}
+	var expectedWorkers uint32
 	for _, id := range publicationIDs {
-		if readyByID[id] != expectedWorkers {
-			return flowOperatorQueryBinding{}, fmt.Errorf("%w: publication %s installed on %d of %d active flow workers", errFlowOperatorUnavailable, id, readyByID[id], expectedWorkers)
+		item := readyByID[id]
+		if item.expected == 0 || item.ready != item.expected {
+			return flowOperatorQueryBinding{}, fmt.Errorf("%w: publication %s installed on %d of %d targeted flow workers", errFlowOperatorUnavailable, id, item.ready, item.expected)
+		}
+		if item.expected > expectedWorkers {
+			expectedWorkers = item.expected
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -241,7 +238,7 @@ func (s *Server) applyFlowOperatorSelection(c *gin.Context, sel *flowOperatorSel
 		case errors.Is(err, errFlowOperatorInvalid):
 			fail(c, http.StatusBadRequest, "invalid_request", "flow operator selection is invalid")
 		case errors.Is(err, errFlowOperatorUnavailable):
-			fail(c, http.StatusServiceUnavailable, "flow_operator_unavailable", "flow operator classification is not installed on every active worker for the requested range")
+			fail(c, http.StatusServiceUnavailable, "flow_operator_unavailable", "flow operator classification is not installed on every targeted worker for the requested range")
 		default:
 			fail(c, http.StatusServiceUnavailable, "flow_operator_unavailable", "flow operator classification readiness is unavailable")
 		}
