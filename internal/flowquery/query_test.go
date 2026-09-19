@@ -397,10 +397,10 @@ func TestCompileStorageV2RawEndpointUsesBoundedCandidateThenExactBuckets(t *test
 	if queryParameter(compiled.Query, "candidate_n") != "'24'" {
 		t.Fatalf("candidate_n=%q", queryParameter(compiled.Query, "candidate_n"))
 	}
-	if setting(compiled.Query, "max_rows_to_read") != "200000000" {
+	if setting(compiled.Query, "max_rows_to_read") != "400000000" {
 		t.Fatalf("endpoint scan budget=%q", setting(compiled.Query, "max_rows_to_read"))
 	}
-	if setting(compiled.Query, "max_bytes_to_read") != "8589934592" {
+	if setting(compiled.Query, "max_bytes_to_read") != "17179869184" {
 		t.Fatalf("endpoint byte budget=%q", setting(compiled.Query, "max_bytes_to_read"))
 	}
 }

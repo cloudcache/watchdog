@@ -34,6 +34,12 @@ const (
 	// guard so an interactive request cannot scan the whole installation.
 	maxIdentityScopedRawScanRows  = 200_000_000
 	maxIdentityScopedRawScanBytes = 8 << 30
+	// Endpoint Top-N deliberately trades a second identity-scoped read for a
+	// bounded candidate set: the first pass selects candidates and the second
+	// computes exact bucket values. Keep its cumulative read guard separate
+	// from ordinary one-pass Flow queries.
+	maxEndpointCandidateScanRows  = 400_000_000
+	maxEndpointCandidateScanBytes = 16 << 30
 	endpointCandidateMultiplier   = 8
 )
 
@@ -46,6 +52,10 @@ func rawScanBudgets(identityScoped bool) (string, string) {
 		return strconv.Itoa(maxIdentityScopedRawScanRows), strconv.FormatUint(maxIdentityScopedRawScanBytes, 10)
 	}
 	return "50000000", "4294967296"
+}
+
+func endpointCandidateScanBudgets() (string, string) {
+	return strconv.Itoa(maxEndpointCandidateScanRows), strconv.FormatUint(maxEndpointCandidateScanBytes, 10)
 }
 
 type Bucket string
@@ -522,6 +532,9 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		usesRawFacts = archiveThrough.Before(to)
 	}
 	maxRowsToRead, maxBytesToRead := rawScanBudgets(identityScopedRawQuery)
+	if endpointCandidateQuery {
+		maxRowsToRead, maxBytesToRead = endpointCandidateScanBudgets()
+	}
 	query := ch.Query{
 		Body:       body,
 		Parameters: parameters,
@@ -532,8 +545,9 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
 			{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
 			{Key: "read_overflow_mode", Value: "throw", Important: true},
-			// Keep a hard memory guard even though ranking and output now share
-			// one FINAL scan through a window-ranked pipeline.
+			// Keep a hard memory guard. Ordinary ranking uses one grouped scan;
+			// endpoint candidate ranking uses two raw reads but keeps the
+			// high-cardinality endpoint set out of the final aggregation state.
 			{Key: "max_memory_usage", Value: "4294967296", Important: true},
 			// High-cardinality endpoint dimensions can exceed the in-memory
 			// aggregation/sort budget before the final Top N is selected. Spill

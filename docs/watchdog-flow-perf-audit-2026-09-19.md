@@ -327,7 +327,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 2026-09-19 的进一步故障取证确认了两次真实 `MEMORY_LIMIT_EXCEEDED`：分别读取 15,751,262 行/811.23MiB 与 20,938,826 行/1.05GiB，均在 `AggregatingTransform` 将中间状态扩张到约 4.03/4.08GiB 时触发 4GiB 硬上限。失败 SQL 仍是旧部署形状：先按 `dst_ip` 聚合全量事实，随后才在外层按设备过滤。处置第一步是部署 `a777ac83` 的源扫描过滤下推，并让主查询、联合查询与境外查询在 1GiB 时启用 external group-by/external sort。
 
-过滤下推和落盘仍不足以闭环端点查询：同设备当前 24h 范围包含 66,210,292 条事实和 18,374,764 个不同目标 IP；全库为 69,720,428 条事实和 19,431,102 个不同目标 IP。按小时+IP 精确聚合再窗口排名的只读探针即使启用 external group/sort 仍在 15 秒超时。因此源/目的 IP 的 raw-only Storage V2 路径改为两遍有界算法：第一遍以 `topKWeighted(TopN*8)` 获取固定大小候选，第二遍只读取当前请求指标并计算候选的精确桶值，同时把非候选及候选中未进入最终 Top N 的事实按版本汇入 `_other`。该路径必须明确选择 device、target 或 exporter；未限定身份的查询仍保留 50M rows/4GiB read 上限。有界双扫描使用 200M 总读行、8GiB 累计列读取上限，内存仍为 4GiB、执行时限仍为 15s。真实 ClickHouse 集成验证 Top N、`_other`、records 和完整度守恒；生产同形只读探针在 71,819,059 条设备事实、约 1,986 万目标 IP 的 24h 范围内用时 4.522s。
+过滤下推和落盘仍不足以闭环端点查询：同设备当前 24h 范围包含 66,210,292 条事实和 18,374,764 个不同目标 IP；全库为 69,720,428 条事实和 19,431,102 个不同目标 IP。按小时+IP 精确聚合再窗口排名的只读探针即使启用 external group/sort 仍在 15 秒超时。因此源/目的 IP 的 raw-only Storage V2 路径改为两遍有界算法：第一遍以 `topKWeighted(TopN*8)` 获取固定大小候选，第二遍只读取当前请求指标并计算候选的精确桶值，同时把非候选及候选中未进入最终 Top N 的事实按版本汇入 `_other`。该路径必须明确选择 device、target 或 exporter；未限定身份的查询仍保留 50M rows/4GiB read 上限。端点候选两遍读取使用独立的 400M 总读行、16GiB 累计列读取上限；普通身份受限单遍查询仍为 200M/8GiB，二者的内存均为 4GiB、执行时限均为 15s。真实 ClickHouse 集成验证 Top N、`_other`、records 和完整度守恒；生产同形只读探针在 71,819,059 条设备事实、约 1,986 万目标 IP 的 24h 范围内用时 4.522s。2026-09-19 数据增长后，同形查询累计读取 248.91M 行，证明双扫描不能复用单遍 200M 门禁；拆分预算后生产重放通过。
 
 生产复测进一步确认“每个 Flow 页面都报 resource limit”并非端点算法单点问题：所选设备的 24h 查询在 `FINAL` 前需要读取约 114,270,000 条物理行，而通用聚合、联合维度和境外三条编译链仍各自使用 50M 行字面量，查询在读取 0 行时即被 ClickHouse 拒绝。三条链现已统一身份受限预算：只有请求明确携带 device/target/exporter 且实际访问 raw facts 时才允许 200M rows/8GiB read，未选设备的全局查询仍为 50M/4GiB。Storage V2 通用聚合同时改为仅投影和汇总当前指标列，不再为一个 `estimated_bps` 请求读取并聚合 raw/estimated 字节和包数四套计数器。
 
@@ -363,11 +363,11 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 ### PERF-Q1B 24h 查询聚合内存闭环
 
 - [x] **故障证据**：固定两条生产失败 query，确认不是结果行过多，而是高基数端点聚合在 `AggregatingTransform` 内达到 4GiB；同时确认生产仍使用过滤后置的旧 SQL。
-- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。所有 raw 查询只有在明确选择 device/target/exporter 时才使用 200M rows/8GiB read，未限定身份的全局查询继续保留 50M rows/4GiB fail-closed 上限；4GiB memory 和 15s 上限不变。
+- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。明确选择 device/target/exporter 的普通单遍 raw 查询使用 200M rows/8GiB read；端点候选两遍查询独立使用 400M/16GiB；未限定身份的全局查询继续保留 50M/4GiB fail-closed 上限；4GiB memory 和 15s 上限不变。
 - [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值；端点编译器断言两遍扫描均先应用设备过滤、候选数固定、只投影当前指标且无 `dense_rank` 高基数状态；未选择设备或带显式 IP/version 残余筛选时仍回退普通精确门禁路径。
 - [x] **真实 ClickHouse 集成**：隔离数据库写入三个目标 IP，验证候选查询的 Top 1 精确值、版本化 `_other`、records 和 bucket completeness 守恒。
 - [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；同设备 24h 同形只读探针已在 4.522s 完成，仍需经认证 API 重放并记录 `system.query_log` 的 `read_rows/read_bytes/memory_usage/duration`。
-- [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。生产仍超过 200M/8GiB/15s 的单设备查询或任何超过 50M 的全局查询不得再抬同步上限，应进入两段式 Top-N、热查询层或异步导出工作包。
+- [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。普通单遍查询仍超过 200M/8GiB/15s、端点两遍查询仍超过 400M/16GiB/15s，或任何超过 50M 的全局查询不得再抬同步上限，应进入热查询层或异步导出工作包。
 
 ### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环
 
