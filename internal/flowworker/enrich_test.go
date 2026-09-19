@@ -130,6 +130,43 @@ func TestEnrichBatchUsesObservationDeviceClassificationContext(t *testing.T) {
 	}
 }
 
+func TestEnrichBatchAttributesNativeIPv6CustomerWithoutChangingCounters(t *testing.T) {
+	dimension := compileDimension(t, "dimension-1", 1, testMinute(12, 0), nil)
+	dimensions, _ := flowdimension.NewSnapshotCatalog(dimension)
+	classification, err := flowdimension.CompileClassification(flowdimension.ClassificationDefinition{
+		Version: 1, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "dimension-1",
+		DeviceProfiles: []flowdimension.ClassificationDeviceProfile{{
+			DeviceID: "device-a", SourcePrefixes: []flowdimension.ClassificationSourcePrefix{
+				{ID: "qiniu-v4", CIDR: "120.199.32.128/25", CustomerID: "qiniu", CustomerName: "七牛"},
+				{ID: "qiniu-v6", CIDR: "2409:8728:8ff:1077::/64", CustomerID: "qiniu", CustomerName: "七牛"},
+			},
+		}},
+		InternalPolicy: flowdimension.RecordPolicyCount, TransitPolicy: flowdimension.RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classifications, _ := flowdimension.NewClassificationCatalog(classification)
+	geo := flowdimension.NewGeoCatalog()
+	loadGeo(t, geo, "geo-1", testMinute(12, 0), "203.0.113.0,203.0.113.255,CN,330100,Zhejiang,Hangzhou,3,64500")
+	batch := testBatch(testMinute(12, 30))
+	batch.Records[0].SourceIP = address16("2409:8728:8ff:1077::1234")
+	batch.Records[0].DestinationIP = address16("2001:db8::1")
+
+	result, err := newTestEnricher(t, dimensions, geo, classifications).EnrichBatch(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := result.Records[0]
+	if record.Dimensions.Direction != flowdimension.DirectionOut || record.Dimensions.Business != "七牛" {
+		t.Fatalf("IPv6 attribution = %q/%q", record.Dimensions.Direction, record.Dimensions.Business)
+	}
+	if record.EstimatedBytes != batch.Records[0].EstimatedBytes || record.EstimatedPackets != batch.Records[0].EstimatedPackets ||
+		record.RawBytes != batch.Records[0].RawBytes || record.RawPackets != batch.Records[0].RawPackets {
+		t.Fatalf("IPv6 attribution changed counters: record=%+v input=%+v", record, batch.Records[0])
+	}
+}
+
 func TestEnrichBatchAppliesGeoOverrideAndPreservesExplicitUnknownASN(t *testing.T) {
 	override := map[string]string{
 		"flow.geo.country": "CN", "flow.geo.admin_code": "330100", "flow.geo.isp_id": "3", "flow.geo.asn": "0", "flow.geo.reason": "verified",

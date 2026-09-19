@@ -198,6 +198,47 @@ func TestClassificationSchemaV2ReturnsCustomerAttribution(t *testing.T) {
 	}
 }
 
+func TestClassificationSchemaV2ReturnsDualStackCustomerAttribution(t *testing.T) {
+	snapshot, err := CompileClassification(ClassificationDefinition{
+		Version: 11, EffectiveFrom: testMinute(12, 0), DimensionSnapshotID: "snapshot-11",
+		DeviceProfiles: []ClassificationDeviceProfile{
+			{DeviceID: "device-qiniu", SourcePrefixes: []ClassificationSourcePrefix{
+				{ID: "qiniu-v4", CIDR: "120.199.32.128/25", CustomerID: "qiniu", CustomerName: "七牛"},
+				{ID: "qiniu-v6", CIDR: "2409:8728:8ff:1077::/64", CustomerID: "qiniu", CustomerName: "七牛"},
+				{ID: "other-v6", CIDR: "2409:8728:8ff::/48", CustomerID: "other", CustomerName: "Other"},
+			}},
+			{DeviceID: "device-other", SourcePrefixes: []ClassificationSourcePrefix{
+				{ID: "other-device-v6", CIDR: "2409:8728:8ff:1077::/64", CustomerID: "other-device", CustomerName: "Other device"},
+			}},
+		},
+		InternalPolicy: RecordPolicyCount, TransitPolicy: RecordPolicyCount,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, device, source, destination, customer string
+		wantDirection                               BusinessDirection
+	}{
+		{"qiniu-v4", "device-qiniu", "120.199.32.129", "203.0.113.1", "七牛", DirectionOut},
+		{"qiniu-v4-mapped", "device-qiniu", "::ffff:120.199.32.129", "203.0.113.1", "七牛", DirectionOut},
+		{"qiniu-v6", "device-qiniu", "2409:8728:8ff:1077::1", "2001:db8::1", "七牛", DirectionOut},
+		{"qiniu-v6-in", "device-qiniu", "2001:db8::1", "2409:8728:8ff:1077:ffff::1", "七牛", DirectionIn},
+		{"v6-longest-prefix", "device-qiniu", "2409:8728:8ff:1077:1::1", "2001:db8::1", "七牛", DirectionOut},
+		{"v6-adjacent-prefix", "device-qiniu", "2409:8728:8ff:1078::1", "2001:db8::1", "Other", DirectionOut},
+		{"same-prefix-device-scope", "device-other", "2409:8728:8ff:1077::1", "2001:db8::1", "Other device", DirectionOut},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			direction, customer, configured := snapshot.DeviceDirectionAttribution(
+				test.device, netip.MustParseAddr(test.source), netip.MustParseAddr(test.destination),
+			)
+			if !configured || direction != test.wantDirection || customer != test.customer {
+				t.Fatalf("direction=%q customer=%q configured=%v, want %q/%q", direction, customer, configured, test.wantDirection, test.customer)
+			}
+		})
+	}
+}
+
 func TestClassificationSchemaV2DefaultLimitSupportsManyDevices(t *testing.T) {
 	profiles := make([]ClassificationDeviceProfile, 1_000)
 	for index := range profiles {

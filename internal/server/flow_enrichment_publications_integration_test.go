@@ -168,7 +168,8 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(classificationObject, []byte(`"customer_name":"Integration customer"`)) ||
-		!bytes.Contains(classificationObject, []byte(`"cidr":"198.51.100.0/24"`)) {
+		!bytes.Contains(classificationObject, []byte(`"cidr":"198.51.100.0/24"`)) ||
+		!bytes.Contains(classificationObject, []byte(`"cidr":"2001:db8:100::/48"`)) {
 		t.Fatalf("compiled customer boundary object = %s", classificationObject)
 	}
 	if _, err := s.db.Exec(`DELETE FROM flow_enrichment_publications WHERE id=?`, boundaryPublication.ID); err != nil {
