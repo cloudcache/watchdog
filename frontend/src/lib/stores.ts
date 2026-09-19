@@ -1,54 +1,16 @@
-import { atom, computed, listenKeys, map, type ReadableAtom } from "nanostores"
-import type { ChartTimeRange, ChartTimes, SystemRecord, UpdateInfo, UserSettings } from "@/types"
+import { atom, map } from "nanostores"
+import type { UserSettings } from "@/types"
 import { Unit } from "./enums"
+import { developmentAuth } from "./env"
 
 /** Default layout width. Used as fallback when user setting is unset. */
 export const defaultLayoutWidth = 1580
 
 /** Store if user is authenticated */
-export const $authenticated = atom(import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true")
+export const $authenticated = atom(developmentAuth)
 /** Whether a protected-route session check has completed. Public login/reset
  * pages never trigger this check themselves. */
-export const $authChecked = atom(import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true")
-
-/** Map of system records by name */
-export const $allSystemsByName = map<Record<string, SystemRecord>>({})
-/** Map of system records by id */
-export const $allSystemsById = map<Record<string, SystemRecord>>({})
-/** Map of up systems by id */
-export const $upSystems = map<Record<string, SystemRecord>>({})
-/** Map of down systems by id */
-export const $downSystems = map<Record<string, SystemRecord>>({})
-/** Map of paused systems by id */
-export const $pausedSystems = map<Record<string, SystemRecord>>({})
-/** List of all system records */
-export const $systems: ReadableAtom<SystemRecord[]> = computed($allSystemsById, Object.values)
-
-/** SSH public key */
-export const $publicKey = atom("")
-
-/** New version info if an update is available, otherwise undefined */
-export const $newVersion = atom<UpdateInfo | undefined>()
-
-/** Chart time period */
-export const $chartTime = atom<ChartTimes>("1h")
-
-/** Custom chart range, stored as datetime-local input values. */
-export const $chartTimeRange = atom<ChartTimeRange>({ start: "", end: "" })
-
-/** Whether to display average or max chart values */
-export const $maxValues = atom(false)
-
-// export const UserSettingsSchema = v.object({
-// 	chartTime: v.picklist(["1h", "12h", "24h", "1w", "30d"]),
-// 	emails: v.optional(v.array(v.pipe(v.string(), v.email())), []),
-// 	webhooks: v.optional(v.array(v.string())),
-// 	colorWarn: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(100))),
-// 	colorDanger: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(100))),
-// 	unitTemp: v.optional(v.enum(Unit)),
-// 	unitNet: v.optional(v.enum(Unit)),
-// 	unitDisk: v.optional(v.enum(Unit)),
-// })
+export const $authChecked = atom(developmentAuth)
 
 /** User settings */
 export const $userSettings = map<UserSettings>({
@@ -57,22 +19,9 @@ export const $userSettings = map<UserSettings>({
 	unitNet: Unit.Bytes,
 	unitTemp: Unit.Celsius,
 })
-// update chart time on change
-listenKeys($userSettings, ["chartTime"], ({ chartTime }) => $chartTime.set(chartTime))
-
-/** Container chart filter */
-export const $containerFilter = atom("")
-
-/** Temperature chart filter */
-export const $temperatureFilter = atom("")
 
 /** Fallback copy to clipboard dialog content */
 export const $copyContent = atom("")
 
 /** Direction for localization */
 export const $direction = atom<"ltr" | "rtl">("ltr")
-
-/** Longest system name length. Used to set table column width. I know this
- *  is stupid but the table is virtualized and I know this will work.
- */
-export const $longestSystemNameLen = atom(8)

@@ -4,16 +4,18 @@ import { I18nProvider } from "@lingui/react"
 import { Trans } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
 import { DirectionProvider } from "@radix-ui/react-direction"
-// import { Suspense, lazy, useEffect, StrictMode } from "react"
-import { lazy, memo, Suspense, useCallback, useEffect, useState } from "react"
+import { lazy, memo, type ReactNode, Suspense, useCallback, useEffect, useState } from "react"
 import ReactDOM from "react-dom/client"
+import { ErrorBoundary } from "@/components/error-boundary.tsx"
 import Navbar from "@/components/navbar.tsx"
-import { $router, navigate, prependBasePath } from "@/components/router.tsx"
+import { PageLoading } from "@/components/page-loading.tsx"
+import { $router, navigate, type Page, prependBasePath } from "@/components/router.tsx"
 import Settings from "@/components/routes/settings/layout.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
-import { canAny, canManageAddressLibrary, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
+import { canAny, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
 import { isInstallRedirectRoute, isPublicSessionRoute, shouldRestoreSession } from "@/lib/auth-route-policy.ts"
+import { developmentAuth } from "@/lib/env.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
@@ -79,261 +81,156 @@ const FlowVPNRules = lazy(() => import("@/components/routes/flow-vpn-rules.tsx")
 const FlowSavedFilters = lazy(() => import("@/components/routes/flow-saved-filters.tsx"))
 const CopyToClipboardDialog = lazy(() => import("@/components/copy-to-clipboard.tsx"))
 
-const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
+type Route = Page["route"]
+type PageOf<R extends Route> = Extract<Page, { route: R }>
+
+type PageDefinition<R extends Route> = {
+	/** Any one of these abilities grants access; administrators always pass. */
+	abilities?: string[]
+	/** Replaces the generic permission-denied explanation. */
+	deniedMessage?: () => ReactNode
+	render: (page: PageOf<R>) => ReactNode
+}
+
+const deviceView = ["device.view"]
+const deviceUpdate = ["device.update"]
+const flowView = ["flow.view.customer", "flow.view.supplier", "flow.view.raw"]
+const addressLibrary = {
+	abilities: ["address.manage", "address.publish"],
+	deniedMessage: () => <Trans>Address library maintenance requires an administrator.</Trans>,
+}
+
+/** One entry per route in router.tsx: who may open it and what it renders. */
+const pages: { [R in Route]: PageDefinition<R> } = {
+	home: { abilities: deviceView, render: () => <Targets /> },
+	targets: { abilities: deviceView, render: () => <Targets /> },
+	target_new: { abilities: ["device.create"], render: () => <TargetForm /> },
+	target_edit: { abilities: deviceUpdate, render: ({ params }) => <TargetForm id={params.id} /> },
+	target_detail: { abilities: deviceView, render: ({ params }) => <TargetDetail id={params.id} /> },
+	system: { abilities: deviceView, render: ({ params }) => <TargetDetail id={params.id} /> },
+	core: { abilities: deviceView, render: () => <CoreBGP /> },
+	network: { abilities: deviceView, render: () => <NetworkDevices /> },
+	network_discover: { abilities: deviceUpdate, render: () => <NetworkDiscover /> },
+	network_device_new: { abilities: ["device.create"], render: () => <TargetForm defaultKind="network" /> },
+	network_device_edit: { abilities: deviceUpdate, render: ({ params }) => <NetworkDeviceForm id={params.id} /> },
+	network_device: { abilities: deviceView, render: ({ params }) => <NetworkDeviceDetail id={params.id} /> },
+	network_device_snmp: { abilities: deviceUpdate, render: ({ params }) => <NetworkDeviceSNMP id={params.id} /> },
+	network_port: { abilities: ["port.view"], render: ({ params }) => <NetworkPortDetail id={params.id} /> },
+	network_port_edit: { abilities: ["port.update"], render: ({ params }) => <NetworkPortForm id={params.id} /> },
+	network_port_policy: { abilities: ["port.update"], render: ({ params }) => <NetworkPortPolicy id={params.id} /> },
+	traffic_defaults: { abilities: deviceUpdate, render: () => <TrafficDefaults /> },
+	snmp_profiles: { render: () => <SNMPProfiles /> },
+	snmp_profile_new: { abilities: deviceUpdate, render: () => <SNMPProfileForm /> },
+	snmp_profile_edit: { abilities: deviceUpdate, render: ({ params }) => <SNMPProfileForm id={params.id} /> },
+	snmp_mib_modules: { render: () => <SNMPMIBModules /> },
+	snmp_mib_module_new: { abilities: deviceUpdate, render: () => <SNMPMIBModuleForm /> },
+	snmp_mib_module_edit: { abilities: deviceUpdate, render: ({ params }) => <SNMPMIBModuleForm id={params.id} /> },
+	aggregate_charts: { abilities: deviceView, render: () => <AggregateCharts /> },
+	aggregate_graphs: { abilities: deviceView, render: () => <AggregateGraphs /> },
+	aggregate_graph_new: { abilities: deviceUpdate, render: () => <AggregateGraphForm /> },
+	aggregate_graph_edit: { abilities: deviceUpdate, render: ({ params }) => <AggregateGraphForm id={params.id} /> },
+	aggregate_graph: { abilities: deviceView, render: ({ params }) => <AggregateGraphDetail id={params.id} /> },
+	dashboards: { abilities: deviceView, render: () => <Dashboards /> },
+	dashboard_new: { abilities: deviceUpdate, render: () => <DashboardForm /> },
+	dashboard_edit: { abilities: deviceUpdate, render: ({ params }) => <DashboardForm id={params.id} /> },
+	agents: { abilities: ["agent.view"], render: () => <Agents /> },
+	agent_new: { abilities: ["agent.manage"], render: () => <AgentForm /> },
+	agent_edit: { abilities: ["agent.manage"], render: ({ params }) => <AgentForm id={params.id} /> },
+	agent_runs: { abilities: ["agent.view"], render: ({ params }) => <AgentRuns id={params.id} /> },
+	agent_plans: { abilities: ["agent.view"], render: ({ params }) => <AgentPlans id={params.id} /> },
+	billing: { abilities: ["bill.view"], render: () => <Billing /> },
+	billing_new: { abilities: ["bill.create"], render: () => <BillingAccountForm /> },
+	billing_edit: { abilities: ["bill.update"], render: ({ params }) => <BillingAccountForm id={params.id} /> },
+	billing_detail: { abilities: ["bill.view"], render: ({ params }) => <BillingAccountDetail id={params.id} /> },
+	exports: { render: () => <Exports /> },
+	export_new: { render: () => <ExportNew /> },
+	// "/exports/new" matched export_detail before export_new existed; keep the alias.
+	export_detail: { render: ({ params }) => (params.id === "new" ? <ExportNew /> : <ExportDetail id={params.id} />) },
+	users_admin: { abilities: ["user.view", "role.view"], render: () => <UsersAdmin /> },
+	user_new: { abilities: ["user.create"], render: () => <UserForm /> },
+	user_edit: { abilities: ["user.update", "user.manage"], render: ({ params }) => <UserForm id={params.id} /> },
+	role_new: { abilities: ["role.create"], render: () => <RoleForm /> },
+	role_edit: { abilities: ["role.update"], render: ({ params }) => <RoleForm id={params.id} /> },
+	permissions: { abilities: ["role.view"], render: () => <Permissions /> },
+	audit_logs: { abilities: ["audit.view"], render: () => <AuditLogs /> },
+	operation_jobs: { abilities: ["job.view"], render: () => <OperationJobs /> },
+	retention: { abilities: ["job.manage"], render: () => <Retention /> },
+	watchdog_overview: { render: () => <WatchdogOverview /> },
+	settings: { render: () => <Settings /> },
+	address_library_root: { ...addressLibrary, render: () => <AddressLibrary section="prefixes" /> },
+	address_library: { ...addressLibrary, render: ({ params }) => <AddressLibrary section={params.section} /> },
+	address_prefixes: { ...addressLibrary, render: () => <AddressPrefixes /> },
+	address_sets: { ...addressLibrary, render: () => <AddressSets /> },
+	flow_overview: { abilities: flowView, render: () => <FlowReports surface="overview" /> },
+	flow_attribution: { abilities: ["address.view"], render: () => <FlowAttribution /> },
+	traffic_matrix: { abilities: flowView, render: () => <TrafficMatrix key="advanced" surface="overview" /> },
+	flow_dimensions: { abilities: flowView, render: () => <FlowReports surface="dimensions" /> },
+	flow_source: { abilities: flowView, render: () => <FlowReports surface="source" /> },
+	flow_destination: { abilities: flowView, render: () => <FlowReports surface="destination" /> },
+	flow_overseas: { abilities: flowView, render: () => <FlowReports surface="overseas" /> },
+	flow_vpn: {
+		abilities: ["flow.vpn.view"],
+		render: () => (
+			<>
+				<FlowReports surface="vpn" />
+				<FlowVPN />
+			</>
+		),
+	},
+	flow_vpn_rules: { abilities: ["flow.vpn.manage"], render: () => <FlowVPNRules /> },
+	flow_filters: { abilities: flowView, render: () => <FlowSavedFilters /> },
+	// Public routes render before the authenticated shell; once signed in they go home.
+	forgot_password: { render: () => <RedirectHome /> },
+	install: { render: () => <RedirectHome /> },
+}
+
+function pageDefinition<R extends Route>(route: R): PageDefinition<R> {
+	return pages[route]
+}
 
 const App = memo(() => {
 	const page = useStore($router)
 	const platformIdentity = useStore($platformIdentity)
 
 	// Authenticated pages mount only after the route-triggered session check.
-	if (!watchdogDevAuth && !platformIdentity.ready) {
-		return <div className="p-3 text-sm text-muted-foreground">Loading...</div>
+	if (!developmentAuth && !platformIdentity.ready) {
+		return <PageLoading />
 	}
-	if (!watchdogDevAuth && !platformIdentity.current) {
-		return <div className="p-3 text-sm text-muted-foreground">Authentication required.</div>
+	if (!developmentAuth && !platformIdentity.current) {
+		return (
+			<p className="p-3 text-sm text-muted-foreground">
+				<Trans>Authentication required.</Trans>
+			</p>
+		)
 	}
 	if (!page) {
 		return <h1 className="text-3xl text-center my-14">404</h1>
 	}
-	const requiredAbilities = routeAbilities(page.route)
-	if (requiredAbilities.length > 0 && !canAny(...requiredAbilities)) {
-		return <PermissionDenied />
+	const definition = pageDefinition(page.route)
+	if (definition.abilities?.length && !canAny(...definition.abilities)) {
+		return <PermissionDenied message={definition.deniedMessage?.()} />
 	}
-	if (
-		(page.route === "address_library_root" ||
-			page.route === "address_library" ||
-			page.route === "address_prefixes" ||
-			page.route === "address_sets") &&
-		!canManageAddressLibrary()
-	) {
-		return (
-			<div className="my-14 text-center">
-				<h1 className="text-2xl font-semibold">
-					<Trans>Permission denied</Trans>
-				</h1>
-				<p className="mt-2 text-sm text-muted-foreground">
-					<Trans>Address library maintenance requires an administrator.</Trans>
-				</p>
-			</div>
-		)
-	} else if (page.route === "aggregate_charts") {
-		return <AggregateCharts />
-	} else if (page.route === "aggregate_graphs") {
-		return <AggregateGraphs />
-	} else if (page.route === "aggregate_graph_new") {
-		return <AggregateGraphForm />
-	} else if (page.route === "aggregate_graph_edit") {
-		return <AggregateGraphForm id={page.params.id} />
-	} else if (page.route === "aggregate_graph") {
-		return <AggregateGraphDetail id={page.params.id} />
-	} else if (page.route === "dashboards") {
-		return <Dashboards />
-	} else if (page.route === "dashboard_new") {
-		return <DashboardForm />
-	} else if (page.route === "dashboard_edit") {
-		return <DashboardForm id={page.params.id} />
-	} else if (page.route === "agents") {
-		return <Agents />
-	} else if (page.route === "agent_new") {
-		return <AgentForm />
-	} else if (page.route === "agent_edit") {
-		return <AgentForm id={page.params.id} />
-	} else if (page.route === "agent_runs") {
-		return <AgentRuns id={page.params.id} />
-	} else if (page.route === "agent_plans") {
-		return <AgentPlans id={page.params.id} />
-	} else if (page.route === "billing") {
-		return <Billing />
-	} else if (page.route === "billing_new") {
-		return <BillingAccountForm />
-	} else if (page.route === "billing_edit") {
-		return <BillingAccountForm id={page.params.id} />
-	} else if (page.route === "billing_detail") {
-		return <BillingAccountDetail id={page.params.id} />
-	} else if (page.route === "watchdog_overview") {
-		return <WatchdogOverview />
-	} else if (page.route === "home") {
-		return <Targets />
-	} else if (page.route === "system") {
-		return <TargetDetail id={page.params.id} />
-	} else if (page.route === "targets") {
-		return <Targets />
-	} else if (page.route === "target_new") {
-		return <TargetForm />
-	} else if (page.route === "target_edit") {
-		return <TargetForm id={page.params.id} />
-	} else if (page.route === "target_detail") {
-		return <TargetDetail id={page.params.id} />
-	} else if (page.route === "core") {
-		return <CoreBGP />
-	} else if (page.route === "export_new") {
-		return <ExportNew />
-	} else if (page.route === "export_detail") {
-		if (page.params.id === "new") {
-			return <ExportNew />
-		}
-		return <ExportDetail id={page.params.id} />
-	} else if (page.route === "exports") {
-		return <Exports />
-	} else if (page.route === "network") {
-		return <NetworkDevices />
-	} else if (page.route === "network_discover") {
-		return <NetworkDiscover />
-	} else if (page.route === "network_device_new") {
-		return <TargetForm defaultKind="network" />
-	} else if (page.route === "network_device_edit") {
-		return <NetworkDeviceForm id={page.params.id} />
-	} else if (page.route === "network_device") {
-		return <NetworkDeviceDetail id={page.params.id} />
-	} else if (page.route === "network_device_snmp") {
-		return <NetworkDeviceSNMP id={page.params.id} />
-	} else if (page.route === "network_port") {
-		return <NetworkPortDetail id={page.params.id} />
-	} else if (page.route === "network_port_edit") {
-		return <NetworkPortForm id={page.params.id} />
-	} else if (page.route === "network_port_policy") {
-		return <NetworkPortPolicy id={page.params.id} />
-	} else if (page.route === "users_admin") {
-		return <UsersAdmin />
-	} else if (page.route === "user_new") {
-		return <UserForm />
-	} else if (page.route === "user_edit") {
-		return <UserForm id={page.params.id} />
-	} else if (page.route === "role_new") {
-		return <RoleForm />
-	} else if (page.route === "role_edit") {
-		return <RoleForm id={page.params.id} />
-	} else if (page.route === "audit_logs") {
-		return <AuditLogs />
-	} else if (page.route === "operation_jobs") {
-		return <OperationJobs />
-	} else if (page.route === "permissions") {
-		return <Permissions />
-	} else if (page.route === "retention") {
-		return <Retention />
-	} else if (page.route === "snmp_profiles") {
-		return <SNMPProfiles />
-	} else if (page.route === "snmp_profile_new") {
-		return <SNMPProfileForm />
-	} else if (page.route === "snmp_profile_edit") {
-		return <SNMPProfileForm id={page.params.id} />
-	} else if (page.route === "snmp_mib_modules") {
-		return <SNMPMIBModules />
-	} else if (page.route === "snmp_mib_module_new") {
-		return <SNMPMIBModuleForm />
-	} else if (page.route === "snmp_mib_module_edit") {
-		return <SNMPMIBModuleForm id={page.params.id} />
-	} else if (page.route === "settings") {
-		return <Settings />
-	} else if (page.route === "traffic_defaults") {
-		return <TrafficDefaults />
-	} else if (page.route === "address_library_root") {
-		return <AddressLibrary section="prefixes" />
-	} else if (page.route === "address_library") {
-		return <AddressLibrary section={page.params.section} />
-	} else if (page.route === "address_prefixes") {
-		return <AddressPrefixes />
-	} else if (page.route === "address_sets") {
-		return <AddressSets />
-	} else if (page.route === "flow_overview") {
-		return <FlowReports surface="overview" />
-	} else if (page.route === "flow_attribution") {
-		return <FlowAttribution />
-	} else if (page.route === "traffic_matrix") {
-		return <TrafficMatrix key="advanced" surface="overview" />
-	} else if (page.route === "flow_dimensions") {
-		return <FlowReports surface="dimensions" />
-	} else if (page.route === "flow_source") {
-		return <FlowReports surface="source" />
-	} else if (page.route === "flow_destination") {
-		return <FlowReports surface="destination" />
-	} else if (page.route === "flow_overseas") {
-		return <FlowReports surface="overseas" />
-	} else if (page.route === "flow_vpn") {
-		return (
-			<>
-				<FlowReports surface="vpn" />
-				<FlowVPN />
-			</>
-		)
-	} else if (page.route === "flow_vpn_rules") {
-		return <FlowVPNRules />
-	} else if (page.route === "flow_filters") {
-		return <FlowSavedFilters />
-	}
+	return definition.render(page)
 })
 
-function PermissionDenied() {
+function PermissionDenied({ message }: { message?: ReactNode }) {
 	return (
 		<div className="my-14 text-center">
-			<h1 className="text-2xl font-semibold"><Trans>Permission denied</Trans></h1>
-			<p className="mt-2 text-sm text-muted-foreground"><Trans>Your role does not grant access to this page.</Trans></p>
+			<h1 className="text-2xl font-semibold">
+				<Trans>Permission denied</Trans>
+			</h1>
+			<p className="mt-2 text-sm text-muted-foreground">
+				{message ?? <Trans>Your role does not grant access to this page.</Trans>}
+			</p>
 		</div>
 	)
 }
 
-function routeAbilities(route: string): string[] {
-	switch (route) {
-		case "users_admin": return ["user.view", "role.view"]
-		case "user_new": return ["user.create"]
-		case "user_edit": return ["user.update", "user.manage"]
-		case "role_new": return ["role.create"]
-		case "role_edit": return ["role.update"]
-		case "permissions": return ["role.view"]
-		case "billing":
-		case "billing_detail": return ["bill.view"]
-		case "billing_new": return ["bill.create"]
-		case "billing_edit": return ["bill.update"]
-		case "agents":
-		case "agent_runs":
-		case "agent_plans": return ["agent.view"]
-		case "agent_new":
-		case "agent_edit": return ["agent.manage"]
-		case "audit_logs": return ["audit.view"]
-		case "operation_jobs": return ["job.view"]
-		case "retention":
-			return ["job.manage"]
-		case "target_new":
-		case "network_device_new": return ["device.create"]
-		case "target_edit":
-		case "network_device_edit":
-		case "network_device_snmp":
-		case "network_discover":
-		case "aggregate_graph_new":
-		case "aggregate_graph_edit":
-		case "dashboard_new":
-		case "dashboard_edit":
-		case "snmp_profile_new":
-		case "snmp_profile_edit":
-		case "snmp_mib_module_new":
-		case "snmp_mib_module_edit":
-		case "traffic_defaults": return ["device.update"]
-		case "network_port_edit":
-		case "network_port_policy": return ["port.update"]
-		case "network_port": return ["port.view"]
-		case "home":
-		case "targets":
-		case "target_detail":
-		case "system":
-		case "core":
-		case "network":
-		case "network_device":
-		case "aggregate_charts":
-		case "aggregate_graphs":
-		case "aggregate_graph":
-		case "dashboards": return ["device.view"]
-		case "flow_attribution": return ["address.view"]
-		case "flow_overview":
-		case "traffic_matrix":
-		case "flow_dimensions":
-		case "flow_source":
-		case "flow_destination":
-		case "flow_overseas":
-		case "flow_filters": return ["flow.view.customer", "flow.view.supplier", "flow.view.raw"]
-		case "flow_vpn": return ["flow.vpn.view"]
-		case "flow_vpn_rules": return ["flow.vpn.manage"]
-		default: return []
-	}
+function RedirectHome() {
+	useEffect(() => {
+		navigate(prependBasePath("/"))
+	}, [])
+	return null
 }
 
 const Layout = () => {
@@ -368,12 +265,13 @@ const Layout = () => {
 		// Login/reset pages are passive: rendering them must not make an auth
 		// request. The installed setup route redirects before the protected
 		// destination restores its session.
-		if (installStatus?.installed && !watchdogDevAuth && !authChecked && isPublicSessionRoute(route)) {
+		if (installStatus?.installed && !developmentAuth && !authChecked && isPublicSessionRoute(route)) {
 			$authChecked.set(true)
 			return
 		}
 		if (isInstallRedirectRoute(route)) return
-		if (!shouldRestoreSession({ installed: installStatus?.installed === true, developmentAuth: watchdogDevAuth, authChecked, route })) return
+		if (!shouldRestoreSession({ installed: installStatus?.installed === true, developmentAuth, authChecked, route }))
+			return
 		restoreSession().catch(() => $authChecked.set(true))
 	}, [authChecked, installStatus?.installed, page?.route])
 
@@ -398,14 +296,16 @@ const Layout = () => {
 		)
 	}
 
+	// Two round trips (install status, then session) precede the first page; show
+	// progress instead of an empty document.
 	if (!installStatus) {
-		return null
+		return <PageLoading />
 	}
 
 	if (installStatus.requires_install) {
 		return (
 			<DirectionProvider dir={direction}>
-				<Suspense>
+				<Suspense fallback={<PageLoading />}>
 					<InstallPage
 						onInstalled={(status) => {
 							setInstallStatus(status)
@@ -421,13 +321,13 @@ const Layout = () => {
 	}
 
 	if (!authChecked) {
-		return null
+		return <PageLoading />
 	}
 
 	return (
 		<DirectionProvider dir={direction}>
 			{!authenticated ? (
-				<Suspense>
+				<Suspense fallback={<PageLoading />}>
 					<LoginPage />
 				</Suspense>
 			) : (
@@ -436,7 +336,11 @@ const Layout = () => {
 						<Navbar />
 					</div>
 					<div className="container relative">
-						<App />
+						<ErrorBoundary resetKey={page?.path}>
+							<Suspense fallback={<PageLoading />}>
+								<App />
+							</Suspense>
+						</ErrorBoundary>
 						{copyContent && (
 							<Suspense>
 								<CopyToClipboardDialog content={copyContent} />

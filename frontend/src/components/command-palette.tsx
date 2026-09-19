@@ -2,14 +2,7 @@ import { t } from "@lingui/core/macro"
 import { Trans } from "@lingui/react/macro"
 import { getPagePath } from "@nanostores/router"
 import { DialogDescription } from "@radix-ui/react-dialog"
-import {
-	BookIcon,
-	FingerprintIcon,
-	Server,
-	ServerIcon,
-	SettingsIcon,
-	UsersIcon,
-} from "lucide-react"
+import { BookIcon, FingerprintIcon, ServerIcon, SettingsIcon, UsersIcon } from "lucide-react"
 import { memo, useEffect, useMemo } from "react"
 import {
 	CommandDialog,
@@ -22,8 +15,7 @@ import {
 	CommandShortcut,
 } from "@/components/ui/command"
 import { can, canAny } from "@/lib/api"
-import { $systems } from "@/lib/stores"
-import { getHostDisplayValue, listen } from "@/lib/utils"
+import { listen } from "@/lib/utils"
 import { $router, basePath, navigate } from "./router"
 
 export default memo(function CommandPalette({ open, setOpen }: { open: boolean; setOpen: (open: boolean) => void }) {
@@ -38,7 +30,6 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 	}, [open, setOpen])
 
 	return useMemo(() => {
-		const systems = $systems.get()
 		const SettingsShortcut = (
 			<CommandShortcut>
 				<Trans>Settings</Trans>
@@ -54,54 +45,38 @@ export default memo(function CommandPalette({ open, setOpen }: { open: boolean; 
 				<DialogDescription className="sr-only">Command palette</DialogDescription>
 				<CommandInput placeholder={t`Search for systems or settings...`} />
 				<CommandList>
-					{can("device.view") && systems.length > 0 && (
-						<>
-							<CommandGroup>
-								{systems.map((system) => (
-									<CommandItem
-										key={system.id}
-										onSelect={() => {
-											navigate(getPagePath($router, "system", { id: system.id }))
-											setOpen(false)
-										}}
-									>
-										<Server className="me-2 size-4" />
-										<span className="max-w-60 truncate">{system.name}</span>
-										<CommandShortcut>{getHostDisplayValue(system)}</CommandShortcut>
-									</CommandItem>
-								))}
-							</CommandGroup>
-							<CommandSeparator className="mb-1.5" />
-						</>
-					)}
 					<CommandGroup heading={t`Pages / Settings`}>
-						{can("device.view") ? <CommandItem
-							keywords={["home"]}
-							onSelect={() => {
-								navigate(basePath)
-								setOpen(false)
-							}}
-						>
-							<ServerIcon className="me-2 size-4" />
-							<span>
-								<Trans>All Systems</Trans>
-							</span>
-							<CommandShortcut>
-								<Trans>Page</Trans>
-							</CommandShortcut>
-						</CommandItem> : null}
-						{can("agent.view") ? <CommandItem
-							onSelect={() => {
-								navigate(getPagePath($router, "settings", { name: "general" }))
-								setOpen(false)
-							}}
-						>
-							<SettingsIcon className="me-2 size-4" />
-							<span>
-								<Trans>Settings</Trans>
-							</span>
-							{SettingsShortcut}
-						</CommandItem> : null}
+						{can("device.view") ? (
+							<CommandItem
+								keywords={["home"]}
+								onSelect={() => {
+									navigate(basePath)
+									setOpen(false)
+								}}
+							>
+								<ServerIcon className="me-2 size-4" />
+								<span>
+									<Trans>All Systems</Trans>
+								</span>
+								<CommandShortcut>
+									<Trans>Page</Trans>
+								</CommandShortcut>
+							</CommandItem>
+						) : null}
+						{can("agent.view") ? (
+							<CommandItem
+								onSelect={() => {
+									navigate(getPagePath($router, "settings", { name: "general" }))
+									setOpen(false)
+								}}
+							>
+								<SettingsIcon className="me-2 size-4" />
+								<span>
+									<Trans>Settings</Trans>
+								</span>
+								{SettingsShortcut}
+							</CommandItem>
+						) : null}
 						<CommandItem
 							keywords={[t`Universal token`]}
 							onSelect={() => {

@@ -1,12 +1,10 @@
 import { basePath } from "@/components/router"
-import type { ChartTimes, UserSettings } from "@/types"
+import type { UserSettings } from "@/types"
 import { $platformIdentity, type PlatformAuthContext } from "./platform-auth"
 import { resolveAPIBase, responseFilename } from "./api-transport"
+import { developmentAuth } from "./env"
 import { newUUID } from "./random"
-import { $allSystemsById, $allSystemsByName, $authenticated, $authChecked, $userSettings } from "./stores"
-import { chartTimeData } from "./utils"
-
-const watchdogDevAuth = import.meta.env.VITE_WATCHDOG_DEV_AUTH === "true"
+import { $authenticated, $authChecked, $userSettings } from "./stores"
 
 export type SessionUser = {
 	id: string
@@ -52,14 +50,13 @@ export const api = {
 	buildURL: buildAPIURL,
 }
 
-export const isAdmin = () => watchdogDevAuth || $platformIdentity.get().current?.isAdmin === true
+export const isAdmin = () => developmentAuth || $platformIdentity.get().current?.isAdmin === true
 export const can = (ability: string) =>
-	watchdogDevAuth || sessionUser?.is_admin === true || sessionUser?.abilities?.includes(ability) === true
+	developmentAuth || sessionUser?.is_admin === true || sessionUser?.abilities?.includes(ability) === true
 export const canAny = (...abilities: string[]) => isAdmin() || abilities.some((ability) => can(ability))
-export const canManageAddressLibrary = () =>
-	watchdogDevAuth || can("address.manage") || can("address.publish")
+export const canManageAddressLibrary = () => developmentAuth || can("address.manage") || can("address.publish")
 export const isReadOnlyUser = () => {
-	if (watchdogDevAuth) {
+	if (developmentAuth) {
 		return false
 	}
 	const identity = $platformIdentity.get()
@@ -79,7 +76,7 @@ export function currentSessionUser() {
 }
 
 export async function refreshWatchdogIdentity() {
-	if (watchdogDevAuth) {
+	if (developmentAuth) {
 		$platformIdentity.set({
 			ready: true,
 			current: {
@@ -261,8 +258,6 @@ export async function logOut() {
 	} finally {
 		clearAuthenticatedUser()
 	}
-	$allSystemsByName.set({})
-	$allSystemsById.set({})
 	$userSettings.set({} as UserSettings)
 }
 
@@ -359,16 +354,4 @@ export async function fetchTargetsPage(opts: {
 		},
 	})
 	return { items: res.items ?? [], nextCursor: res.next_cursor ?? "", total: res.total }
-}
-
-export function getPbTimestamp(timeString: ChartTimes, d?: Date) {
-	d ||= chartTimeData[timeString].getOffset(new Date())
-	const year = d.getUTCFullYear()
-	const month = String(d.getUTCMonth() + 1).padStart(2, "0")
-	const day = String(d.getUTCDate()).padStart(2, "0")
-	const hours = String(d.getUTCHours()).padStart(2, "0")
-	const minutes = String(d.getUTCMinutes()).padStart(2, "0")
-	const seconds = String(d.getUTCSeconds()).padStart(2, "0")
-
-	return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }

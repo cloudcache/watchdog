@@ -1,11 +1,10 @@
 import { plural, t } from "@lingui/core/macro"
 import { type ClassValue, clsx } from "clsx"
 import { listenKeys } from "nanostores"
-import { timeDay, timeHour, timeMinute } from "d3-time"
 import { useEffect, useState } from "react"
 import { twMerge } from "tailwind-merge"
 import { toast } from "@/components/ui/use-toast"
-import type { ChartTimeData, FingerprintRecord, SemVer, SystemRecord } from "@/types"
+import type { ChartTimeData, SemVer } from "@/types"
 import { HourFormat, Unit } from "./enums"
 import { $copyContent, $userSettings } from "./stores"
 
@@ -126,6 +125,14 @@ export const updateFavicon = (() => {
 	}
 })()
 
+const minutesBefore = (end: Date, minutes: number) => new Date(end.getTime() - minutes * 60_000)
+const hoursBefore = (end: Date, hours: number) => minutesBefore(end, hours * 60)
+const daysBefore = (end: Date, days: number) => {
+	const date = new Date(end)
+	date.setDate(date.getDate() - days)
+	return date
+}
+
 export const chartTimeData: ChartTimeData = {
 	"1m": {
 		type: "1m",
@@ -133,7 +140,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`1 minute`,
 		format: (timestamp: string) => hourWithSeconds(timestamp),
 		ticks: 3,
-		getOffset: (endTime: Date) => timeMinute.offset(endTime, -1),
+		getOffset: (endTime: Date) => minutesBefore(endTime, 1),
 		minVersion: "0.13.0",
 	},
 	"5m": {
@@ -142,7 +149,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`5 minutes`,
 		ticks: 5,
 		format: (timestamp: string) => hourWithSeconds(timestamp),
-		getOffset: (endTime: Date) => timeMinute.offset(endTime, -5),
+		getOffset: (endTime: Date) => minutesBefore(endTime, 5),
 	},
 	"10m": {
 		type: "auto",
@@ -150,7 +157,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`10 minutes`,
 		ticks: 5,
 		format: (timestamp: string) => hourWithSeconds(timestamp),
-		getOffset: (endTime: Date) => timeMinute.offset(endTime, -10),
+		getOffset: (endTime: Date) => minutesBefore(endTime, 10),
 	},
 	"15m": {
 		type: "auto",
@@ -158,7 +165,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`15 minutes`,
 		ticks: 5,
 		format: (timestamp: string) => hourWithSeconds(timestamp),
-		getOffset: (endTime: Date) => timeMinute.offset(endTime, -15),
+		getOffset: (endTime: Date) => minutesBefore(endTime, 15),
 	},
 	"30m": {
 		type: "auto",
@@ -166,7 +173,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`30 minutes`,
 		ticks: 6,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
-		getOffset: (endTime: Date) => timeMinute.offset(endTime, -30),
+		getOffset: (endTime: Date) => minutesBefore(endTime, 30),
 	},
 	"1h": {
 		type: "auto",
@@ -174,7 +181,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`1 hour`,
 		// ticks: 12,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
-		getOffset: (endTime: Date) => timeHour.offset(endTime, -1),
+		getOffset: (endTime: Date) => hoursBefore(endTime, 1),
 	},
 	"6h": {
 		type: "auto",
@@ -182,7 +189,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`6 hours`,
 		ticks: 6,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
-		getOffset: (endTime: Date) => timeHour.offset(endTime, -6),
+		getOffset: (endTime: Date) => hoursBefore(endTime, 6),
 	},
 	"12h": {
 		type: "auto",
@@ -190,14 +197,14 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`12 hours`,
 		ticks: 12,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
-		getOffset: (endTime: Date) => timeHour.offset(endTime, -12),
+		getOffset: (endTime: Date) => hoursBefore(endTime, 12),
 	},
 	"24h": {
 		type: "auto",
 		expectedInterval: 60_000 * 10,
 		label: () => t`24 hours`,
 		format: (timestamp: string) => hourWithMinutes(timestamp),
-		getOffset: (endTime: Date) => timeHour.offset(endTime, -24),
+		getOffset: (endTime: Date) => hoursBefore(endTime, 24),
 	},
 	"3d": {
 		type: "auto",
@@ -205,7 +212,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`3 days`,
 		ticks: 6,
 		format: (timestamp: string) => formatDay(timestamp),
-		getOffset: (endTime: Date) => timeDay.offset(endTime, -3),
+		getOffset: (endTime: Date) => daysBefore(endTime, 3),
 	},
 	"1w": {
 		type: "auto",
@@ -213,7 +220,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`1 week`,
 		ticks: 7,
 		format: (timestamp: string) => formatDay(timestamp),
-		getOffset: (endTime: Date) => timeDay.offset(endTime, -7),
+		getOffset: (endTime: Date) => daysBefore(endTime, 7),
 	},
 	"30d": {
 		type: "auto",
@@ -221,7 +228,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`30 days`,
 		ticks: 30,
 		format: (timestamp: string) => formatDay(timestamp),
-		getOffset: (endTime: Date) => timeDay.offset(endTime, -30),
+		getOffset: (endTime: Date) => daysBefore(endTime, 30),
 	},
 	custom: {
 		type: "auto",
@@ -229,7 +236,7 @@ export const chartTimeData: ChartTimeData = {
 		label: () => t`Custom`,
 		ticks: 12,
 		format: (timestamp: string) => formatShortDate(timestamp),
-		getOffset: (endTime: Date) => timeHour.offset(endTime, -1),
+		getOffset: (endTime: Date) => hoursBefore(endTime, 1),
 	},
 }
 
@@ -345,14 +352,6 @@ export function formatBytes(
 
 export const chartMargin = { top: 12, right: 5 }
 
-/**
- * Retuns value of system host, truncating full path if socket.
- * @example
- * // Assuming system.host is "/var/run/watchdog.sock"
- * const hostname = getHostDisplayValue(system) // hostname will be "watchdog.sock"
- */
-export const getHostDisplayValue = (system: SystemRecord): string => system.host.slice(system.host.lastIndexOf("/") + 1)
-
 // export function formatUptimeString(uptimeSeconds: number): string {
 // 	if (!uptimeSeconds || isNaN(uptimeSeconds)) return ""
 // 	if (uptimeSeconds < 3600) {
@@ -376,12 +375,6 @@ export const generateToken = () => {
 		return Array.from({ length: 2 }, () => (performance.now() * Math.random()).toString(16).replace(".", "-")).join("-")
 	}
 }
-
-/** Get the hub URL from the global WATCHDOG object */
-export const getHubURL = () => globalThis.WATCHDOG?.API_URL || window.location.origin
-
-/** Map of target/system IDs to their corresponding agent registration tokens */
-export const tokenMap = new Map<SystemRecord["id"], FingerprintRecord["token"]>()
 
 /** Calculate duration between two dates and format as human-readable string */
 export function formatDuration(

@@ -94,6 +94,9 @@ for (const route in routes) {
 
 export const $router = createRouter(routes, { links: false })
 
+/** A matched page: `route` discriminates the union, `params` is typed per route. */
+export type Page = NonNullable<ReturnType<typeof $router.get>>
+
 /** Navigate to url using router
  *  Base path is automatically prepended if serving from subpath
  */
