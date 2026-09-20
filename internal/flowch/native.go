@@ -55,6 +55,29 @@ type queryExecutor interface {
 type NativeInserter struct {
 	executor queryExecutor
 	close    func()
+	stat     func() NativePoolStat
+}
+
+// NativePoolStat is a snapshot of the underlying connection pool. EmptyAcquires
+// counts Acquire calls that had to wait because every connection was busy — the
+// saturation signal that was previously invisible (the wait is otherwise hidden
+// inside the operation timeout).
+type NativePoolStat struct {
+	Max              int32
+	Acquired         int32
+	Idle             int32
+	Total            int32
+	EmptyAcquires    int64
+	EmptyAcquireWait time.Duration
+}
+
+// Stat reports the current pool snapshot. The second result is false when the
+// inserter has no pool (a unit-test executor).
+func (n *NativeInserter) Stat() (NativePoolStat, bool) {
+	if n == nil || n.stat == nil {
+		return NativePoolStat{}, false
+	}
+	return n.stat(), true
 }
 
 type operationTimeoutExecutor struct {
@@ -114,6 +137,13 @@ func NewNativeInserter(ctx context.Context, config NativeConfig) (*NativeInserte
 	return &NativeInserter{
 		executor: operationTimeoutExecutor{next: pool, timeout: config.OperationTimeout},
 		close:    pool.Close,
+		stat: func() NativePoolStat {
+			s := pool.Stat()
+			return NativePoolStat{
+				Max: s.MaxResources(), Acquired: s.AcquiredResources(), Idle: s.IdleResources(),
+				Total: s.TotalResources(), EmptyAcquires: s.EmptyAcquireCount(), EmptyAcquireWait: s.EmptyAcquireWaitTime(),
+			}
+		},
 	}, nil
 }
 

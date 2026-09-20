@@ -63,7 +63,7 @@ func (s *Server) startFlowReconciliation() error {
 	if s.jobs == nil || s.db == nil {
 		return errors.New("operation job store is not initialized")
 	}
-	if s.clickHouse == nil {
+	if s.clickHouseBatch == nil {
 		return errors.New("ClickHouse is unavailable")
 	}
 
@@ -98,7 +98,7 @@ func (s *Server) startFlowReconciliation() error {
 		reader.Close()
 		return err
 	}
-	scanner, err := flowch.NewReconciliationScanner(s.clickHouse)
+	scanner, err := flowch.NewReconciliationScanner(s.clickHouseBatch)
 	if err != nil {
 		reader.Close()
 		return err

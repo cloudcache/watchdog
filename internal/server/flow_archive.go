@@ -22,13 +22,13 @@ const (
 // operation_jobs engine. Retention values come only from the published MySQL
 // policy; these constants bound scheduler work and never define retention.
 func (s *Server) startFlowArchive() error {
-	if s.clickHouse == nil {
+	if s.clickHouseBatch == nil {
 		return nil
 	}
 	if s.db == nil || s.jobs == nil {
 		return errors.New("Flow archive management dependencies are not initialized")
 	}
-	runner, err := flowch.NewRollupRunner(s.clickHouse)
+	runner, err := flowch.NewRollupRunner(s.clickHouseBatch)
 	if err != nil {
 		return err
 	}

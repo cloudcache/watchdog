@@ -42,23 +42,25 @@ type Server struct {
 	runtimeReady  atomic.Bool
 	clickHouseErr atomic.Pointer[string]
 
-	addressStore        *address.Store
-	addressPublisher    *address.Publisher
-	vpnRuleSetPublisher *address.Publisher
-	addressObjects      address.DiskDimensionObjectStore
-	addressArtifacts    address.DiskArtifactStore
-	addressTus          *tushandler.UnroutedHandler
-	jobs                *opjob.Store
-	billingStore        *billing.Store
-	billingService      *billing.Service
-	clickHouse          *flowch.NativeInserter
-	snmpMetrics         *snmpch.Store
-	flowQuery           *flowQueryService
-	flowGeo             *flowGeoService
-	workerCancel        context.CancelFunc
-	snmpExportCancel    context.CancelFunc
-	snmpDiscoverCancel  context.CancelFunc
-	billingCancel       context.CancelFunc
+	addressStore         *address.Store
+	addressPublisher     *address.Publisher
+	vpnRuleSetPublisher  *address.Publisher
+	addressObjects       address.DiskDimensionObjectStore
+	addressArtifacts     address.DiskArtifactStore
+	addressTus           *tushandler.UnroutedHandler
+	jobs                 *opjob.Store
+	billingStore         *billing.Store
+	billingService       *billing.Service
+	clickHouse           *flowch.NativeInserter
+	clickHouseBatch      *flowch.NativeInserter
+	snmpMetrics          *snmpch.Store
+	flowQuery            *flowQueryService
+	flowGeo              *flowGeoService
+	workerCancel         context.CancelFunc
+	clickHousePoolCancel context.CancelFunc
+	snmpExportCancel     context.CancelFunc
+	snmpDiscoverCancel   context.CancelFunc
+	billingCancel        context.CancelFunc
 
 	vpnCandidateMaterializer   *flowch.VPNCandidateMaterializer
 	vpnCandidateRunner         *flowvpn.CandidateRunner
@@ -361,9 +363,17 @@ func (s *Server) stopRuntime() {
 		s.flowReclassificationCancel()
 		s.flowReclassificationCancel = nil
 	}
+	if s.clickHousePoolCancel != nil {
+		s.clickHousePoolCancel()
+		s.clickHousePoolCancel = nil
+	}
 	if s.clickHouse != nil {
 		s.clickHouse.Close()
 		s.clickHouse = nil
+	}
+	if s.clickHouseBatch != nil {
+		s.clickHouseBatch.Close()
+		s.clickHouseBatch = nil
 	}
 	s.snmpMetrics = nil
 	s.flowQuery = nil
@@ -384,26 +394,100 @@ func (s *Server) startClickHouse(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	native, err := flowch.NewNativeInserter(ctx, flowch.NativeConfig{
-		Address: s.cfg.ClickHouse.Address, Database: s.cfg.ClickHouse.Database,
-		User: s.cfg.ClickHouse.Username, Password: password,
-		ClientName: "watchdog-server", MaxConns: 8, MinConns: 1,
-	})
+	tlsConfig, err := s.cfg.ClickHouse.TLS.ClientConfig()
 	if err != nil {
+		return fmt.Errorf("ClickHouse TLS: %w", err)
+	}
+	maxConns, minConns, batchConns := clickHousePoolSizes(s.cfg.ClickHouse)
+	newPool := func(clientName string, conns int32) (*flowch.NativeInserter, error) {
+		return flowch.NewNativeInserter(ctx, flowch.NativeConfig{
+			Address: s.cfg.ClickHouse.Address, Database: s.cfg.ClickHouse.Database,
+			User: s.cfg.ClickHouse.Username, Password: password,
+			ClientName: clientName, MaxConns: conns, MinConns: minConns, TLS: tlsConfig,
+		})
+	}
+	// Interactive pool serves flow queries, SNMP reads and billing; the batch pool
+	// serves the background rollup/reclassification/reconciliation/VPN jobs, so a
+	// long job cannot occupy every connection and stall user queries behind an
+	// Acquire wait hidden inside the operation timeout.
+	native, err := newPool("watchdog-server", maxConns)
+	if err != nil {
+		return err
+	}
+	batch, err := newPool("watchdog-server-batch", batchConns)
+	if err != nil {
+		native.Close()
 		return err
 	}
 	store, err := snmpch.NewWithQueryLimits(native, snmpQueryLimits(s.cfg.SNMP))
 	if err != nil {
 		native.Close()
+		batch.Close()
 		return err
 	}
 	if err := store.Ready(ctx); err != nil {
 		native.Close()
+		batch.Close()
 		return fmt.Errorf("SNMP schema is not migrated: %w", err)
 	}
 	s.clickHouse = native
+	s.clickHouseBatch = batch
 	s.snmpMetrics = store
+	monitorCtx, cancel := context.WithCancel(context.Background())
+	s.clickHousePoolCancel = cancel
+	go s.monitorClickHousePools(monitorCtx, native, batch)
+	log.Printf("ClickHouse pools ready: interactive=%d batch=%d min=%d tls=%t", maxConns, batchConns, minConns, tlsConfig != nil)
 	return nil
+}
+
+// clickHousePoolSizes normalizes configured pool sizes, falling back to
+// backward-compatible defaults when a field is unset.
+func clickHousePoolSizes(cfg ClickHouseConfig) (maxConns, minConns, batchConns int32) {
+	maxConns, minConns, batchConns = cfg.MaxConns, cfg.MinConns, cfg.BatchMaxConns
+	if maxConns <= 0 {
+		maxConns = 8
+	}
+	if minConns < 0 {
+		minConns = 0
+	}
+	if minConns > maxConns {
+		minConns = maxConns
+	}
+	if batchConns <= 0 {
+		batchConns = 4
+	}
+	return maxConns, minConns, batchConns
+}
+
+// monitorClickHousePools logs a warning when a pool has accumulated Acquire
+// waits since the last check, surfacing the pool pressure that is otherwise
+// hidden inside the per-operation timeout. Stat is mutex-protected, so it is
+// safe to call while the pool is closing.
+func (s *Server) monitorClickHousePools(ctx context.Context, interactive, batch *flowch.NativeInserter) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	var lastInteractive, lastBatch int64
+	report := func(name string, inserter *flowch.NativeInserter, last *int64) {
+		if inserter == nil {
+			return
+		}
+		stat, ok := inserter.Stat()
+		if !ok || stat.EmptyAcquires <= *last {
+			return
+		}
+		log.Printf("ClickHouse pool %s pressured: acquired=%d/%d idle=%d empty_acquires=%d wait=%s",
+			name, stat.Acquired, stat.Max, stat.Idle, stat.EmptyAcquires, stat.EmptyAcquireWait)
+		*last = stat.EmptyAcquires
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			report("interactive", interactive, &lastInteractive)
+			report("batch", batch, &lastBatch)
+		}
+	}
 }
 
 // ensureDatabase creates the target schema if it does not exist, so the server can

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/billing"
+	"github.com/cloudcache/watchdog/internal/flowstream"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"gopkg.in/yaml.v3"
 )
@@ -52,6 +53,14 @@ type ClickHouseConfig struct {
 	Database     string `yaml:"database"`
 	Username     string `yaml:"username"`
 	PasswordFile string `yaml:"password_file"`
+	// MaxConns/MinConns size the interactive pool (flow queries, SNMP reads,
+	// billing). BatchMaxConns sizes a separate pool for the background rollup,
+	// reclassification, reconciliation and VPN jobs, so a long job cannot exhaust
+	// the interactive pool and stall user queries behind an Acquire wait.
+	MaxConns      int32                `yaml:"max_conns"`
+	MinConns      int32                `yaml:"min_conns"`
+	BatchMaxConns int32                `yaml:"batch_max_conns"`
+	TLS           flowstream.TLSConfig `yaml:"tls"`
 }
 
 // KafkaConfig is the RawFlow transport (buffering/replay only, never a query store).
@@ -178,7 +187,7 @@ func defaultConfig() Config {
 	return Config{
 		Server:     ServerConfig{Listen: "127.0.0.1:8091", Origins: []string{"http://127.0.0.1:8090"}},
 		MySQL:      MySQLConfig{DSN: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"},
-		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default"},
+		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default", MaxConns: 8, MinConns: 1, BatchMaxConns: 4},
 		Kafka:      KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
 		Flow: FlowConfig{Reconciliation: FlowReconciliationConfig{
 			Interval: 5 * time.Minute, MaxBatches: 1000, MaxFactRows: 250_000, MaxReadBytes: 512 << 20,

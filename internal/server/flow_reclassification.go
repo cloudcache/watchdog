@@ -85,13 +85,13 @@ func (s *Server) registerFlowReclassificationRoutes(auth *gin.RouterGroup) {
 }
 
 func (s *Server) startFlowReclassification() error {
-	if s.clickHouse == nil {
+	if s.clickHouseBatch == nil {
 		return nil
 	}
 	if s.jobs == nil || s.db == nil {
 		return errors.New("Flow reclassification management dependencies are not initialized")
 	}
-	runner, err := flowch.NewReclassificationRunner(s.clickHouse)
+	runner, err := flowch.NewReclassificationRunner(s.clickHouseBatch)
 	if err != nil {
 		return err
 	}

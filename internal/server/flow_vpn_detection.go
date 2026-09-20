@@ -55,15 +55,15 @@ func (s *Server) startVPNDetection() error {
 	if !s.cfg.Flow.VPN.Enabled {
 		return nil
 	}
-	if s.clickHouse == nil {
+	if s.clickHouseBatch == nil {
 		log.Printf("watchdog VPN detection is enabled but ClickHouse is not configured; pipeline disabled")
 		return nil
 	}
-	materializer, err := flowch.NewVPNCandidateMaterializer(s.clickHouse)
+	materializer, err := flowch.NewVPNCandidateMaterializer(s.clickHouseBatch)
 	if err != nil {
 		return err
 	}
-	runner, err := flowvpn.NewCandidateRunner(s.clickHouse)
+	runner, err := flowvpn.NewCandidateRunner(s.clickHouseBatch)
 	if err != nil {
 		return err
 	}
