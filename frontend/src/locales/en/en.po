@@ -7797,3 +7797,135 @@ msgstr "Unknown by destination segment"
 #: src/components/routes/flow-reports.tsx
 msgid "Unknown by destination IP"
 msgstr "Unknown by destination IP"
+
+msgid "{0, plural, one {# item on this page} other {# items on this page}}"
+msgstr "{0, plural, one {# item on this page} other {# items on this page}}"
+
+msgid "{size} per page"
+msgstr "{size} per page"
+
+msgid "{totalCount, plural, one {# item} other {# items}}"
+msgstr "{totalCount, plural, one {# item} other {# items}}"
+
+msgid "Customer source ranges saved."
+msgstr "Customer source ranges saved."
+
+msgid "Estimated L3 bit rate"
+msgstr "Estimated L3 bit rate"
+
+msgid "Heatmap"
+msgstr "Heatmap"
+
+msgid "flow.direction.inbound"
+msgstr "Inbound"
+
+msgid "IP protocol"
+msgstr "IP protocol"
+
+msgid "ISP"
+msgstr "ISP"
+
+msgid "Last 12 hours"
+msgstr "Last 12 hours"
+
+msgid "Last 15 minutes"
+msgstr "Last 15 minutes"
+
+msgid "Last 2 days"
+msgstr "Last 2 days"
+
+msgid "Last 24 hours"
+msgstr "Last 24 hours"
+
+msgid "Last 3 hours"
+msgstr "Last 3 hours"
+
+msgid "Last 3 months"
+msgstr "Last 3 months"
+
+msgid "Last 30 days"
+msgstr "Last 30 days"
+
+msgid "Last 30 minutes"
+msgstr "Last 30 minutes"
+
+msgid "Last 5 minutes"
+msgstr "Last 5 minutes"
+
+msgid "Last 6 hours"
+msgstr "Last 6 hours"
+
+msgid "Last 6 months"
+msgstr "Last 6 months"
+
+msgid "Last 7 days"
+msgstr "Last 7 days"
+
+msgid "Last hour"
+msgstr "Last hour"
+
+msgid "Last year"
+msgstr "Last year"
+
+msgid "Loading customer source ranges..."
+msgstr "Loading customer source ranges..."
+
+msgid "Local prefix"
+msgstr "Local prefix"
+
+msgid "Observation interface"
+msgstr "Observation interface"
+
+msgid "flow.value.other"
+msgstr "Other"
+
+msgid "flow.direction.outbound"
+msgstr "Outbound"
+
+msgid "Received Flow records"
+msgstr "Received Flow records"
+
+msgid "Remote prefix"
+msgstr "Remote prefix"
+
+msgid "Sampled L3 bit rate"
+msgstr "Sampled L3 bit rate"
+
+msgid "Sampled packet rate"
+msgstr "Sampled packet rate"
+
+msgid "Sampled packets"
+msgstr "Sampled packets"
+
+msgid "Sankey"
+msgstr "Sankey"
+
+msgid "Stacked area"
+msgstr "Stacked area"
+
+msgid "Table only"
+msgstr "Table only"
+
+msgid "The request is taking longer than expected."
+msgstr "The request is taking longer than expected."
+
+msgid "Top destination IP"
+msgstr "Top destination IP"
+
+msgid "Top local prefix"
+msgstr "Top local prefix"
+
+msgid "Top remote prefix"
+msgstr "Top remote prefix"
+
+msgid "Top source IP"
+msgstr "Top source IP"
+
+msgid "Traffic category"
+msgstr "Traffic category"
+
+msgid "Traffic direction"
+msgstr "Traffic direction"
+
+msgid "flow.value.unassigned"
+msgstr "Unassigned"

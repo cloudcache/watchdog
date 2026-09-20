@@ -5,6 +5,7 @@ import {
 	buildReportSeries,
 	FLOW_REPORT_CATEGORIES,
 	FLOW_REPORT_URL_STATE_VERSION,
+	flowDimensionValueLabel,
 	flowReportCategoryLabel,
 	initialFlowReportDisplayMode,
 	initialFlowReportRange,
@@ -87,6 +88,26 @@ test("report categories resolve through the active zh-CN catalog", () => {
 		FLOW_REPORT_CATEGORIES.map((category) => flowReportCategoryLabel(category, i18n)),
 		["本网・本市", "本网・跨市", "本网・跨省", "异网・省内", "异网・跨省", "跨境"]
 	)
+})
+
+test("Flow VTable values localize stable keys without changing unknown values", () => {
+	i18n.load("zh-CN", {
+		on_net_local_city: "本网・本市",
+		off_net_in_province: "异网・省内",
+		"flow.direction.inbound": "流入",
+		"flow.direction.outbound": "流出",
+		"flow.value.other": "其他",
+		"flow.value.unassigned": "未归属",
+	})
+	i18n.activate("zh-CN")
+	assert.equal(flowDimensionValueLabel("category", "on_net_local_city", i18n), "本网・本市")
+	assert.equal(flowDimensionValueLabel("category", "off_net_in_province", i18n), "异网・省内")
+	assert.equal(flowDimensionValueLabel("business_direction", "in", i18n), "流入")
+	assert.equal(flowDimensionValueLabel("direction", "out", i18n), "流出")
+	assert.equal(flowDimensionValueLabel("protocol", "6", i18n), "TCP (6)")
+	assert.equal(flowDimensionValueLabel("category", "_other", i18n), "其他")
+	assert.equal(flowDimensionValueLabel("category", "_unassigned", i18n), "未归属")
+	assert.equal(flowDimensionValueLabel("geo.country", "CN", i18n), "CN")
 })
 
 test("report range presets align closed UTC minutes and calendar boundaries", () => {

@@ -1,5 +1,6 @@
+import type { I18n } from "@lingui/core"
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { DownloadIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
@@ -10,11 +11,11 @@ import { toast } from "@/components/ui/use-toast"
 import { api } from "@/lib/api"
 import {
 	buildFlowRecordRows,
-	flowProtocolLabel,
 	formatFlowBytes,
 	type FlowRecordRow,
 	updateFlowRecordCursors,
 } from "@/lib/flow-record-model"
+import { flowDimensionValueLabel } from "@/lib/flow-report-model"
 
 type FlowRecordEndpoint = "source" | "destination"
 type FlowRecordView = "customer" | "supplier" | "raw"
@@ -99,7 +100,7 @@ export function FlowRecordTable({
 	from: string
 	to: string
 }) {
-	const { t } = useLingui()
+	const { t, i18n } = useLingui()
 	const [search, setSearch] = useState(selectedIP)
 	const [view, setView] = useState<FlowRecordView>("customer")
 	const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({})
@@ -178,9 +179,10 @@ export function FlowRecordTable({
 		() =>
 			buildFlowRecordRows(rows).map((row) => ({
 				...row,
-				direction: row.direction === "in" ? t`Inbound` : row.direction === "out" ? t`Outbound` : row.direction,
+				direction: flowDimensionValueLabel("business_direction", row.direction, i18n),
+				category: flowDimensionValueLabel("category", row.category, i18n),
 			})),
-		[rows, t]
+		[i18n, i18n.locale, rows]
 	)
 	const columns = useMemo(() => {
 		const common = [
@@ -241,14 +243,7 @@ export function FlowRecordTable({
 				})
 				return (response.data.items ?? []).map((item) => ({
 					value: item.value,
-					label:
-						field === "business_direction"
-							? item.value === "in"
-								? t`Inbound`
-								: item.value === "out"
-									? t`Outbound`
-									: item.value
-							: flowFacetLabel(field, item.value),
+					label: flowFacetLabel(field, item.value, i18n),
 					count: item.count,
 				}))
 			},
@@ -415,8 +410,10 @@ export function FlowRecordTable({
 	)
 }
 
-function flowFacetLabel(field: string, value: string) {
-	if (field === "ip_protocol") return flowProtocolLabel(value)
+function flowFacetLabel(field: string, value: string, i18n: Pick<I18n, "_">) {
+	if (field === "ip_protocol" || field === "business_direction" || field === "category") {
+		return flowDimensionValueLabel(field, value, i18n)
+	}
 	if (field === "estimated_bytes" || field === "raw_bytes") return formatFlowBytes(value)
 	if (field === "event_time") {
 		const instant = new Date(value)

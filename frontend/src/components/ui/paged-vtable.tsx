@@ -1,4 +1,4 @@
-import { Trans } from "@lingui/react/macro"
+import { Plural, Trans, useLingui } from "@lingui/react/macro"
 import { SearchIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -73,6 +73,7 @@ export function PagedVTable({
 	frozenColCount?: number
 	rightFrozenColCount?: number
 }) {
+	const { t } = useLingui()
 	const tableRef = useRef<HTMLDivElement>(null)
 	const tableInstance = useRef<ListTable | null>(null)
 	const [search, setSearch] = useState("")
@@ -220,7 +221,13 @@ export function PagedVTable({
 					<div />
 				)}
 				<div className="flex items-center gap-2 text-sm text-muted-foreground">
-					<span>{totalCount == null ? `${records.length} items on this page` : `${totalCount} items`}</span>
+					<span>
+						{totalCount == null ? (
+							<Plural value={records.length} one="# item on this page" other="# items on this page" />
+						) : (
+							<Plural value={totalCount} one="# item" other="# items" />
+						)}
+					</span>
 					<Select
 						value={String(effectivePageSize)}
 						onValueChange={(value) => {
@@ -233,9 +240,11 @@ export function PagedVTable({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="25">25 / page</SelectItem>
-							<SelectItem value="50">50 / page</SelectItem>
-							<SelectItem value="100">100 / page</SelectItem>
+							{[25, 50, 100].map((size) => (
+								<SelectItem key={size} value={String(size)}>
+									{t`${size} per page`}
+								</SelectItem>
+							))}
 						</SelectContent>
 					</Select>
 				</div>

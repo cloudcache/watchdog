@@ -214,6 +214,47 @@ export function flowReportCategoryLabel(key: string, translator: Pick<I18n, "_">
 	}
 }
 
+/**
+ * Translate stable Flow dimension keys at the presentation boundary. The raw
+ * key must continue to be used for API filters, exports and drill-down links.
+ */
+export function flowDimensionValueLabel(kind: string, key: string, translator: Pick<I18n, "_"> = defaultI18n): string {
+	const i18n = translator
+	if (key === "_other") return i18n._({ id: "flow.value.other", message: "Other" })
+	if (key === "_unassigned") return i18n._({ id: "flow.value.unassigned", message: "Unassigned" })
+
+	switch (kind) {
+		case "category":
+			return flowReportCategoryLabel(key, i18n)
+		case "direction":
+		case "business_direction":
+			if (key === "in") return i18n._({ id: "flow.direction.inbound", message: "Inbound" })
+			if (key === "out") return i18n._({ id: "flow.direction.outbound", message: "Outbound" })
+			return key
+		case "protocol":
+		case "ip_protocol":
+			return flowProtocolValueLabel(key)
+		default:
+			return key
+	}
+}
+
+function flowProtocolValueLabel(value: string): string {
+	const match = /^(\d+)(.*)$/.exec(value)
+	if (!match) return value
+	const names: Record<string, string> = {
+		"1": "ICMP (1)",
+		"6": "TCP (6)",
+		"17": "UDP (17)",
+		"47": "GRE (47)",
+		"50": "ESP (50)",
+		"51": "AH (51)",
+		"58": "ICMPv6 (58)",
+		"132": "SCTP (132)",
+	}
+	return `${names[match[1]] ?? match[1]}${match[2]}`
+}
+
 export const FLOW_REPORT_TIME_PRESETS = [
 	{ value: "5m", label: "Last 5 minutes" },
 	{ value: "15m", label: "Last 15 minutes" },

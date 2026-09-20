@@ -7802,3 +7802,135 @@ msgstr "未识别・按目的地址段"
 #: src/components/routes/flow-reports.tsx
 msgid "Unknown by destination IP"
 msgstr "未识别・按目的 IP"
+
+msgid "{0, plural, one {# item on this page} other {# items on this page}}"
+msgstr "本页 {0} 条"
+
+msgid "{size} per page"
+msgstr "每页 {size} 条"
+
+msgid "{totalCount, plural, one {# item} other {# items}}"
+msgstr "共 {totalCount} 条"
+
+msgid "Customer source ranges saved."
+msgstr "客户源地址段已保存。"
+
+msgid "Estimated L3 bit rate"
+msgstr "估算三层速率"
+
+msgid "Heatmap"
+msgstr "热力图"
+
+msgid "flow.direction.inbound"
+msgstr "流入"
+
+msgid "IP protocol"
+msgstr "IP 协议"
+
+msgid "ISP"
+msgstr "运营商"
+
+msgid "Last 12 hours"
+msgstr "最近 12 小时"
+
+msgid "Last 15 minutes"
+msgstr "最近 15 分钟"
+
+msgid "Last 2 days"
+msgstr "最近 2 天"
+
+msgid "Last 24 hours"
+msgstr "最近 24 小时"
+
+msgid "Last 3 hours"
+msgstr "最近 3 小时"
+
+msgid "Last 3 months"
+msgstr "最近 3 个月"
+
+msgid "Last 30 days"
+msgstr "最近 30 天"
+
+msgid "Last 30 minutes"
+msgstr "最近 30 分钟"
+
+msgid "Last 5 minutes"
+msgstr "最近 5 分钟"
+
+msgid "Last 6 hours"
+msgstr "最近 6 小时"
+
+msgid "Last 6 months"
+msgstr "最近 6 个月"
+
+msgid "Last 7 days"
+msgstr "最近 7 天"
+
+msgid "Last hour"
+msgstr "最近 1 小时"
+
+msgid "Last year"
+msgstr "最近 1 年"
+
+msgid "Loading customer source ranges..."
+msgstr "正在加载客户源地址段…"
+
+msgid "Local prefix"
+msgstr "本地地址段"
+
+msgid "Observation interface"
+msgstr "观测接口"
+
+msgid "flow.value.other"
+msgstr "其他"
+
+msgid "flow.direction.outbound"
+msgstr "流出"
+
+msgid "Received Flow records"
+msgstr "收到的 Flow 记录数"
+
+msgid "Remote prefix"
+msgstr "远端地址段"
+
+msgid "Sampled L3 bit rate"
+msgstr "原始采样三层速率"
+
+msgid "Sampled packet rate"
+msgstr "原始采样包速率"
+
+msgid "Sampled packets"
+msgstr "原始采样包数"
+
+msgid "Sankey"
+msgstr "桑基图"
+
+msgid "Stacked area"
+msgstr "堆叠面积图"
+
+msgid "Table only"
+msgstr "仅表格"
+
+msgid "The request is taking longer than expected."
+msgstr "请求耗时超出预期。"
+
+msgid "Top destination IP"
+msgstr "目的 IP 排行"
+
+msgid "Top local prefix"
+msgstr "本地地址段排行"
+
+msgid "Top remote prefix"
+msgstr "远端地址段排行"
+
+msgid "Top source IP"
+msgstr "源 IP 排行"
+
+msgid "Traffic category"
+msgstr "流量分类"
+
+msgid "Traffic direction"
+msgstr "流量方向"
+
+msgid "flow.value.unassigned"
+msgstr "未归属"

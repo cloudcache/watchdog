@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { BarChart3Icon, BookmarkIcon, DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
@@ -13,12 +13,12 @@ import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { createFlowExplorerChart, type FlowGraphType } from "@/lib/flow-explorer-chart"
+import { flowDimensionValueLabel } from "@/lib/flow-report-model"
 import {
 	buildFlowJointSeries,
 	buildFlowDeviceFilter,
 	buildFlowQuickFilter,
 	buildFlowSeries,
-	FLOW_TIME_PRESETS,
 	enrichFlowGeoPoints,
 	enrichFlowJointGeoPoints,
 	flowSurfacePreset,
@@ -172,48 +172,6 @@ type GraphMode = FlowGraphType | "table"
 type QuickAnalysisMode = "direction" | "protocol" | "src_ip" | "dst_ip" | "local_prefix" | "remote_prefix"
 type QueryMode = QuickAnalysisMode | "advanced"
 
-const GRAPH_OPTIONS: { value: GraphMode; label: string }[] = [
-	{ value: "lines", label: "Lines" },
-	{ value: "stacked", label: "Stacked area" },
-	{ value: "heatmap", label: "Heatmap" },
-	{ value: "table", label: "Table only" },
-]
-
-const SANKEY_OPTION: { value: GraphMode; label: string } = { value: "sankey", label: "Sankey" }
-
-const METRIC_OPTIONS = [
-	{ value: "estimated_bps", label: "Estimated L3 bit rate" },
-	{ value: "raw_bps", label: "Sampled L3 bit rate" },
-	{ value: "estimated_pps", label: "Estimated packet rate" },
-	{ value: "raw_pps", label: "Sampled packet rate" },
-	{ value: "estimated_bytes", label: "Estimated bytes" },
-	{ value: "raw_bytes", label: "Sampled bytes" },
-	{ value: "estimated_packets", label: "Estimated packets" },
-	{ value: "raw_packets", label: "Sampled packets" },
-	{ value: "received_records", label: "Received Flow records" },
-]
-
-const DIMENSION_OPTIONS = [
-	{ value: "total", label: "Total" },
-	{ value: "category", label: "Traffic category" },
-	{ value: "business", label: "Business" },
-	{ value: "geo.continent", label: "Continent" },
-	{ value: "geo.region", label: "Region" },
-	{ value: "geo.country", label: "Country" },
-	{ value: "geo.province", label: "Province" },
-	{ value: "geo.city", label: "City" },
-	{ value: "isp", label: "ISP" },
-	{ value: "asn", label: "ASN" },
-	{ value: "local_prefix", label: "Local prefix" },
-	{ value: "remote_prefix", label: "Remote prefix" },
-	{ value: "address_set", label: "Address set" },
-	{ value: "src_ip", label: "Source IP" },
-	{ value: "dst_ip", label: "Destination IP" },
-	{ value: "remote_port", label: "Remote port" },
-	{ value: "protocol", label: "IP protocol" },
-	{ value: "observation_interface", label: "Observation interface" },
-]
-
 const POINT_OPTIONS = [100, 200, 300, 500, 1000]
 
 const INITIAL_FLOW_TABLE_CONTROL: FlowTableControl = {
@@ -225,14 +183,14 @@ const INITIAL_FLOW_TABLE_CONTROL: FlowTableControl = {
 	filters: {},
 }
 
-const QUICK_ANALYSIS_OPTIONS: { value: QuickAnalysisMode; label: string }[] = [
-	{ value: "direction", label: "Traffic direction" },
-	{ value: "protocol", label: "Protocol" },
-	{ value: "src_ip", label: "Top source IP" },
-	{ value: "dst_ip", label: "Top destination IP" },
-	{ value: "local_prefix", label: "Top local prefix" },
-	{ value: "remote_prefix", label: "Top remote prefix" },
-]
+const QUICK_ANALYSIS_VALUES = new Set<QuickAnalysisMode>([
+	"direction",
+	"protocol",
+	"src_ip",
+	"dst_ip",
+	"local_prefix",
+	"remote_prefix",
+])
 
 const QUICK_DIMENSIONS: Record<Exclude<QuickAnalysisMode, "direction">, string> = {
 	protocol: "protocol",
@@ -262,11 +220,73 @@ function queryListState(name: string, legacyName?: string) {
 }
 
 function isQuickAnalysisMode(value: string): value is QuickAnalysisMode {
-	return QUICK_ANALYSIS_OPTIONS.some((option) => option.value === value)
+	return QUICK_ANALYSIS_VALUES.has(value as QuickAnalysisMode)
 }
 
 export default memo(function TrafficMatrix({ surface = "overview" }: { surface?: FlowTrafficSurface }) {
-	const { t } = useLingui()
+	const { t, i18n } = useLingui()
+	const graphOptionChoices: { value: GraphMode; label: string }[] = [
+		{ value: "lines", label: t`Lines` },
+		{ value: "stacked", label: t`Stacked area` },
+		{ value: "heatmap", label: t`Heatmap` },
+		{ value: "table", label: t`Table only` },
+	]
+	const metricOptionChoices = [
+		{ value: "estimated_bps", label: t`Estimated L3 bit rate` },
+		{ value: "raw_bps", label: t`Sampled L3 bit rate` },
+		{ value: "estimated_pps", label: t`Estimated packet rate` },
+		{ value: "raw_pps", label: t`Sampled packet rate` },
+		{ value: "estimated_bytes", label: t`Estimated bytes` },
+		{ value: "raw_bytes", label: t`Sampled bytes` },
+		{ value: "estimated_packets", label: t`Estimated packets` },
+		{ value: "raw_packets", label: t`Sampled packets` },
+		{ value: "received_records", label: t`Received Flow records` },
+	]
+	const dimensionOptionChoices = [
+		{ value: "total", label: t`Total` },
+		{ value: "category", label: t`Traffic category` },
+		{ value: "business", label: t`Business` },
+		{ value: "geo.continent", label: t`Continent` },
+		{ value: "geo.region", label: t`Region` },
+		{ value: "geo.country", label: t`Country` },
+		{ value: "geo.province", label: t`Province` },
+		{ value: "geo.city", label: t`City` },
+		{ value: "isp", label: t`ISP` },
+		{ value: "asn", label: t`ASN` },
+		{ value: "local_prefix", label: t`Local prefix` },
+		{ value: "remote_prefix", label: t`Remote prefix` },
+		{ value: "address_set", label: t`Address set` },
+		{ value: "src_ip", label: t`Source IP` },
+		{ value: "dst_ip", label: t`Destination IP` },
+		{ value: "remote_port", label: t`Remote port` },
+		{ value: "protocol", label: t`IP protocol` },
+		{ value: "observation_interface", label: t`Observation interface` },
+	]
+	const quickAnalysisOptionChoices: { value: QuickAnalysisMode; label: string }[] = [
+		{ value: "direction", label: t`Traffic direction` },
+		{ value: "protocol", label: t`Protocol` },
+		{ value: "src_ip", label: t`Top source IP` },
+		{ value: "dst_ip", label: t`Top destination IP` },
+		{ value: "local_prefix", label: t`Top local prefix` },
+		{ value: "remote_prefix", label: t`Top remote prefix` },
+	]
+	const timeRangeOptionChoices = [
+		{ value: "5m", label: t`Last 5 minutes` },
+		{ value: "15m", label: t`Last 15 minutes` },
+		{ value: "30m", label: t`Last 30 minutes` },
+		{ value: "1h", label: t`Last hour` },
+		{ value: "3h", label: t`Last 3 hours` },
+		{ value: "6h", label: t`Last 6 hours` },
+		{ value: "12h", label: t`Last 12 hours` },
+		{ value: "24h", label: t`Last 24 hours` },
+		{ value: "2d", label: t`Last 2 days` },
+		{ value: "7d", label: t`Last 7 days` },
+		{ value: "30d", label: t`Last 30 days` },
+		{ value: "90d", label: t`Last 3 months` },
+		{ value: "180d", label: t`Last 6 months` },
+		{ value: "1y", label: t`Last year` },
+		{ value: "custom", label: t`Custom` },
+	]
 	const surfacePreset = flowSurfacePreset(surface)
 	const presetMode = surfacePreset.queryMode as QueryMode
 	const initialMode = queryState("analysis", presetMode)
@@ -284,6 +304,11 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const [dimension2, setDimension2] = useState(() => queryState("dimension2", "none"))
 	const [dimension3, setDimension3] = useState(() => queryState("dimension3", "none"))
 	const [dimension4, setDimension4] = useState(() => queryState("dimension4", "none"))
+	const displayDimensionKind = resolveDisplayDimensionKind(queryMode, dimension)
+	const displayDimensionValue = useCallback(
+		(value: string) => flowDimensionValueLabel(displayDimensionKind, value, i18n),
+		[displayDimensionKind, i18n, i18n.locale]
+	)
 	const [graphMode, setGraphMode] = useState<GraphMode>(() => queryState("graph", "lines") as GraphMode)
 	const [targetPoints, setTargetPoints] = useState(() => Number(queryState("points", "300")))
 	const [topN, setTopN] = useState(() => Number(queryState("top", "20")))
@@ -695,7 +720,10 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			chartInstance.current = createFlowExplorerChart(
 				chartRef.current,
 				graphMode,
-				series.map((item) => ({ ...item, name: mixedVersions ? item.name : item.label })),
+				series.map((item) => ({
+					...item,
+					name: mixedVersions ? item.name : displayDimensionValue(item.label),
+				})),
 				formatValue
 			)
 		}
@@ -703,14 +731,14 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			disposeChart(chartInstance.current)
 			chartInstance.current = null
 		}
-	}, [formatValue, graphMode, mixedVersions, series])
+	}, [displayDimensionValue, formatValue, graphMode, mixedVersions, series])
 
 	const tablePage = response?.data.table
 	const records = useMemo(
 		() =>
 			(tablePage?.items ?? []).map((item) => ({
 				ip: item.path[0] ?? "",
-				dimension: flowDimensionLabel(mixedVersions ? item.name : item.label, queryMode),
+				dimension: displayDimensionValue(mixedVersions ? item.name : item.label),
 				last: formatFlowValue(item.last, unit),
 				average: formatFlowValue(item.average, unit),
 				p95: formatFlowValue(item.p95, unit),
@@ -721,7 +749,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				unknown: formatFlowRatio(item.unknown_sampling_ratio),
 				quality: formatFlowRatio(item.quality_record_ratio),
 			})),
-		[mixedVersions, queryMode, tablePage?.items, unit]
+		[displayDimensionValue, mixedVersions, tablePage?.items, unit]
 	)
 
 	const columns = useMemo(
@@ -753,7 +781,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 					field,
 					options.map((option) => ({
 						value: option.value,
-						label: flowTableFilterLabel(field, option.value, unit, queryMode),
+						label: flowTableFilterLabel(field, option.value, unit, displayDimensionValue),
 						count: option.count,
 					})),
 				])
@@ -766,7 +794,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 			},
 			onClearAll: () => runTableQuery({ ...tableControl, page: 0, filters: {} }),
 		}),
-		[queryMode, runTableQuery, tableControl, tablePage?.filter_options, unit]
+		[displayDimensionValue, runTableQuery, tableControl, tablePage?.filter_options, unit]
 	)
 	const serverSorting = useMemo(
 		() => ({
@@ -794,20 +822,20 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 	const completeness = response?.meta?.completeness
 	const secondaryOptions = [
 		{ value: "none", label: t`None` },
-		...DIMENSION_OPTIONS.filter(
+		...dimensionOptionChoices.filter(
 			(item) => item.value !== "total" && item.value !== "address_set" && item.value !== dimension
 		),
 	]
 	const tertiaryOptions = [
 		{ value: "none", label: t`None` },
-		...DIMENSION_OPTIONS.filter(
+		...dimensionOptionChoices.filter(
 			(item) =>
 				item.value !== "total" && item.value !== "address_set" && item.value !== dimension && item.value !== dimension2
 		),
 	]
 	const quaternaryOptions = [
 		{ value: "none", label: t`None` },
-		...DIMENSION_OPTIONS.filter(
+		...dimensionOptionChoices.filter(
 			(item) =>
 				item.value !== "total" &&
 				item.value !== "address_set" &&
@@ -816,7 +844,9 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				item.value !== dimension3
 		),
 	]
-	const graphOptions = jointSelected ? [...GRAPH_OPTIONS, SANKEY_OPTION] : GRAPH_OPTIONS
+	const graphOptions = jointSelected
+		? [...graphOptionChoices, { value: "sankey" as GraphMode, label: t`Sankey` }]
+		: graphOptionChoices
 	const countryOptions = referenceOptions(countries, t`All countries`)
 	const provinceOptions = referenceOptions(provinces, t`All provinces`)
 	const cityOptions = referenceOptions(cities, t`All cities`)
@@ -937,7 +967,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						label={t`Time range`}
 						value={timeRange}
 						onChange={setTimeRange}
-						options={FLOW_TIME_PRESETS}
+						options={timeRangeOptionChoices}
 						width="w-48"
 					/>
 				</div>
@@ -952,15 +982,21 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 						label={t`Analysis`}
 						value={quickAnalysis}
 						onChange={(value) => setQuickAnalysis(value as QuickAnalysisMode)}
-						options={QUICK_ANALYSIS_OPTIONS}
+						options={quickAnalysisOptionChoices}
 						width="w-52"
 					/>
-					<OptionSelect label={t`Metric`} value={metric} onChange={setMetric} options={METRIC_OPTIONS} width="w-56" />
+					<OptionSelect
+						label={t`Metric`}
+						value={metric}
+						onChange={setMetric}
+						options={metricOptionChoices}
+						width="w-56"
+					/>
 					<OptionSelect
 						label={t`Graph type`}
 						value={graphMode === "sankey" ? "lines" : graphMode}
 						onChange={(value) => setGraphMode(value as GraphMode)}
-						options={GRAPH_OPTIONS}
+						options={graphOptionChoices}
 						width="w-44"
 					/>
 					<div className="grid gap-1.5">
@@ -1006,12 +1042,18 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 				</summary>
 				<div className="grid gap-4 border-t border-border p-4">
 					<div className="flex flex-wrap items-end gap-3">
-						<OptionSelect label={t`Metric`} value={metric} onChange={setMetric} options={METRIC_OPTIONS} width="w-56" />
+						<OptionSelect
+							label={t`Metric`}
+							value={metric}
+							onChange={setMetric}
+							options={metricOptionChoices}
+							width="w-56"
+						/>
 						<OptionSelect
 							label={t`Group by`}
 							value={dimension}
 							onChange={setDimension}
-							options={DIMENSION_OPTIONS}
+							options={dimensionOptionChoices}
 							width="w-52"
 							disabled={addressSetSelectionActive}
 						/>
@@ -1059,7 +1101,7 @@ export default memo(function TrafficMatrix({ surface = "overview" }: { surface?:
 							label={t`Time range`}
 							value={timeRange}
 							onChange={setTimeRange}
-							options={FLOW_TIME_PRESETS}
+							options={timeRangeOptionChoices}
 							width="w-48"
 						/>
 						<OptionSelect
@@ -1675,10 +1717,10 @@ function protocolLabel(value: string) {
 	return names[value] ?? value
 }
 
-function flowDimensionLabel(value: string, mode: QueryMode) {
-	if (mode !== "protocol") return value
-	const match = /^(\d+)(.*)$/.exec(value)
-	return match ? `${protocolLabel(match[1])}${match[2]}` : value
+function resolveDisplayDimensionKind(mode: QueryMode, advancedDimension: string) {
+	if (mode === "advanced") return advancedDimension
+	if (mode === "direction") return "business_direction"
+	return QUICK_DIMENSIONS[mode] ?? advancedDimension
 }
 
 function flowObservationDevices(exporters: FlowExporterItem[]): FlowDeviceItem[] {
@@ -1698,8 +1740,13 @@ function formatFlowRatio(value: number) {
 	return `${(Math.max(0, value) * 100).toFixed(1)}%`
 }
 
-function flowTableFilterLabel(field: string, value: string, unit: string, mode: QueryMode) {
-	if (field === "dimension") return flowDimensionLabel(value, mode)
+function flowTableFilterLabel(
+	field: string,
+	value: string,
+	unit: string,
+	displayDimensionValue: (value: string) => string
+) {
+	if (field === "dimension") return displayDimensionValue(value)
 	const numeric = Number(value)
 	if (!Number.isFinite(numeric)) return value
 	if (field === "records") return numeric.toLocaleString()
