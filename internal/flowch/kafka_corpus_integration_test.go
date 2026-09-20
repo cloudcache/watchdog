@@ -719,6 +719,9 @@ func corpusFixturePayload(t testing.TB, family, name string) []byte {
 		t.Fatal("resolve corpus test path")
 	}
 	path := filepath.Join(filepath.Dir(currentFile), "..", "..", "akvorado", "outlet", "flow", "decoder", family, "testdata", name)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Skipf("corpus fixture %s absent; clone the gitignored akvorado reference repo (or supply own fixtures) to run this test", path)
+	}
 	payloads := corpusPCAPUDPPayloads(t, path)
 	if len(payloads) != 1 {
 		t.Fatalf("%s contains %d packets, want 1", path, len(payloads))
