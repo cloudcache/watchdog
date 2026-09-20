@@ -37,6 +37,11 @@ type Receiver struct {
 	OnOversize     func()
 	OnPublishError func()
 	OnKernelDrops  func(uint64)
+	// OnReceiveBuffer reports the requested SO_RCVBUF and the value the kernel
+	// actually granted (as returned by getsockopt; Linux reports roughly twice
+	// the usable bytes). It fires once after the buffer is set so a silent clamp
+	// to net.core.rmem_max is observable instead of assumed.
+	OnReceiveBuffer func(requested, effective int)
 
 	pool sync.Pool
 }
@@ -60,6 +65,11 @@ func (r *Receiver) Run(ctx context.Context) error {
 	if r.ReceiveBufferBytes > 0 {
 		if err := conn.SetReadBuffer(r.ReceiveBufferBytes); err != nil {
 			return err
+		}
+		if r.OnReceiveBuffer != nil {
+			if effective, ok := readSocketReceiveBuffer(conn); ok {
+				r.OnReceiveBuffer(r.ReceiveBufferBytes, effective)
+			}
 		}
 	}
 	go func() {
@@ -201,6 +211,25 @@ func (r *Receiver) listen(ctx context.Context) (*net.UDPConn, error) {
 		return nil, errors.New("UDP listener did not return *net.UDPConn")
 	}
 	return udpConn, nil
+}
+
+// readSocketReceiveBuffer returns the kernel's current SO_RCVBUF for the
+// datagram socket. SetReadBuffer requests a size but the kernel silently clamps
+// it to net.core.rmem_max, so reading it back is the only way to know the buffer
+// the collector actually has. Linux reports roughly twice the usable bytes.
+func readSocketReceiveBuffer(conn *net.UDPConn) (int, bool) {
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return 0, false
+	}
+	var size int
+	var opErr error
+	if controlErr := raw.Control(func(fd uintptr) {
+		size, opErr = unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_RCVBUF)
+	}); controlErr != nil || opErr != nil {
+		return 0, false
+	}
+	return size, true
 }
 
 func (r *Receiver) invalid() {

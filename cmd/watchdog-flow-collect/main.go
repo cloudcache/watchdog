@@ -224,6 +224,11 @@ func run(opt options) error {
 				OnKernelDrops: func(count uint64) {
 					runtimeMetrics.ObserveKernelDrops(count)
 				},
+				OnReceiveBuffer: func(requested, effective int) {
+					if effective < requested {
+						log.Printf("flow-collect socket receive buffer clamped: listener=%s requested=%d effective=%d; raise net.core.rmem_max (see deploy/sysctl.d/90-watchdog-flow.conf)", spec.id, requested, effective)
+					}
+				},
 			}
 			running++
 			go func() { errCh <- receiver.Run(runCtx) }()
