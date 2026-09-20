@@ -295,6 +295,8 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 ## 8. 生产只读基线（2026-09-19）
 
 > 数据来自生产 ClickHouse 24.9.2.42 的一次低峰只读采样。数值会随采集继续增长，应用于判断数量级和证明查询/写入形状，不代表固定容量承诺。
+>
+> **采样时刻（校正，见 remediation §4.5）：本 §8 基线（`flow_records` 45.3M 事实、`flow_ingest_receipts` 11.1M 回执）取自 §9 PERF-OPS1 删表之前；PERF-OPS1 的 24h 验收数值是 `flow_records` 删到 1,086,644 行之后测得。两组数据规模不同，不可直接互比。**
 
 ### 8.1 数据量、存储与生命周期现状
 
