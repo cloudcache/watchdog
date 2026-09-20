@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -231,6 +232,16 @@ func (s *Server) activateAddressDimension(c *gin.Context) {
 	}
 	if job.ID != "" {
 		c.Header("X-Watchdog-Operation-ID", job.ID)
+	}
+	// Close the last publish hop: auto-publish a worker deployment for every
+	// bound device so the workers converge on this snapshot without a separate
+	// manual step. Best-effort — a failure never fails the activation and the
+	// workers keep their last-known-good deployment.
+	if published, derr := s.autoPublishFlowWorkerDeploymentsForActivation(ctx, currentPrincipal(c).UserID, activation.EffectiveFrom); derr != nil {
+		log.Printf("watchdog-server: auto-publish worker deployment after activation failed (workers keep last-known-good): %v", derr)
+		c.Header("X-Watchdog-Flow-Deployment-Warning", "automatic worker deployment failed; publish manually")
+	} else {
+		log.Printf("watchdog-server: activation auto-published %d worker deployment(s)", published)
 	}
 	c.JSON(http.StatusOK, activation)
 }
