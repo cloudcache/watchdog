@@ -37,39 +37,49 @@ func NewEncoder() *Encoder {
 
 // NewRawFlow builds the immutable envelope written to the raw-flow topic.
 func NewRawFlow(collectorID, listenerID string, registryVersion uint64, receivedAt time.Time, source netip.AddrPort, decoder flowpb.RawFlow_Decoder, payload []byte) (*flowpb.RawFlow, error) {
+	raw := &flowpb.RawFlow{}
+	if err := fillRawFlow(raw, collectorID, listenerID, registryVersion, receivedAt, source, decoder, payload); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// fillRawFlow validates the datagram and populates dst. It resets dst first so a
+// pooled envelope carries no field from a previous datagram; the hot inlet path
+// reuses one *RawFlow per Send instead of allocating a new envelope each time.
+func fillRawFlow(dst *flowpb.RawFlow, collectorID, listenerID string, registryVersion uint64, receivedAt time.Time, source netip.AddrPort, decoder flowpb.RawFlow_Decoder, payload []byte) error {
 	if collectorID == "" || len(collectorID) > maxIdentitySize {
-		return nil, errors.New("collector ID must contain 1..255 bytes")
+		return errors.New("collector ID must contain 1..255 bytes")
 	}
 	if listenerID == "" || len(listenerID) > maxIdentitySize {
-		return nil, errors.New("listener ID must contain 1..255 bytes")
+		return errors.New("listener ID must contain 1..255 bytes")
 	}
 	if registryVersion == 0 {
-		return nil, errors.New("registry version must be positive")
+		return errors.New("registry version must be positive")
 	}
 	if receivedAt.IsZero() || receivedAt.Unix() < 0 {
-		return nil, errors.New("receive time must be a non-negative Unix time")
+		return errors.New("receive time must be a non-negative Unix time")
 	}
 	if !source.IsValid() {
-		return nil, errors.New("source address is required")
+		return errors.New("source address is required")
 	}
 	if decoder != flowpb.RawFlow_DECODER_NETFLOW && decoder != flowpb.RawFlow_DECODER_SFLOW {
-		return nil, errors.New("decoder must be NetFlow or sFlow")
+		return errors.New("decoder must be NetFlow or sFlow")
 	}
 	if len(payload) == 0 || len(payload) > maxPayloadSize {
-		return nil, errors.New("payload must contain 1..65535 bytes")
+		return errors.New("payload must contain 1..65535 bytes")
 	}
 
-	address := source.Addr().Unmap().AsSlice()
-	return &flowpb.RawFlow{
-		TimeReceived:    uint64(receivedAt.Unix()),
-		Payload:         payload,
-		SourceAddress:   address,
-		Decoder:         decoder,
-		CollectorId:     collectorID,
-		ListenerId:      listenerID,
-		SourcePort:      uint32(source.Port()),
-		RegistryVersion: registryVersion,
-	}, nil
+	dst.Reset()
+	dst.TimeReceived = uint64(receivedAt.Unix())
+	dst.Payload = payload
+	dst.SourceAddress = source.Addr().Unmap().AsSlice()
+	dst.Decoder = decoder
+	dst.CollectorId = collectorID
+	dst.ListenerId = listenerID
+	dst.SourcePort = uint32(source.Port())
+	dst.RegistryVersion = registryVersion
+	return nil
 }
 
 // ExporterKey keeps all datagrams from one exporter and collector on the same
@@ -95,9 +105,6 @@ func ExporterKey(flow *flowpb.RawFlow) ([]byte, error) {
 func (e *Encoder) Marshal(flow *flowpb.RawFlow) ([]byte, func(), error) {
 	if e == nil {
 		return nil, nil, errors.New("raw flow encoder is required")
-	}
-	if _, err := ExporterKey(flow); err != nil {
-		return nil, nil, err
 	}
 	buffer := e.pool.Get().(*[]byte)
 	encoded, err := proto.MarshalOptions{}.MarshalAppend((*buffer)[:0], flow)
