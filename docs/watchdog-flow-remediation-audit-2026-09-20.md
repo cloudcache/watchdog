@@ -373,7 +373,16 @@ A 组止损与相邻项已逐个提交（`main`，`Co-Authored-By: Claude Opus 4
 | A.7-0.9 systemd 加固 | ✅ 已修 | `63411d8f` | `MemoryMax`（worker 2G/collector 1G）/`LimitNOFILE`/`TimeoutStopSec`/`Wants=` |
 | A.8 receipts 加 scale_ppm | ⛔ 撤销（非缺陷） | — | scanner 比对回执与事实均为**校准后**值（like-to-like），无 raw×rate 对比；`§3.2` 的"漂移"判断过度，不新增迁移/`receiptSchemaVersion` bump |
 
-B/C/D/E 组（发布闭环、幂等一致性、性能、文档）均**未做**：或受 `server.go`/worker `main.go` 并行占用阻塞，或需真实 Kafka/CH/registry 与压测门禁（见 §7 复核、§8）。所有 ✅ 项 build/vet/`-race`/单测通过；标"生产 EXPLAIN/DSN/压测"者仅完成正确性，量化收益仍需线上验证。
+另外两项 OOM/越界 缺陷已补（不在 A 组编号内）：
+
+| 项 | 状态 | 提交 | 备注 |
+|---|---|---|---|
+| §2 M1 collector `MaxBufferedBytes` | ✅ 已修 | `d33ebc9d` | 默认 256MiB，broker 中断时背压而非无界增长直到 OOM；systemd `MemoryMax` 仍作 cgroup backstop |
+| §4 M2 快路径 fuzz（sFlow/NetFlow/RawFlow） | ✅ 已补 | `4e9dd9bb` | 三个 fuzz 目标直接打手写解析器；~23 万输入无 panic/越界 |
+
+B/C/D/E 组（发布闭环、幂等一致性、性能、文档）其余项均**未做**：或受 `server.go`/worker `main.go` 并行占用阻塞，或需真实 Kafka/CH/registry 与压测门禁（见 §7 复核、§8）。所有 ✅ 项 build/vet/`-race`/单测通过；标"生产 EXPLAIN/DSN/压测"者仅完成正确性，量化收益仍需线上验证。
+
+**OOM / 越界 / zero-copy 收口：** OOM 的两个 Critical（解码器毒丸循环 `5e822705`、worker 永久错误崩溃循环 `02177a20`）与 collector 生产者缓冲无界（`d33ebc9d`）已修，systemd `MemoryMax` 作 backstop；worker 单 fetch 瞬时内存（`FetchMaxBytes`×并发分区）仅有 backstop，收缩需压测。越界：快路径本无可达越界（边界检查完备），缺口是 fuzz 覆盖，已补（`4e9dd9bb`）。zero-copy：契约本身**无缺陷**（§4.2/§5.3 已确认端到端正确）；`recvmmsg`、原地信封编码、去重 `ExporterKey`、`EnrichBatchInto` arena、`[16]byte` 地址、列构建器复用等均为 **Phase 2 性能优化**，需 pprof/alloc/pps 前后基准与回退开关，且部分触及并行占用的 worker `main.go`，本轮**未做**。
 
 ---
 
