@@ -31,7 +31,7 @@
 | R4 | 查询形状把最重扫描乘以 N | **HIGH** | 境外 CTE 多次引用、top-N 全局窗口排序；方向面板通过两条查询合并，端点报表分块追加查询 |
 | R6 | fetch 处理与同步写入耦合，块大小受单次 poll 限制 | **HIGH（线上已证实）** | 每分钟约 60 次 facts + 60 次 receipts INSERT；事实块 P95 1,694 行，远低于 50k 上限 |
 | R7 | 对账/修复/重分类扫描裁剪不足 | **HIGH/MED** | 实测同一坐标窗 `FINAL` 读 314,037 行，投影路径读 8,192 行；修复整日重算；重分类每页重做全窗 FINAL |
-| C1 | **正确性缺陷**：`vpn_candidate.go` 仍读没有生产写入方的 `flow_aggregate_1m` | 功能 | 新装/空表为 0；若残留旧行则为过期值，均不能表示 V2 当前完整度 |
+| C1 | ✅ 已修（`c672dfc7`）**正确性缺陷**：~~`vpn_candidate.go` 仍读没有生产写入方的 `flow_aggregate_1m`~~ 改从窗口内 `flow_records` 实际存在的分钟数计算 `covered_buckets` | 功能 | ~~新装/空表为 0；若残留旧行则为过期值~~ 现反映真实分钟完整度；已由 CH 集成用例覆盖（`covered_buckets=2`、`complete_ratio` 2/3 后 0.75），本环境无 CH 未运行 |
 
 已做对的事见 §7；已登记未完成项（不重复登记）：`异步联合索引`（2–4 维联合 >24h）、固定硬件压测/72h soak（[flow-module-tasklist.md:284,479,488](flow-module-tasklist.md)）。
 
@@ -118,7 +118,7 @@
 
 | ID | 发现 | 证据 | 影响 |
 |---|---|---|---|
-| C1 | `flow_aggregate_1m` 在 V2 无生产写入方，但 `vpn_candidate.go` 仍从它算 `covered_buckets`（`FINAL … dimension_kind='_generation'`）；`flow_vpn_detection.go:62` 已接线。线上 1m/1h 两张聚合表当前均为 0 行 | [vpn_candidate.go:176-182, 232-234](../internal/flowch/vpn_candidate.go)、[flow_vpn_detection.go:62](../internal/server/flow_vpn_detection.go)（S-F7, W-A8）、§8 | 当前生产 `complete_ratio=0`；若未来残留旧 1m 行则会变成过期覆盖率。应改从 receipts/已关闭 raw 分钟计算分钟完整度；不能拿 1h generation 冒充分钟覆盖 |
+| C1 | ✅ 已修（`c672dfc7`）：`coverage` CTE 从 `flow_aggregate_1m FINAL … dimension_kind='_generation'` 改为 `uniqExact(toStartOfMinute(event_time))` over `flow_records`（窗口分钟对齐，`covered_buckets ≤ expected_buckets` 恒成立，`runner.go` 的证据自洽校验不变）；~~线上 1m/1h 两张聚合表当前均为 0 行~~ | [vpn_candidate.go:176-182, 232-234](../internal/flowch/vpn_candidate.go)、[flow_vpn_detection.go:62](../internal/server/flow_vpn_detection.go)（S-F7, W-A8）、§8 | ~~当前生产 `complete_ratio=0`~~ 现按真实分钟完整度计算；不再拿 1h generation 冒充分钟覆盖 |
 | C2 | （风险）若在 R2.1/R2.2/R2.3 之前就去掉 `FINAL`，R2.3 的重放重复与重试重复会变成**重复计数** | — | 顺序必须是"先让去重真正生效，再撤 FINAL" |
 
 ---
@@ -158,7 +158,7 @@
 4. R4.1/R4.2：境外路径改成单遍聚合、原生 IPv6 分组和有界时间窗；保持 `uniqExact`，除非产品批准近似误差。
 5. R4.7/R4.12/R4.13：合并 facet 扫描、请求内只解析一次 archive boundary、补齐同步查询护栏。相同请求先用 singleflight；缓存需另有完整 key/失效设计。
 6. R3.4：收敛服务端预算档；交互式查询保持 fail-closed，长窗口/批量工作提交 operation job 并异步导出。
-7. C1：分钟完整度从 receipts/已关闭 raw 分钟计算，修复空 1m 表依赖。
+7. C1：✅ 已修（`c672dfc7`）分钟完整度改从窗口内 `flow_records` 实际分钟计算，去除空 `flow_aggregate_1m` 依赖。
 
 验收：结果值与修复前的可完成小窗口逐项一致；24h 默认页面不越过同步预算；限额仍 fail-closed；至少覆盖 raw-only、archive-only、跨边界三种路径。
 

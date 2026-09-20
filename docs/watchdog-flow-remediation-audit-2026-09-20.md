@@ -181,7 +181,7 @@
 | IX P1 投影/skip index/codec/确定性块/去重窗口 | 未开始 | grep 无 `p_iface`、`flow_records` 无 `ADD INDEX`/`bloom_filter`（仅 `014_snmp_events.sql`）、006 之外无 `ADD PROJECTION` | — |
 | IX P2 `flow_interface_traffic_5m` + 关闭桶 job + 计费/对账切读 | 未开始 | grep 无此表；`flowch/billing.go:247-285` 仍 raw `FINAL CROSS JOIN`；`billing/service.go:133` 读它 | — |
 | IX P3 `sflow_interface_traffic_5m` + 校准表 + 动态 k | 未开始（落地的是静态 ppm） | 无 `sflow_interface_traffic_5m`/`flow_interface_calibration*`；读时差分只在未跟踪文件 | 静态 ppm ≠ 动态 k |
-| IX P4 维度热层 | 未开始 | `vpn_candidate.go:176-182` 仍读 `flow_aggregate_1m`（C1） | ✅ |
+| IX P4 维度热层 | C1 已修，其余未开始 | C1（`c672dfc7`）：`vpn_candidate.go` coverage 改读 `flow_records` 分钟，不再依赖空 `flow_aggregate_1m`；维度热层本体未做 | ✅ |
 | IX P5 去 FINAL / 分片 | 未开始 | — | — |
 | 018 `sflow_interface_counters` | **已落地** | §4.2 | DDL 正确；回执语义使扫描器回归（§4.1） |
 | 019 `estimated_bytes_scale_ppm` | **已落地**（writer/账本）；readiness 缺口开放 | §4.3 | 崩溃循环模式 |
