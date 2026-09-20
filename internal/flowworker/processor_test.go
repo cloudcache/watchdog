@@ -268,3 +268,22 @@ func workerRawRecordAt(t testing.TB, decoder flowpb.RawFlow_Decoder, payload []b
 	}
 	return &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 0, Offset: 1, Value: value}
 }
+
+func TestRateLimitedRejectObserverIsInstalledByDefault(t *testing.T) {
+	// A nil observer must be replaced by the rate-limited default so rejections
+	// are not silent; the default must tolerate a nil record and repeat calls.
+	resolver := func(string, uint64, flowplan.Protocol, netip.Addr, uint64) (flowplan.SourceBinding, error) {
+		return bindingFixture(), nil
+	}
+	p, err := NewBatchProcessorForStream(time.Minute, "kafka:test", resolver, func(context.Context, []*RecordBatch) error { return nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.onRejected == nil {
+		t.Fatal("nil observer was not replaced by a default")
+	}
+	rec := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 0, Offset: 1}
+	p.onRejected(rec, RejectMapping, errors.New("cause"))
+	p.onRejected(rec, RejectMapping, errors.New("cause")) // rate-limited, must not panic
+	p.onRejected(nil, RejectDecode, nil)                  // nil record must be ignored
+}

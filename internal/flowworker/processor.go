@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,6 +85,13 @@ func NewBatchProcessorForStream(stateTTL time.Duration, sourceStreamID string, r
 	if sourceStreamID != "" && !ValidSourceStreamID(sourceStreamID) {
 		return nil, errors.New("source stream ID is invalid")
 	}
+	if onRejected == nil {
+		// Without an observer a rejection storm (e.g. every datagram of a QinQ or
+		// non-IP exporter mapping-rejected) is invisible beyond a counter. Install
+		// a rate-limited default so at least the topic/partition/offset/reason is
+		// logged, without letting a flood dominate the log.
+		onRejected = newRateLimitedRejectObserver()
+	}
 	return &Processor{
 		decoders:    flowstream.NewPartitionDecoders(stateTTL),
 		adapter:     DecodeAdapter{ResolveBinding: resolver, SourceStreamID: sourceStreamID},
@@ -91,6 +99,30 @@ func NewBatchProcessorForStream(stateTTL time.Duration, sourceStreamID string, r
 		onRejected:  onRejected,
 		now:         time.Now,
 	}, nil
+}
+
+// newRateLimitedRejectObserver logs at most one rejection per reason every 10s
+// (plus the first of each reason). It is non-blocking as RejectObserver requires.
+func newRateLimitedRejectObserver() RejectObserver {
+	const interval = 10 * time.Second
+	var mu sync.Mutex
+	last := make(map[RejectReason]time.Time)
+	return func(record *kgo.Record, reason RejectReason, cause error) {
+		if record == nil {
+			return
+		}
+		now := time.Now()
+		mu.Lock()
+		prev, seen := last[reason]
+		if seen && now.Sub(prev) < interval {
+			mu.Unlock()
+			return
+		}
+		last[reason] = now
+		mu.Unlock()
+		log.Printf("flow-worker rejected datagram: reason=%s topic=%s partition=%d offset=%d cause=%v",
+			reason, record.Topic, record.Partition, record.Offset, cause)
+	}
 }
 
 // HandleRecord is a flowstream.RecordHandler. Missing templates are completed
