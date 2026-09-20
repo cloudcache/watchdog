@@ -29,8 +29,8 @@ func TestBuildVPNCandidateQueryIsAtomicVersionedAndReplayStable(t *testing.T) {
 		t.Fatal("same candidate repair changed query or token")
 	}
 	for _, required := range []string{
-		"INSERT INTO flow_vpn_candidates", "FROM flow_records FINAL", "FROM flow_aggregate_1m FINAL",
-		"AND dimension_kind = '_generation'", "UNION ALL", "'_generation'",
+		"INSERT INTO flow_vpn_candidates", "FROM flow_records FINAL",
+		"uniqExact(toStartOfMinute(event_time)) AS covered_buckets", "UNION ALL", "'_generation'",
 		"dimension_snapshot_id, geo_version, classification_version",
 		"key_row_kind, key_dimension_snapshot_id, key_geo_version, key_classification_version",
 		"sumIf(estimated_bytes, estimated_valid AND business_direction = 'out')",

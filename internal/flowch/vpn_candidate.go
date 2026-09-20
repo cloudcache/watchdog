@@ -174,11 +174,10 @@ WITH
   {window_end:DateTime('UTC')} AS candidate_end,
   dateDiff('minute', candidate_start, candidate_end) AS expected_buckets,
   coverage AS (
-    SELECT count() AS covered_buckets
-    FROM flow_aggregate_1m FINAL
-    WHERE bucket >= candidate_start
-      AND bucket < candidate_end
-      AND dimension_kind = '_generation'
+    SELECT uniqExact(toStartOfMinute(event_time)) AS covered_buckets
+    FROM flow_records
+    WHERE event_time >= candidate_start
+      AND event_time < candidate_end
   ),
   candidates AS (
     SELECT
