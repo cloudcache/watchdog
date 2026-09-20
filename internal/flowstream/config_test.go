@@ -70,6 +70,20 @@ func TestKafkaConfigValidation(t *testing.T) {
 		t.Fatal("TLS parameters without explicit TLS enablement were accepted")
 	}
 	producer = DefaultProducerConfig()
+	producer.Kafka.SASL = SASLConfig{Mechanism: SASLPlain, Username: "u", Password: "p"}
+	if err := producer.Validate(); err == nil {
+		t.Fatal("SASL/PLAIN without TLS was accepted")
+	}
+	producer.Kafka.TLS = TLSConfig{Enabled: true}
+	if err := producer.Validate(); err != nil {
+		t.Fatalf("SASL/PLAIN over TLS was rejected: %v", err)
+	}
+	producer = DefaultProducerConfig()
+	producer.Kafka.SASL = SASLConfig{Mechanism: SASLSCRAMSHA256, Username: "u", Password: "p"}
+	if err := producer.Validate(); err != nil {
+		t.Fatalf("SCRAM without TLS must remain allowed: %v", err)
+	}
+	producer = DefaultProducerConfig()
 	producer.Compression = "invalid"
 	if err := producer.Validate(); err == nil {
 		t.Fatal("invalid compression was accepted")

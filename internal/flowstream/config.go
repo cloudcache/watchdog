@@ -146,6 +146,11 @@ func (c KafkaConfig) validate() error {
 		if c.SASL.Username == "" || c.SASL.Password == "" {
 			return errors.New("Kafka SASL username and password are required")
 		}
+		// SASL/PLAIN sends the password in the clear, so it must run over TLS.
+		// SCRAM never transmits the password and is left to the operator.
+		if mechanism == SASLPlain && !c.TLS.Enabled {
+			return errors.New("Kafka SASL/PLAIN requires TLS; enable Kafka TLS or use SCRAM")
+		}
 	default:
 		return fmt.Errorf("unsupported Kafka SASL mechanism %q", mechanism)
 	}
