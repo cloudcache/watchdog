@@ -686,6 +686,6 @@ func TestRealClickHouseRollupCapsPerIPDimension(t *testing.T) {
 	assertAggregatePoints(t, result, map[string]aggregateWant{
 		"10.9.0.1": {value: 40, records: 1},
 		"10.9.0.2": {value: 30, records: 1},
-		"_other":          {value: 30, records: 2},
+		"_other":   {value: 30, records: 2},
 	})
 }
