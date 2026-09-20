@@ -527,3 +527,32 @@ func TestCompileStorageV2PushesIPDimensionValuesIntoRawScan(t *testing.T) {
 		t.Fatalf("post-UNION dimension_value residual missing:\n%s", body)
 	}
 }
+
+func TestCompileStorageV2EndpointCandidateMarksApproximate(t *testing.T) {
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.Interval = time.Hour
+	request.Dimension = DimensionSourceIP
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Filters = Filters{DeviceIDs: []string{"device-a"}}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compiled.Approximate {
+		t.Fatal("candidate-path top-N ranking must be marked approximate")
+	}
+
+	// Explicit IP values use the exact path (candidate sketch off).
+	request.Filters.DimensionValues = []string{"203.0.113.1"}
+	exact, err := Compile(Scope{}, request, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exact.Approximate {
+		t.Fatal("explicit dimension values use the exact path, not the candidate sketch")
+	}
+}

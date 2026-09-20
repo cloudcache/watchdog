@@ -28,6 +28,9 @@ type AggregatePlan struct {
 	SourceSeconds uint32        `json:"source_seconds"`
 	StepSeconds   uint32        `json:"step_seconds"`
 	TargetPoints  uint16        `json:"target_points"`
+	// Approximate marks a plan whose top-N ranking came from the approximate
+	// topKWeighted candidate path; it is populated by callers that run that path.
+	Approximate bool `json:"approximate,omitempty"`
 }
 
 var niceIntervals = []time.Duration{

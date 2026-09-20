@@ -209,6 +209,12 @@ type Compiled struct {
 	MaxResultRows        uint64
 	UsesRawFacts         bool
 	ArchiveThrough       time.Time
+	// Approximate is set when the top-N endpoint set was chosen by the
+	// topKWeighted candidate path (an approximate heavy-hitter sketch). The
+	// per-endpoint values are still exact, but a true top endpoint outside the
+	// candidate set is attributed to _other, so consumers should mark the ranking
+	// as approximate.
+	Approximate bool
 }
 
 type ErrorCode string
@@ -587,6 +593,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		Metric: metric.definition, Dimension: dimension, Timezone: timezone,
 		EstimatedRows: uint64(estimatedRows), MaxResultRows: maxResultRows,
 		UsesRawFacts: usesRawFacts, ArchiveThrough: archiveThrough,
+		Approximate: endpointCandidateQuery,
 	}, nil
 }
 

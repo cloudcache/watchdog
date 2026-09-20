@@ -91,7 +91,7 @@ func (s *Server) enrichEndpointReport(ctx context.Context, scope flowquery.Scope
 	if err != nil {
 		return nil, err
 	}
-	panels := []flowReportPanel{{ID: "endpoint", Status: "ready", Data: endpointRaw, Meta: gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source}}}
+	panels := []flowReportPanel{{ID: "endpoint", Status: "ready", Data: endpointRaw, Meta: gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source, "approximate": plan.Approximate}}}
 	addresses := flowReportEndpointAddresses(panels, "endpoint")
 	if len(addresses) > 0 {
 		for _, direction := range []string{"in", "out"} {
@@ -178,6 +178,9 @@ func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope
 	if err != nil {
 		return nil, flowquery.AggregatePlan{}, err
 	}
+	// Carry the approximate-ranking signal from the candidate path so the report
+	// panel can disclose that the top-N endpoint set is a heavy-hitter estimate.
+	plan.Approximate = compiled.Approximate
 	result, err := s.flowQuery.aggregate.Run(ctx, compiled)
 	if err != nil {
 		return nil, flowquery.AggregatePlan{}, err
