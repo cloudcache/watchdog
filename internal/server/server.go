@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -310,7 +311,18 @@ func (s *Server) startAddressLibrary() error {
 
 // Run starts the HTTP listener (blocking).
 func (s *Server) Run() error {
-	return s.engine.Run(s.cfg.Server.Listen)
+	// ReadHeaderTimeout bounds slow-header (slowloris) clients and IdleTimeout
+	// reclaims idle keep-alive connections. ReadTimeout/WriteTimeout are left
+	// unset on purpose: flow reports run up to the report deadline (~120s) and
+	// address imports stream large tus uploads, both of which a fixed
+	// whole-request timeout would truncate.
+	server := &http.Server{
+		Addr:              s.cfg.Server.Listen,
+		Handler:           s.engine,
+		ReadHeaderTimeout: 20 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return server.ListenAndServe()
 }
 
 // DB exposes the connection pool for the domain packages wired in later work packages.
