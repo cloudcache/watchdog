@@ -118,6 +118,19 @@ func TestClassificationSchemaV2SelectsPerDeviceContext(t *testing.T) {
 	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, remote); got != CategoryOnNetCrossProvince {
 		t.Fatalf("cross-province category = %q", got)
 	}
+	// Operator known (same ISP) but the remote province is unattributed (e.g. an
+	// un-tagged China Mobile range): degrade to on-net cross-province, not unknown.
+	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, GeoInfo{Country: "CN", ISPID: 3, ASN: 4134}); got != CategoryOnNetCrossProvince {
+		t.Fatalf("on-net province-unknown category = %q, want on_net_cross_province", got)
+	}
+	// Different operator with unattributed province degrades to off-net cross-province.
+	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, GeoInfo{Country: "CN", ISPID: 9, ASN: 4837}); got != CategoryOffNetCrossProvince {
+		t.Fatalf("off-net province-unknown category = %q, want off_net_cross_province", got)
+	}
+	// Operator itself indeterminable (no ISP and no ASN on the remote) still falls to unknown.
+	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, GeoInfo{Country: "CN", AdminCode: "330100"}); got != CategoryUnknown {
+		t.Fatalf("operator-unknown category = %q, want unknown", got)
+	}
 	remote.Country = "HK"
 	remote.AdminCode = "810000"
 	if got := snapshot.ClassifyResolvedEndpoints("device-zhejiang", DirectionOut, local, remote); got != CategoryOverseas {

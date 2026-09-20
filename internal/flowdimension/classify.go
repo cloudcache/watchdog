@@ -326,9 +326,14 @@ func ClassifyCategoryFromEndpoints(direction BusinessDirection, local, remote Ge
 	localAdminCode := strings.TrimSpace(local.AdminCode)
 	remoteProvince, remoteProvinceOK := provincePart(remoteAdminCode)
 	localProvince, localProvinceOK := provincePart(localAdminCode)
-	if !remoteProvinceOK || !localProvinceOK {
-		return CategoryUnknown
-	}
+	// Operator (on-net vs off-net) is the primary split, so determine it before
+	// province. A missing province then degrades the category by exactly one
+	// level — to the cross-province bucket — instead of discarding real domestic
+	// traffic to unknown. Only when the operator itself is indeterminable (no ISP
+	// and no ASN on one side) do we fall back to unknown. This matters for large
+	// same-operator ranges (e.g. China Mobile IPv6) whose province the base
+	// library has not yet tagged: they land in 本网/异网 now, and the base-data
+	// backfill later refines the 本省/跨省 (and city) split.
 	identityAvailable := false
 	onNet := false
 	if local.ISPID != 0 && remote.ISPID != 0 {
@@ -342,13 +347,14 @@ func ClassifyCategoryFromEndpoints(direction BusinessDirection, local, remote Ge
 	if !identityAvailable {
 		return CategoryUnknown
 	}
+	provinceKnown := remoteProvinceOK && localProvinceOK
 	if !onNet {
-		if remoteProvince == localProvince {
+		if provinceKnown && remoteProvince == localProvince {
 			return CategoryOffNetInProvince
 		}
 		return CategoryOffNetCrossProvince
 	}
-	if remoteProvince != localProvince {
+	if !provinceKnown || remoteProvince != localProvince {
 		return CategoryOnNetCrossProvince
 	}
 	remoteCity, remoteCityOK := cityPart(remoteAdminCode)
