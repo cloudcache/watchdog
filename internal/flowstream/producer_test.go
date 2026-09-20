@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
 type fakeProducerClient struct {
@@ -21,6 +22,12 @@ type fakeProducerClient struct {
 	closed          bool
 	buffered        int64
 	deferCompletion bool
+	metadataResp    kmsg.Response
+	metadataErr     error
+}
+
+func (f *fakeProducerClient) Request(context.Context, kmsg.Request) (kmsg.Response, error) {
+	return f.metadataResp, f.metadataErr
 }
 
 func (f *fakeProducerClient) Produce(ctx context.Context, record *kgo.Record, promise func(*kgo.Record, error)) {
@@ -149,5 +156,46 @@ func TestProducerRejectsInvalidRecordAndClosesOnce(t *testing.T) {
 	// Invalid-record and closed-producer rejections must both be counted.
 	if got := producer.Stats().Errors; got != 2 {
 		t.Fatalf("synchronous rejections must count as errors: errors=%d", got)
+	}
+}
+
+func metadataResponseFor(topic string, partitions int, errCode int16) *kmsg.MetadataResponse {
+	resp := kmsg.NewPtrMetadataResponse()
+	rt := kmsg.NewMetadataResponseTopic()
+	name := topic
+	rt.Topic = &name
+	rt.ErrorCode = errCode
+	for i := 0; i < partitions; i++ {
+		rt.Partitions = append(rt.Partitions, kmsg.NewMetadataResponseTopicPartition())
+	}
+	resp.Topics = append(resp.Topics, rt)
+	return resp
+}
+
+func TestProducerVerifyTopic(t *testing.T) {
+	topic := "watchdog.flow.raw-v1"
+	present := &fakeProducerClient{metadataResp: metadataResponseFor(topic, 12, 0)}
+	if err := newProducerWithClient(present, topic).VerifyTopic(context.Background()); err != nil {
+		t.Fatalf("existing topic rejected: %v", err)
+	}
+
+	missing := &fakeProducerClient{metadataResp: kmsg.NewPtrMetadataResponse()}
+	if err := newProducerWithClient(missing, topic).VerifyTopic(context.Background()); err == nil {
+		t.Fatal("missing topic was accepted")
+	}
+
+	noPartitions := &fakeProducerClient{metadataResp: metadataResponseFor(topic, 0, 0)}
+	if err := newProducerWithClient(noPartitions, topic).VerifyTopic(context.Background()); err == nil {
+		t.Fatal("topic with no partitions was accepted")
+	}
+
+	errored := &fakeProducerClient{metadataResp: metadataResponseFor(topic, 12, 3)}
+	if err := newProducerWithClient(errored, topic).VerifyTopic(context.Background()); err == nil {
+		t.Fatal("topic metadata error was accepted")
+	}
+
+	requestFailed := &fakeProducerClient{metadataErr: errors.New("broker unreachable")}
+	if err := newProducerWithClient(requestFailed, topic).VerifyTopic(context.Background()); err == nil {
+		t.Fatal("metadata request failure was accepted")
 	}
 }

@@ -8,11 +8,13 @@ package flowstream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
 type producerClient interface {
@@ -81,6 +83,54 @@ func (p *Producer) Ping(ctx context.Context) error {
 		return errors.New("Kafka producer is not initialized")
 	}
 	return p.client.Ping(ctx)
+}
+
+// metadataRequester is satisfied by *kgo.Client. A client that does not
+// implement it (a test fake) skips the topic check.
+type metadataRequester interface {
+	Request(ctx context.Context, req kmsg.Request) (kmsg.Response, error)
+}
+
+// VerifyTopic fails fast when the destination topic is absent or has no
+// partitions. Ping only proves broker reachability; auto-topic-creation is off
+// cluster-side, so producing to a missing or mistyped topic silently drops every
+// datagram after franz-go's unknown-topic retries while the process looks
+// healthy. A startup metadata check turns that into a visible boot failure.
+func (p *Producer) VerifyTopic(ctx context.Context) error {
+	if p == nil || p.client == nil {
+		return errors.New("Kafka producer is not initialized")
+	}
+	requester, ok := p.client.(metadataRequester)
+	if !ok {
+		return nil
+	}
+	request := kmsg.NewPtrMetadataRequest()
+	request.AllowAutoTopicCreation = false
+	topic := kmsg.NewMetadataRequestTopic()
+	name := p.topic
+	topic.Topic = &name
+	request.Topics = append(request.Topics, topic)
+	raw, err := requester.Request(ctx, request)
+	if err != nil {
+		return fmt.Errorf("request Kafka topic metadata: %w", err)
+	}
+	response, ok := raw.(*kmsg.MetadataResponse)
+	if !ok {
+		return errors.New("unexpected Kafka metadata response")
+	}
+	for _, reported := range response.Topics {
+		if reported.Topic == nil || *reported.Topic != p.topic {
+			continue
+		}
+		if reported.ErrorCode != 0 {
+			return fmt.Errorf("Kafka topic %q metadata error code %d", p.topic, reported.ErrorCode)
+		}
+		if len(reported.Partitions) == 0 {
+			return fmt.Errorf("Kafka topic %q has no partitions", p.topic)
+		}
+		return nil
+	}
+	return fmt.Errorf("Kafka topic %q does not exist", p.topic)
 }
 
 // Send checks ctx before transferring ownership of payload to Kafka. Once

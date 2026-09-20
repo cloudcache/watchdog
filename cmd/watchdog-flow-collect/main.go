@@ -169,6 +169,12 @@ func run(opt options) error {
 	if err != nil {
 		return fmt.Errorf("connect RawFlow Kafka: %w", err)
 	}
+	verifyCtx, cancelVerify := context.WithTimeout(ctx, 10*time.Second)
+	err = producer.VerifyTopic(verifyCtx)
+	cancelVerify()
+	if err != nil {
+		return fmt.Errorf("verify RawFlow Kafka topic: %w", err)
+	}
 	inlet, err := flowstream.NewInlet(producer)
 	if err != nil {
 		return err
