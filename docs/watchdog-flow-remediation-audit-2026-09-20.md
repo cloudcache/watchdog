@@ -55,7 +55,7 @@
 
 ### 2.1 文档打了 [x] 但 HEAD 不成立
 
-1. PERF-Q1 "单元测试：验证 archive 使用 `source.*`…"——测试只断言 `source.device_id`、`source.classification_version` 两个谓词（`query_test.go:278-344`），另外五个未断言，且从不比较结果值。
+1. PERF-Q1 "单元测试：验证 archive 使用 `source.*`…"——~~测试只断言 `source.device_id`、`source.classification_version` 两个谓词，另外五个未断言~~ 已补齐：`TestCompileStorageV2PushesSelectiveFiltersBelowRawAggregation`（`query_test.go`）现断言全部七个 archive `source.*` 下推谓词（direction/category/business/target/device/exporter/classification_version）；**仍从不比较结果值**——前后结果相等断言需真实 CH 集成用例（见第 2 条），本轮未覆盖。
 2. PERF-Q1 "真实 ClickHouse 集成…覆盖 direction/category/**device**/snapshot/geo/version"——集成用例（`storage_v2_migration_integration_test.go:177-197`）无 device/target/exporter 过滤、全 raw（archive 下推未覆盖）、单条事实、只有正向匹配。
 3. PERF-Q1B "真实 ClickHouse 集成…验证**版本化** `_other`"——用例 3 个端点 TopN=1 → candidate_n=8 ≥ 基数，topK 天然精确；无候选漏掉、无多版本、无多桶、无 `include_other=false`。
 4. §8.3 "三条链已统一身份受限预算" / §9 "普通单遍 250M/16GiB"——境外用的是 500M/32GiB（`overseas.go:219-224`）。

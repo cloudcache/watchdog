@@ -334,7 +334,12 @@ func TestCompileStorageV2PushesSelectiveFiltersBelowRawAggregation(t *testing.T)
 		}
 	}
 	for _, required := range []string{
+		"AND source.business_direction IN ({direction_0:String})",
+		"AND source.category IN ({category_0:String})",
+		"AND source.business IN ({business_0:String})",
+		"AND source.target_id IN ({target_0:String})",
 		"AND source.device_id IN ({device_0:String})",
+		"AND source.exporter_id IN ({exporter_0:String})",
 		"AND source.classification_version IN ({classification_version_0:UInt32})",
 	} {
 		if !strings.Contains(body, required) {
