@@ -81,7 +81,7 @@ func (r *ReclassificationRunner) Ready(ctx context.Context) error {
 	found := false
 	query := ch.Query{
 		Body: `SELECT
-countIf(table='flow_reclassified_records' AND name IN ('reclassification_id','reclassification_generation','source_stream_id','kafka_partition','kafka_offset','record_index')) AS required_records,
+countIf(table='flow_reclassified_records' AND name IN ('reclassification_id','reclassification_generation','source_stream_id','kafka_partition','kafka_offset','record_index','estimated_bytes_scale_ppm')) AS required_records,
 countIf(table='flow_reclassification_generations' AND name IN ('reclassification_id','generation','record_count','raw_bytes','raw_packets','estimated_bytes','estimated_packets','estimated_valid_records')) AS required_markers
 FROM system.columns WHERE database=currentDatabase() AND table IN ('flow_reclassified_records','flow_reclassification_generations')`,
 		Result: proto.Results{{Name: "required_records", Data: &records}, {Name: "required_markers", Data: &markers}},
@@ -99,8 +99,8 @@ FROM system.columns WHERE database=currentDatabase() AND table IN ('flow_reclass
 	if err := r.executor.Do(ctx, query); err != nil {
 		return fmt.Errorf("verify ClickHouse reclassification schema: %w", err)
 	}
-	if !found || records[0] != 6 || markers[0] != 8 {
-		return fmt.Errorf("ClickHouse reclassification schema is incomplete (records=%d/6 markers=%d/8)", columnOrZero(records), columnOrZero(markers))
+	if !found || records[0] != 7 || markers[0] != 8 {
+		return fmt.Errorf("ClickHouse reclassification schema is incomplete (records=%d/7 markers=%d/8)", columnOrZero(records), columnOrZero(markers))
 	}
 	return nil
 }

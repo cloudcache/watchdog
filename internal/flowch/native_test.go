@@ -94,17 +94,20 @@ func TestOperationTimeoutExecutorBoundsUnboundedAndLongerContexts(t *testing.T) 
 }
 
 func TestNativeReadyRequiresStorageV2WithoutLegacyHashColumns(t *testing.T) {
-	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9}}
+	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 6, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9}}
 	if err := ready.Ready(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []readinessExecutor{
-		{requiredRecords: 4, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9},
-		{requiredRecords: 5, requiredReceipts: 11, requiredQuarantine: 8, requiredCounters: 9},
-		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 7, requiredCounters: 9},
-		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 8},
-		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9, forbiddenRecords: 1},
-		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9, forbiddenReceipts: 1},
+		// A pre-019 schema exposes the five identity columns but not
+		// estimated_bytes_scale_ppm; readiness must fail rather than let the
+		// worker crash-loop on the first insert.
+		{requiredRecords: 5, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9},
+		{requiredRecords: 6, requiredReceipts: 11, requiredQuarantine: 8, requiredCounters: 9},
+		{requiredRecords: 6, requiredReceipts: 12, requiredQuarantine: 7, requiredCounters: 9},
+		{requiredRecords: 6, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 8},
+		{requiredRecords: 6, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9, forbiddenRecords: 1},
+		{requiredRecords: 6, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9, forbiddenReceipts: 1},
 	} {
 		if err := (&NativeInserter{executor: test}).Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "not Storage V2") {
 			t.Fatalf("legacy/mixed schema was accepted: executor=%+v error=%v", test, err)

@@ -147,7 +147,8 @@ func (n *NativeInserter) Ready(ctx context.Context) error {
 	query := ch.Query{
 		Body: `SELECT
   countIf(table = 'flow_records' AND name IN (
-    'source_stream_id', 'kafka_partition', 'kafka_offset', 'record_index', 'ingest_generation'
+    'source_stream_id', 'kafka_partition', 'kafka_offset', 'record_index', 'ingest_generation',
+    'estimated_bytes_scale_ppm'
   )) AS required_records,
   countIf(table = 'flow_ingest_receipts' AND name IN (
     'source_stream_id', 'kafka_partition', 'kafka_offset', 'message_disposition',
@@ -188,8 +189,8 @@ WHERE database = currentDatabase() AND table IN ('flow_records', 'flow_ingest_re
 	if err := n.executor.Do(ctx, query); err != nil {
 		return fmt.Errorf("verify ClickHouse Flow Storage V2 schema: %w", err)
 	}
-	if !seen || requiredRecords[0] != 5 || requiredReceipts[0] != 12 || requiredQuarantine[0] != 8 || requiredCounters[0] != 9 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
-		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/5 receipts=%d/12 quarantine=%d/8 counters=%d/9 forbidden=%d/%d)",
+	if !seen || requiredRecords[0] != 6 || requiredReceipts[0] != 12 || requiredQuarantine[0] != 8 || requiredCounters[0] != 9 || forbiddenRecords[0] != 0 || forbiddenReceipts[0] != 0 {
+		return fmt.Errorf("ClickHouse Flow schema is not Storage V2 (records=%d/6 receipts=%d/12 quarantine=%d/8 counters=%d/9 forbidden=%d/%d)",
 			columnOrZero(requiredRecords), columnOrZero(requiredReceipts), columnOrZero(requiredQuarantine), columnOrZero(requiredCounters), columnOrZero(forbiddenRecords), columnOrZero(forbiddenReceipts))
 	}
 	return nil
