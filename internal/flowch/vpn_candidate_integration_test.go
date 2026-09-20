@@ -82,12 +82,18 @@ func TestRealClickHouseVPNCandidateRepairAndScoring(t *testing.T) {
 	after := runIntegrationVPNCandidates(t, ctx, runner, request, rules)
 	assertVPNCandidate(t, after, local, remote, 1_700, 900, 4, 2, 0.75, 2, true)
 
-	dropped := append([]flowworker.EnrichedRecord(nil), initialRecords...)
-	dropped = append(dropped, late)
-	for index := range dropped {
-		dropped[index].Disposition = flowdimension.DispositionDrop
+	droppedInitial := append([]flowworker.EnrichedRecord(nil), initialRecords...)
+	for index := range droppedInitial {
+		droppedInitial[index].Disposition = flowdimension.DispositionDrop
 	}
-	insertIntegrationBatch(t, ctx, native, integrationBatch(62, windowEnd.Add(7*time.Minute), dropped...))
+	droppedLate := late
+	droppedLate.Disposition = flowdimension.DispositionDrop
+	// Reprocess the original Kafka coordinates (offsets 60/61) as dropped with a
+	// later ingest generation so ReplacingMergeTree FINAL collapses to the DROP
+	// version; a fresh offset would leave the original count rows and the
+	// candidate would survive.
+	insertIntegrationBatch(t, ctx, native, integrationBatch(60, windowEnd.Add(7*time.Minute), droppedInitial...))
+	insertIntegrationBatch(t, ctx, native, integrationBatch(61, windowEnd.Add(7*time.Minute), droppedLate))
 	request.Generation = 3
 	request.GeneratedAt = windowEnd.Add(8 * time.Minute)
 	if err := materializer.Run(ctx, request); err != nil {
@@ -277,7 +283,7 @@ func assertVPNCandidate(t *testing.T, result flowvpn.ScoreWindowResult, local, r
 	if result.Generation != generation || result.RuleSetVersion != "vpn-integration-v1" || len(result.Candidates) != 1 {
 		t.Fatalf("VPN candidate result=%+v", result)
 	}
-	wantKey := sha256.Sum256([]byte("flow-it-tenant\x00" + local.String() + "\x00" + remote.String()))
+	wantKey := sha256.Sum256([]byte(local.String() + "\x00" + remote.String()))
 	candidate := result.Candidates[0]
 	if candidate.Candidate.ConversationKey != hex.EncodeToString(wantKey[:]) ||
 		candidate.Candidate.LocalIP != local || candidate.Candidate.RemoteIP != remote ||
