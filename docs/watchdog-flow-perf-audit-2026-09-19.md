@@ -153,7 +153,7 @@
 ### Phase 1 · 不改变统计语义的查询修复
 
 1. R4.6：把设备、方向、业务、版本等条件显式下推到 raw/archive 各分支，并以 `EXPLAIN indexes=1` 和 `read_rows` 回归。
-2. R4.3：top-N 改两段式，补 external-sort/memory/deadline 护栏。
+2. R4.3：top-N 改两段式，补 external-sort/memory/deadline 护栏。（现状，见 remediation §2.1-6：两段式仅落地**端点候选路径**；`joint.go:411-429` 的通用 `dense_rank` top-N 尚未改。）
 3. R4.4/R4.5：把方向纳入受控联合查询，一次扫描返回流入/流出；端点报表取消分块 N+1。
 4. R4.1/R4.2：境外路径改成单遍聚合、原生 IPv6 分组和有界时间窗；保持 `uniqExact`，除非产品批准近似误差。
 5. R4.7/R4.12/R4.13：合并 facet 扫描、请求内只解析一次 archive boundary、补齐同步查询护栏。相同请求先用 singleflight；缓存需另有完整 key/失效设计。
@@ -329,7 +329,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 过滤下推和落盘仍不足以闭环端点查询：同设备当前 24h 范围包含 66,210,292 条事实和 18,374,764 个不同目标 IP；全库为 69,720,428 条事实和 19,431,102 个不同目标 IP。按小时+IP 精确聚合再窗口排名的只读探针即使启用 external group/sort 仍在 15 秒超时。因此源/目的 IP 的 raw-only Storage V2 路径改为两遍有界算法：第一遍以 `topKWeighted(TopN*8)` 获取固定大小候选，第二遍只读取当前请求指标并计算候选的精确桶值，同时把非候选及候选中未进入最终 Top N 的事实按版本汇入 `_other`。该路径必须明确选择 device、target 或 exporter；未限定身份的查询仍保留 50M rows/4GiB read 上限。端点候选两遍读取使用独立的 400M 总读行、16GiB 累计列读取上限；普通身份受限单遍查询仍为 200M/8GiB，二者的内存均为 4GiB、执行时限均为 15s。真实 ClickHouse 集成验证 Top N、`_other`、records 和完整度守恒；生产同形只读探针在 71,819,059 条设备事实、约 1,986 万目标 IP 的 24h 范围内用时 4.522s。2026-09-19 数据增长后，同形查询累计读取 248.91M 行，证明双扫描不能复用单遍 200M 门禁；拆分预算后生产重放通过。
 
-生产复测进一步确认“每个 Flow 页面都报 resource limit”并非端点算法单点问题：所选设备的 24h 查询在 `FINAL` 前需要读取约 114,270,000 条物理行，而通用聚合、联合维度和境外三条编译链仍各自使用 50M 行字面量，查询在读取 0 行时即被 ClickHouse 拒绝。三条链现已统一身份受限预算：只有请求明确携带 device/target/exporter 且实际访问 raw facts 时才使用扩大后的读取预算，未选设备的全局查询仍为 50M rows/4GiB read。2026-09-19 生产失败样本进一步读取 179.44M rows/10.66GiB，但仅消耗 236.91MiB 内存、运行 6.5s，证明旧的 200M rows/8GiB 是读取字节误杀而非真实内存过载。因此单遍身份受限查询调整为 250M rows/16GiB、端点两遍查询调整为 500M rows/32GiB，二者执行窗口为 30s；4GiB 内存、1GiB external group/sort、结果行上限和无身份范围的 50M/4GiB/15s 保护保持不变。Storage V2 通用聚合同时改为仅投影和汇总当前指标列，不再为一个 `estimated_bps` 请求读取并聚合 raw/estimated 字节和包数四套计数器。
+生产复测进一步确认“每个 Flow 页面都报 resource limit”并非端点算法单点问题：所选设备的 24h 查询在 `FINAL` 前需要读取约 114,270,000 条物理行，而通用聚合、联合维度和境外三条编译链仍各自使用 50M 行字面量，查询在读取 0 行时即被 ClickHouse 拒绝。三条链现已统一身份受限预算：只有请求明确携带 device/target/exporter 且实际访问 raw facts 时才使用扩大后的读取预算，未选设备的全局查询仍为 50M rows/4GiB read。2026-09-19 生产失败样本进一步读取 179.44M rows/10.66GiB，但仅消耗 236.91MiB 内存、运行 6.5s，证明旧的 200M rows/8GiB 是读取字节误杀而非真实内存过载。因此单遍身份受限查询调整为 250M rows/16GiB、端点两遍查询调整为 500M rows/32GiB，二者执行窗口为 30s；4GiB 内存、1GiB external group/sort、结果行上限和无身份范围的 50M/4GiB/15s 保护保持不变。Storage V2 通用聚合同时改为仅投影和汇总当前指标列，不再为一个 `estimated_bps` 请求读取并聚合 raw/estimated 字节和包数四套计数器。**（校正，见 remediation §2.1-4/5：境外链实际使用端点档 `500M/32GiB`（`overseas.go:219-224`）而非普通单遍 `250M/16GiB`，"三条链统一身份受限预算"不成立；"仅投影当前指标"仅对 `query.go` 成立，联合编译器 `joint.go:406-409` 与境外混合路径 `overseas.go:462-465` 仍汇总四套计数器。）**
 
 同一个 Kafka offset 窄窗口（11,000,000～11,001,000）返回相同的 3,889 条事实时：
 
@@ -356,7 +356,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 
 - [x] **设计/编码**：将 `business_direction/category/business/target/device/exporter/classification_version` 显式下推到 archive 与 raw 分支；`dimension_value/snapshot/geo` 等聚合后语义保留在 `UNION ALL` 之后。
 - [x] **单元测试**：验证 archive 使用 `source.*`、raw 使用原生列或与既有分组一致的转换；验证聚合后过滤没有被错误下推。
-- [x] **真实 ClickHouse 集成**：从 Storage V2 迁移到当前完整 schema 后，覆盖 direction/category/device/snapshot/geo/version 的 raw 查询向量并核对结果。
+- [~] **真实 ClickHouse 集成**（部分，见 remediation §2.1-2）：`storage_v2_migration_integration_test.go` 覆盖 direction/category 但**无 device/target/exporter 过滤、全 raw（archive 下推未覆盖）、单条事实、仅正向匹配**；未做多维向量与结果核对。
 - [ ] **性能验收**：生产同参数运行 `EXPLAIN indexes=1` 和 `query_log` 前后对照，记录 `read_rows/read_bytes/P95/memory_usage`；无明确收益不得把该项写成性能完成。
 - [ ] **提交门禁**：代码、单元、真实 CH 回归与本文证据作为一个独立提交，不夹带无关 UI/架构改动。
 
@@ -365,7 +365,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [x] **故障证据**：固定两条生产失败 query，确认不是结果行过多，而是高基数端点聚合在 `AggregatingTransform` 内达到 4GiB；同时确认生产仍使用过滤后置的旧 SQL。
 - [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。明确选择 device/target/exporter 的普通单遍 raw 查询使用 250M rows/16GiB read；端点候选两遍查询独立使用 500M/32GiB；两者执行窗口为 30s。未限定身份的全局查询继续保留 50M/4GiB/15s fail-closed 上限，4GiB memory 和结果行上限不变。
 - [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值；端点编译器断言两遍扫描均先应用设备过滤、候选数固定、只投影当前指标且无 `dense_rank` 高基数状态；未选择设备或带显式 IP/version 残余筛选时仍回退普通精确门禁路径。
-- [x] **真实 ClickHouse 集成**：隔离数据库写入三个目标 IP，验证候选查询的 Top 1 精确值、版本化 `_other`、records 和 bucket completeness 守恒。
+- [~] **真实 ClickHouse 集成**（部分，见 remediation §2.1-3）：用例 3 端点 TopN=1 → candidate_n=8 ≥ 基数，topK 天然精确；**未证明候选漏掉、多版本 `_other`、多桶、`include_other=false`**。
 - [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；同设备 24h 同形只读探针已在 4.522s 完成，仍需经认证 API 重放并记录 `system.query_log` 的 `read_rows/read_bytes/memory_usage/duration`。
 - [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。普通单遍查询仍超过 250M/16GiB/30s、端点两遍查询仍超过 500M/32GiB/30s，或任何超过 50M 的全局查询不得再抬同步上限，应进入热查询层或异步导出工作包。
 
@@ -420,7 +420,7 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [x] **Kafka 根因**：`watchdog.flow.raw-v1` 有 12 分区，单 exporter/source key 按设计保持分区有序，因此活跃流量集中到 partition 11。Topic 无动态 retention 配置，其 1GiB segment 累积到 24–25GiB；consumer lag 仅数百，不是 worker 积压。
 - [x] **一次性 Kafka 清理**：在确认 consumer offset 后将 partition 11 low watermark 推进到 `40262989`，旧 segment 清理后该目录降至约 1.3GiB，根文件系统从 99–100% 降至 41%。本次不擅自设置永久 retention；持续保留窗必须同备份/恢复和容错时间一起冻结。
 - [x] **错误 Flow 历史清理**：在 v4 校准事实持续入库且三服务 active 后，只删除 `registry_version < 4` 的 Flow facts 和对应旧 receipts；SNMP 与 sFlow counter 真值保留。`flow_records` 从 14,065,259 行降至 1,086,644 行，剩余行全部为 v4/1,027,000 ppm/校准标志。
-- [x] **24h 真实验收**：实际 Flow 设备 `D6ETD4SPG7Z7YPGSQ06TY4C1JG` 上，六分类、省份、运营商、协议均在 150–170ms 返回，源/目的 IP 在 230ms 内，跨境约 134ms，均不再触发 ClickHouse resource limit。
+- [~] **24h 真实验收**（在删表到 1.09M 行之后测得，见 remediation §2.1-8）：实际 Flow 设备 `D6ETD4SPG7Z7YPGSQ06TY4C1JG` 上，六分类、省份、运营商、协议均在 150–170ms 返回，源/目的 IP 在 230ms 内，跨境约 134ms，均不再触发 ClickHouse resource limit。**此结果在 `flow_records` 从 14M 删至 1,086,644 行后测得，不能代表 66M/18M 规模行为。**
 
 ## 10. 审计结论
 
