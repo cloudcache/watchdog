@@ -28,7 +28,7 @@ func TestClassifyCategoryUsesOrderedSixDimensionRules(t *testing.T) {
 		{name: "off-net-in-province", direction: DirectionOut, remote: GeoInfo{Country: "CN", AdminCode: "330100", ISPID: 200}, want: CategoryOffNetInProvince},
 		{name: "off-net-cross-province", direction: DirectionOut, remote: GeoInfo{Country: "CN", AdminCode: "320100", ISPID: 200}, want: CategoryOffNetCrossProvince},
 		{name: "missing-home-profile", direction: DirectionOut, remote: GeoInfo{Country: "CN", AdminCode: "330100", ISPID: 100}, mutate: func(profile *HomeProfile) { profile.ISPIDs = nil }, want: CategoryUnknown},
-		{name: "on-net-city-unavailable", direction: DirectionOut, remote: GeoInfo{Country: "CN", AdminCode: "330000", ISPID: 100}, want: CategoryUnknown},
+		{name: "on-net-city-unavailable", direction: DirectionOut, remote: GeoInfo{Country: "CN", AdminCode: "330000", ISPID: 100}, want: CategoryOnNetCrossCity},
 		{name: "hmt-overseas-policy", direction: DirectionOut, remote: GeoInfo{Country: "HK", ISPID: 200}, want: CategoryOverseas},
 		{name: "hmt-domestic-policy", direction: DirectionOut, remote: GeoInfo{Country: "HK", ISPID: 200}, mutate: func(profile *HomeProfile) { profile.OverseasIncludesHMT = false }, want: CategoryOffNetCrossProvince},
 		{name: "internal", direction: DirectionInternal, want: CategoryInternal},

@@ -283,7 +283,11 @@ func ClassifyCategory(direction BusinessDirection, remote GeoInfo, home HomeProf
 	remoteCity, remoteCityOK := cityPart(adminCode)
 	homeCity, homeCityOK := cityPart(home.City)
 	if !remoteCityOK || !homeCityOK {
-		return CategoryUnknown
+		// On-net within the home province is already established; only the
+		// same/cross-city split is indeterminate (a province-level admin code on
+		// one side). Keep the traffic in the on-net family as cross-city rather
+		// than discarding real on-net traffic to unknown.
+		return CategoryOnNetCrossCity
 	}
 	if remoteCity == homeCity {
 		return CategoryOnNetLocalCity
@@ -350,7 +354,11 @@ func ClassifyCategoryFromEndpoints(direction BusinessDirection, local, remote Ge
 	remoteCity, remoteCityOK := cityPart(remoteAdminCode)
 	localCity, localCityOK := cityPart(localAdminCode)
 	if !remoteCityOK || !localCityOK {
-		return CategoryUnknown
+		// On-net within the home province is already established; only the
+		// same/cross-city split is indeterminate (a province-level admin code on
+		// one side). Keep the traffic in the on-net family as cross-city rather
+		// than discarding real on-net traffic to unknown.
+		return CategoryOnNetCrossCity
 	}
 	if remoteCity == localCity {
 		return CategoryOnNetLocalCity
