@@ -124,6 +124,58 @@ func TestConsumerReturnsDurableOffsetCommitFailure(t *testing.T) {
 	}
 }
 
+func TestConsumerDataLossIsRecoverableAndKeepsHealthyRecords(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// franz-go reports data loss (committed offset outside a truncated/reset log)
+	// as a partition fetch error, having already reset to a valid offset. The
+	// worker must treat it as recoverable and keep processing healthy partitions,
+	// not exit the process and crash-loop.
+	healthy := &kgo.Record{Topic: "watchdog.flow.raw-v1", Partition: 5, Offset: 10, Value: []byte("ok")}
+	fetches := testPartitionFetches(
+		kgo.FetchPartition{Partition: 3, Err: &kgo.ErrDataLoss{Topic: "watchdog.flow.raw-v1", Partition: 3, ConsumedTo: 24255050, ResetTo: 0}},
+		kgo.FetchPartition{Partition: 5, Records: []*kgo.Record{healthy}},
+	)
+	client := &fakeConsumerClient{fetches: fetches}
+	var lossSeen atomic.Int64
+	consumer := newConsumerWithClient(client, func(error) { lossSeen.Add(1) })
+	err := consumer.Run(ctx, func(_ context.Context, record *kgo.Record) error {
+		if record == healthy {
+			cancel()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("data loss must not exit the worker: %v", err)
+	}
+	if len(client.committed) != 1 || client.committed[0] != healthy {
+		t.Fatalf("healthy record not committed alongside data loss: %+v", client.committed)
+	}
+	if got := consumer.Stats(); got.DataLoss != 1 || got.Errors != 0 {
+		t.Fatalf("data loss must be counted separately from fatal errors: %+v", got)
+	}
+	if lossSeen.Load() != 1 {
+		t.Fatalf("onError not invoked for data loss: %d", lossSeen.Load())
+	}
+}
+
+func TestConsumerNonDataLossFetchErrorStillFatal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A genuine (non-data-loss) fetch error must still abort so systemd/operators
+	// see it, rather than being silently swallowed.
+	fetches := testPartitionFetches(kgo.FetchPartition{Partition: 3, Err: errors.New("broker unavailable")})
+	client := &fakeConsumerClient{fetches: fetches}
+	consumer := newConsumerWithClient(client, nil)
+	err := consumer.Run(ctx, func(context.Context, *kgo.Record) error { return nil })
+	if err == nil {
+		t.Fatal("non-data-loss fetch error must remain fatal")
+	}
+	if got := consumer.Stats(); got.Errors != 1 || got.DataLoss != 0 {
+		t.Fatalf("unexpected stats: %+v", got)
+	}
+}
+
 func TestConsumerSerializesEachPartitionAndRunsPartitionsConcurrently(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

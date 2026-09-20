@@ -55,6 +55,7 @@ type consumerStats struct {
 	records           atomic.Uint64
 	bytes             atomic.Uint64
 	errors            atomic.Uint64
+	dataLoss          atomic.Uint64
 	rebalances        atomic.Uint64
 	lostPartitions    atomic.Uint64
 	polls             atomic.Uint64
@@ -72,6 +73,7 @@ type ConsumerStats struct {
 	Records            uint64
 	Bytes              uint64
 	Errors             uint64
+	DataLoss           uint64
 	Rebalances         uint64
 	LostPartitions     uint64
 	AssignedPartitions uint64
@@ -261,11 +263,27 @@ func (c *Consumer) run(ctx context.Context, handler partitionHandler) error {
 		if fetchErrors := fetches.Errors(); len(fetchErrors) > 0 {
 			errorsFound := make([]error, 0, len(fetchErrors))
 			for _, fetchError := range fetchErrors {
+				// Data loss means our committed offset fell outside the (truncated
+				// or reset) log; franz-go has already reset the partition to the
+				// last valid offset and resumes from there. Treat it as a
+				// recoverable warning instead of exiting, so a truncated topic
+				// cannot crash-loop the worker. Records on healthy partitions in
+				// this same fetch still get processed below.
+				var dataLoss *kgo.ErrDataLoss
+				if errors.As(fetchError.Err, &dataLoss) {
+					c.stats.dataLoss.Add(1)
+					if c.onError != nil {
+						c.onError(fmt.Errorf("recoverable Kafka data loss %s[%d]: consumed to %d, reset to %d", dataLoss.Topic, dataLoss.Partition, dataLoss.ConsumedTo, dataLoss.ResetTo))
+					}
+					continue
+				}
 				errorsFound = append(errorsFound, fmt.Errorf("fetch %s[%d]: %w", fetchError.Topic, fetchError.Partition, fetchError.Err))
 			}
-			c.stats.errors.Add(uint64(len(errorsFound)))
-			c.client.AllowRebalance()
-			return errors.Join(errorsFound...)
+			if len(errorsFound) > 0 {
+				c.stats.errors.Add(uint64(len(errorsFound)))
+				c.client.AllowRebalance()
+				return errors.Join(errorsFound...)
+			}
 		}
 		durableRecords, processErr := c.processFetches(ctx, fetches, handler)
 		if len(durableRecords) > 0 {
@@ -412,6 +430,7 @@ func (c *Consumer) Stats() ConsumerStats {
 		Records:           c.stats.records.Load(),
 		Bytes:             c.stats.bytes.Load(),
 		Errors:            c.stats.errors.Load(),
+		DataLoss:          c.stats.dataLoss.Load(),
 		Rebalances:        c.stats.rebalances.Load(),
 		LostPartitions:    c.stats.lostPartitions.Load(),
 		Polls:             c.stats.polls.Load(),
