@@ -38,7 +38,10 @@ func TestRealClickHouseAddressSetSemanticsAndLimits(t *testing.T) {
 	// The later physical row for record 1 must replace its old counters under
 	// FINAL before membership predicates and sums are evaluated.
 	replacement := integrationAddressSetRecord(1, bucket.Add(10*time.Second), snapshot, local, both, 150)
-	insertIntegrationBatch(t, ctx, native, integrationBatch(31, bucket.Add(3*time.Minute), replacement))
+	// Replay the original Kafka coordinate (offset 30, record_index 1) with a later
+	// ingest generation so ReplacingMergeTree FINAL collapses to this row; a fresh
+	// offset is a distinct record, not a replacement, and both would be summed.
+	insertIntegrationBatch(t, ctx, native, integrationBatch(30, bucket.Add(3*time.Minute), replacement))
 
 	runner, err := flowquery.NewAddressSetRunner(native.executor)
 	if err != nil {
@@ -96,8 +99,8 @@ func integrationAddressSetSnapshot(t *testing.T, effectiveFrom time.Time) *flowd
 			{ID: "remote", CIDR: "203.0.113.0/24", Labels: map[string]string{"provider": "test"}},
 		},
 		AddressSets: []flowdimension.AddressSetDefinition{
-			{ID: "set-a", Members: []string{"203.0.113.0/25"}, MatchDirection: "both", Enabled: true},
-			{ID: "set-b", Members: []string{"203.0.113.64/26"}, MatchDirection: "both", Enabled: true},
+			{ID: "set-a", Name: "Set A", Members: []string{"203.0.113.0/25"}, MatchDirection: "both", Enabled: true},
+			{ID: "set-b", Name: "Set B", Members: []string{"203.0.113.64/26"}, MatchDirection: "both", Enabled: true},
 		},
 	}, flowdimension.CompileLimits{})
 	if err != nil {
