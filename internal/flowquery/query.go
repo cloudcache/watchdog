@@ -497,6 +497,23 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		endpointCandidateQuery = archiveThrough.Equal(from) && identityScopedRawQuery &&
 			(request.Dimension == DimensionSourceIP || request.Dimension == DimensionDestinationIP) &&
 			len(residualFilters) == 0
+		// The endpoint report's per-direction stage passes the already-selected
+		// top-N IPs as dimension values, which keeps it off the candidate path and
+		// on the plain raw GROUP BY. dimension_value equals toString(src_ip/dst_ip),
+		// so add that same predicate to the raw branch's WHERE: the planner prunes
+		// the scan to those IPs before aggregating instead of grouping every
+		// endpoint first. It is redundant with the post-UNION dimension_value
+		// residual (kept as the archive/raw contract and correctness backstop), so
+		// results are unchanged. Limited to the scalar IP dimensions.
+		if len(request.Filters.DimensionValues) > 0 &&
+			(request.Dimension == DimensionSourceIP || request.Dimension == DimensionDestinationIP) {
+			pushedFilters, pushedParams, pushErr := rawDimensionValuePredicate(dimensionExpression, request.Filters.DimensionValues)
+			if pushErr != nil {
+				return Compiled{}, pushErr
+			}
+			rawFilters = append(rawFilters, pushedFilters...)
+			parameters = append(parameters, pushedParams...)
+		}
 		if endpointCandidateQuery {
 			candidateCount := uint64(request.TopN) * endpointCandidateMultiplier
 			parameters = append(parameters, uintParameter("candidate_n", candidateCount))
@@ -683,6 +700,31 @@ func compileFiltersWithColumns(filters Filters, columns aggregateFilterColumns) 
 		conditions = append(conditions, fmt.Sprintf("AND %s IN (%s)", columns.classificationVersion, strings.Join(placeholders, ", ")))
 	}
 	return conditions, parameters, nil
+}
+
+// rawDimensionValuePredicate builds a raw-branch predicate that filters scanned
+// rows by the requested dimension values before the GROUP BY. It is only used
+// for the scalar IP dimensions, where the raw dimension expression
+// (toString(src_ip/dst_ip)) equals the post-UNION dimension_value, so the
+// predicate is redundant with the residual dimension_value filter and cannot
+// change results — it only prunes the raw scan. Parameters use a distinct prefix
+// so they never collide with the residual's dimension_value bindings.
+func rawDimensionValuePredicate(expression string, values []string) ([]string, []proto.Parameter, error) {
+	normalized, err := normalizeStrings("filters.dimension_values", values, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(normalized) == 0 {
+		return nil, nil, nil
+	}
+	placeholders := make([]string, 0, len(normalized))
+	parameters := make([]proto.Parameter, 0, len(normalized))
+	for index, value := range normalized {
+		key := fmt.Sprintf("raw_dim_value_%d", index)
+		placeholders = append(placeholders, fmt.Sprintf("{%s:String}", key))
+		parameters = append(parameters, stringParameter(key, value))
+	}
+	return []string{fmt.Sprintf("AND %s IN (%s)", expression, strings.Join(placeholders, ", "))}, parameters, nil
 }
 
 // compileStorageV2Filters pushes predicates that exist on both archive rows and

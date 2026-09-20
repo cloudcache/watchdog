@@ -491,3 +491,39 @@ func setting(query ch.Query, key string) string {
 	}
 	return ""
 }
+
+func TestCompileStorageV2PushesIPDimensionValuesIntoRawScan(t *testing.T) {
+	// The endpoint report's per-direction stage passes selected IP dimension
+	// values; they must be pushed into the raw scan (redundantly with the
+	// post-UNION residual) so the plain raw path does not group every endpoint.
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.Interval = time.Hour
+	request.Dimension = DimensionSourceIP
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From
+	request.Filters = Filters{
+		DeviceIDs:       []string{"device-a"},
+		DimensionValues: []string{"203.0.113.1", "198.51.100.2"},
+	}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := compiled.Query.Body
+	rawStart := strings.Index(body, "FROM flow_records FINAL")
+	rawEnd := strings.Index(body[rawStart:], "GROUP BY bucket")
+	if rawStart < 0 || rawEnd < 0 {
+		t.Fatalf("raw aggregation not found:\n%s", body)
+	}
+	rawWhere := body[rawStart : rawStart+rawEnd]
+	if !strings.Contains(rawWhere, "AND toString(src_ip) IN ({raw_dim_value_0:String}, {raw_dim_value_1:String})") {
+		t.Fatalf("IP dimension values were not pushed into the raw scan:\n%s", rawWhere)
+	}
+	// The post-UNION residual stays as the archive/raw contract and backstop.
+	if !strings.Contains(body, "AND dimension_value IN ({dimension_value_0:String}") {
+		t.Fatalf("post-UNION dimension_value residual missing:\n%s", body)
+	}
+}
