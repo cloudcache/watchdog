@@ -300,6 +300,21 @@ const overseasLegacySourceSQL = `WITH
 // performs one physical flow_records scan. Geo cardinality is bounded by the
 // published country/region catalog; the runner applies Top N and additive
 // _other grouping without another ClickHouse read.
+//
+// Two properties differ intentionally from the mixed archive+raw plan, both a
+// consequence of deriving remote and local endpoints from the same scan rather
+// than from separate src_ip/dst_ip aggregate rows:
+//   - endpoint_consistent is a constant 1. The mixed plan cross-checks that the
+//     independently aggregated local and remote sides agree (metric, received,
+//     unknown, quality) and rejects the row otherwise. On a single scan the two
+//     sides are the same rows, so they cannot diverge; the runner still enforces
+//     == 1 as a schema guard.
+//   - Per-family observed_local_hosts is keyed by the overseas (remote) family:
+//     a KPI row for ip_family='ipv4' counts distinct local hosts of flows whose
+//     remote endpoint is IPv4. The mixed plan keys local hosts by the local IP's
+//     own family. The two agree for same-family flows and for ip_family='all';
+//     they differ only for v4<->v6 flows, where neither per-family split is more
+//     than advisory.
 const overseasStorageV2RawSQL = `WITH
   raw_prepared AS (
     SELECT
