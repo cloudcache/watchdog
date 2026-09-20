@@ -382,7 +382,19 @@ A 组止损与相邻项已逐个提交（`main`，`Co-Authored-By: Claude Opus 4
 
 B/C/D/E 组（发布闭环、幂等一致性、性能、文档）其余项均**未做**：或受 `server.go`/worker `main.go` 并行占用阻塞，或需真实 Kafka/CH/registry 与压测门禁（见 §7 复核、§8）。所有 ✅ 项 build/vet/`-race`/单测通过；标"生产 EXPLAIN/DSN/压测"者仅完成正确性，量化收益仍需线上验证。
 
-**OOM / 越界 / zero-copy 收口：** OOM 的两个 Critical（解码器毒丸循环 `5e822705`、worker 永久错误崩溃循环 `02177a20`）与 collector 生产者缓冲无界（`d33ebc9d`）已修，systemd `MemoryMax` 作 backstop；worker 单 fetch 瞬时内存（`FetchMaxBytes`×并发分区）仅有 backstop，收缩需压测。越界：快路径本无可达越界（边界检查完备），缺口是 fuzz 覆盖，已补（`4e9dd9bb`）。zero-copy：契约本身**无缺陷**（§4.2/§5.3 已确认端到端正确）；`recvmmsg`、原地信封编码、去重 `ExporterKey`、`EnrichBatchInto` arena、`[16]byte` 地址、列构建器复用等均为 **Phase 2 性能优化**，需 pprof/alloc/pps 前后基准与回退开关，且部分触及并行占用的 worker `main.go`，本轮**未做**。
+**OOM / 越界 / zero-copy 收口：** OOM 的两个 Critical（解码器毒丸循环 `5e822705`、worker 永久错误崩溃循环 `02177a20`）与 collector 生产者缓冲无界（`d33ebc9d`）已修，systemd `MemoryMax` 作 backstop；worker 单 fetch 瞬时内存（`FetchMaxBytes`×并发分区）仅有 backstop，收缩需压测。越界：快路径本无可达越界（边界检查完备），缺口是 fuzz 覆盖，已补（`4e9dd9bb`）。zero-copy：契约本身**无缺陷**（§4.2/§5.3 已确认端到端正确）；采集器侧已去掉**每 datagram 两次分配**——重复 `ExporterKey` 校验 + `RawFlow` 信封结构，改用 `sync.Pool` 复用信封并在 Marshal 后立即归还（`1005b5e3`，`BenchmarkInletSend` 为回归基准，`-race` 干净）。
+
+### 表列各项处理情况（2026-09-20）
+
+| 表列问题 | 状态 | 说明 |
+|---|---|---|
+| CH 连接：hub 池硬编码 8/1、无 TLS、无 `Stat()`；拆交互/批处理池 | ⛔ 阻塞 | 全在 `server.go`（并行会话占用，`HEAD:server.go:390` 仍 `MaxConns: 8`）；不能安全改 |
+| 连接复用：每块 2–3 次 `Do`（各自 Acquire/UUID/往返）；整个 `Write` 钉一个 client、receipts 按 chunk 合并 | ◐ 未做 | `native.go` 三次 `Do` 仍在（已核）；改动在干净文件，但属写路径 + 连接持有语义变更，需 DSN 集成验证 part 率/延迟收益 |
+| zero-copy：采集器每 datagram 5 拷贝 + 11–13 分配；worker `EnrichBatchInto` 未调用、每记录 3 堆分配 + 4KB 按值 | ◐ 部分 | 采集器 2 分配已去（`1005b5e3`）；其余（`SourceAddress`/key/闭包、worker `EnrichBatchInto` arena、`[16]byte` 地址）需基准 + 池化，且 `EnrichBatchInto` 与"整组丰富化后再写"模型冲突（需 EnrichedBatch 池，写路径风险），未做 |
+| 多线程：`-sockets` 默认 1（已核）、无 `recvmmsg`；worker 每分区两级流水线 | ⛔ 未做 | 需真实 Kafka 负载压测；per-partition pipeline 是 `consumer.go` 重构，盲改风险高（数据丢失/卡分区） |
+| 最短路径：每块 ~100 列对象 + 30 LC 字典重建（估 30–45% CPU）；loopback 仍 LZ4 | ⛔ 未做 | `native.go`（干净）但列复用是并发写路径，需 `sync.Pool` + DSN 验证正确性（错误 = 写错数据）；loopback 关 LZ4 是微优化，审计要求 CPU/解压基准 |
+
+结论：本轮把 **无歧义、可本地验证** 的 zero-copy/越界/OOM 项做完（采集器信封分配、fuzz、`MaxBufferedBytes`）；其余（hub 池、连接复用合批、列构建器复用、per-partition pipeline、`recvmmsg`）要么受 `server.go`/worker `main.go` 并行占用阻塞，要么是写路径/并发/系统调用改动需真实 Kafka+CH 压测与前后基准门禁——不在无验证环境下盲改。
 
 ---
 
