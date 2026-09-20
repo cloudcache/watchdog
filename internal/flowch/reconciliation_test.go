@@ -35,6 +35,54 @@ func TestCompareIngestAuditAcceptsAuditableNonPersistedMessageWithoutFacts(t *te
 	}
 }
 
+func TestCompareIngestAuditAcceptsCounterOnlyPersistedReceipt(t *testing.T) {
+	// A counter-only sFlow datagram persists interface counters with zero
+	// flow-record rows. It must reconcile cleanly, not report missing_records.
+	receipt := IngestAuditReceipt{
+		SourceMessageKey:   SourceMessageKey{SourceStreamID: "stream-a", KafkaPartition: 0, KafkaOffset: 7},
+		KafkaTopic:         "watchdog.flow.raw-v1",
+		Disposition:        IngestDispositionPersisted,
+		CounterRecordCount: 5,
+		Counters:           IngestAuditCounters{RecordCount: 0},
+	}
+	comparison, err := CompareIngestAudit([]IngestAuditReceipt{receipt}, nil, ReconciliationCompareLimits{MaxBatches: 10, MaxFacts: 10})
+	if err != nil {
+		t.Fatalf("counter-only persisted receipt rejected: %v", err)
+	}
+	if len(comparison.Mismatches) != 0 {
+		t.Fatalf("counter-only persisted receipt must not be a mismatch, got %+v", comparison.Mismatches)
+	}
+
+	// A persisted receipt that claims flow records but has none is still a loss.
+	receipt.Counters.RecordCount = 3
+	comparison, err = CompareIngestAudit([]IngestAuditReceipt{receipt}, nil, ReconciliationCompareLimits{MaxBatches: 10, MaxFacts: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(comparison.Mismatches) != 1 || comparison.Mismatches[0].Reason != MismatchMissingRecords {
+		t.Fatalf("expected missing_records when flow records are claimed, got %+v", comparison.Mismatches)
+	}
+}
+
+func TestClassifyCounterOnlyReceiptScannerParity(t *testing.T) {
+	// The streaming scanner's !hasFacts branch must mirror the comparator: a
+	// persisted receipt with zero flow records and no facts is not a loss.
+	counterOnly := IngestAuditReceipt{
+		SourceMessageKey:   SourceMessageKey{SourceStreamID: "stream-a", KafkaPartition: 0, KafkaOffset: 7},
+		KafkaTopic:         "watchdog.flow.raw-v1",
+		Disposition:        IngestDispositionPersisted,
+		CounterRecordCount: 5,
+	}
+	if err := validateAuditReceipt(counterOnly); err != nil {
+		t.Fatalf("counter-only receipt must be valid: %v", err)
+	}
+	empty := counterOnly
+	empty.CounterRecordCount = 0
+	if err := validateAuditReceipt(empty); err == nil {
+		t.Fatal("persisted receipt with neither flow nor counter records must be invalid")
+	}
+}
+
 func TestCompareIngestAuditMismatchPriority(t *testing.T) {
 	receipts, facts := simpleAuditFixture()
 	tests := []struct {

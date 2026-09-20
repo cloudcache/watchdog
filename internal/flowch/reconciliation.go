@@ -57,7 +57,12 @@ type IngestAuditReceipt struct {
 	SourceMessageKey
 	KafkaTopic  string
 	Disposition IngestMessageDisposition
-	Counters    IngestAuditCounters
+	// CounterRecordCount is the number of sFlow interface-counter records the
+	// message persisted. It is tracked separately from Counters (which describes
+	// flow-record conservation) so a counter-only datagram — zero flow records,
+	// a positive counter count — is not mistaken for lost records.
+	CounterRecordCount uint64
+	Counters           IngestAuditCounters
 }
 
 type IngestAuditFact struct {
@@ -167,7 +172,13 @@ func CompareIngestAudit(receipts []IngestAuditReceipt, facts []IngestAuditFact, 
 			continue
 		}
 		if len(messageFacts) == 0 {
-			comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchMissingRecords, receipt, IngestAuditCounters{}))
+			// A persisted receipt with zero flow records is a counter-only message:
+			// sFlow interface counters were stored without any flow-record rows, so
+			// absent facts are expected, not a loss. Only a receipt that claims flow
+			// records but has none is a genuine missing-records mismatch.
+			if receipt.Counters.RecordCount > 0 {
+				comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchMissingRecords, receipt, IngestAuditCounters{}))
+			}
 			continue
 		}
 		actual, topic, contiguous, err := summarizeAuditFacts(messageFacts)
@@ -207,10 +218,11 @@ func validateAuditReceipt(receipt IngestAuditReceipt) error {
 	if !validIngestDisposition(receipt.Disposition) {
 		return errors.New("receipt disposition is invalid")
 	}
-	if receipt.Disposition == IngestDispositionPersisted && receipt.Counters.RecordCount == 0 {
-		return errors.New("persisted receipt count is invalid")
+	if receipt.Disposition == IngestDispositionPersisted && receipt.Counters.RecordCount+receipt.CounterRecordCount == 0 {
+		return errors.New("persisted receipt must carry flow or counter records")
 	}
-	if receipt.Disposition != IngestDispositionPersisted && receipt.Disposition != IngestDispositionLateQuarantined && receipt.Counters != (IngestAuditCounters{}) {
+	if receipt.Disposition != IngestDispositionPersisted && receipt.Disposition != IngestDispositionLateQuarantined &&
+		(receipt.Counters != (IngestAuditCounters{}) || receipt.CounterRecordCount != 0) {
 		return errors.New("non-persisted receipt must have zero counters")
 	}
 	return nil

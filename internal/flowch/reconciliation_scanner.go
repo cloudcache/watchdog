@@ -164,7 +164,14 @@ func (s *ReconciliationScanner) Scan(ctx context.Context, request Reconciliation
 				comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchIdentity, receipt, fact.Counters))
 			}
 		case !hasFacts:
-			comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchMissingRecords, receipt, IngestAuditCounters{}))
+			// Counter-only persisted messages store sFlow interface counters with
+			// zero flow-record rows, so absent facts are expected. This scanner
+			// only reads flow_records; confirming the counter rows exist in
+			// sflow_interface_counters is a separate reconciliation. Flag missing
+			// records only when the receipt claims flow records.
+			if receipt.Counters.RecordCount > 0 {
+				comparison.Mismatches = append(comparison.Mismatches, mismatchFromReceipt(MismatchMissingRecords, receipt, IngestAuditCounters{}))
+			}
 		default:
 			reason := classifyMessageCounters(receipt, fact)
 			if reason != "" {
@@ -204,19 +211,20 @@ func classifyMessageCounters(receipt IngestAuditReceipt, fact factCounters) Reco
 
 func (s *ReconciliationScanner) readReceipts(ctx context.Context, request ReconciliationScanRequest) ([]IngestAuditReceipt, uint64, error) {
 	var (
-		kafkaTopic       = new(proto.ColStr).LowCardinality()
-		disposition      proto.ColEnum
-		kafkaOffset      proto.ColUInt64
-		recordCount      proto.ColUInt64
-		rawBytes         proto.ColUInt64
-		rawPackets       proto.ColUInt64
-		estimatedBytes   proto.ColUInt64
-		estimatedPackets proto.ColUInt64
-		estimatedValid   proto.ColUInt64
+		kafkaTopic         = new(proto.ColStr).LowCardinality()
+		disposition        proto.ColEnum
+		kafkaOffset        proto.ColUInt64
+		recordCount        proto.ColUInt64
+		counterRecordCount proto.ColUInt64
+		rawBytes           proto.ColUInt64
+		rawPackets         proto.ColUInt64
+		estimatedBytes     proto.ColUInt64
+		estimatedPackets   proto.ColUInt64
+		estimatedValid     proto.ColUInt64
 	)
 	receipts := make([]IngestAuditReceipt, 0, request.MaxBatches+1)
 	query := ch.Query{
-		Body: fmt.Sprintf(`SELECT kafka_topic, message_disposition, kafka_offset, record_count,
+		Body: fmt.Sprintf(`SELECT kafka_topic, message_disposition, kafka_offset, record_count, counter_record_count,
   raw_bytes, raw_packets, estimated_bytes, estimated_packets, estimated_valid_records
 FROM flow_ingest_receipts FINAL
 WHERE source_stream_id = {stream:String} AND kafka_partition = %d
@@ -227,8 +235,8 @@ LIMIT %d`, request.Cursor.KafkaPartition, request.Cursor.NextOffset, request.Clo
 		Settings:   reconciliationReadSettings(request.MaxReadBytes),
 		Result: proto.Results{
 			{Name: "kafka_topic", Data: kafkaTopic}, {Name: "message_disposition", Data: &disposition}, {Name: "kafka_offset", Data: &kafkaOffset},
-			{Name: "record_count", Data: &recordCount}, {Name: "raw_bytes", Data: &rawBytes},
-			{Name: "raw_packets", Data: &rawPackets}, {Name: "estimated_bytes", Data: &estimatedBytes},
+			{Name: "record_count", Data: &recordCount}, {Name: "counter_record_count", Data: &counterRecordCount},
+			{Name: "raw_bytes", Data: &rawBytes}, {Name: "raw_packets", Data: &rawPackets}, {Name: "estimated_bytes", Data: &estimatedBytes},
 			{Name: "estimated_packets", Data: &estimatedPackets}, {Name: "estimated_valid_records", Data: &estimatedValid},
 		},
 	}
@@ -237,6 +245,7 @@ LIMIT %d`, request.Cursor.KafkaPartition, request.Cursor.NextOffset, request.Clo
 			receipts = append(receipts, IngestAuditReceipt{
 				SourceMessageKey: SourceMessageKey{SourceStreamID: request.Cursor.SourceStreamID, KafkaPartition: request.Cursor.KafkaPartition, KafkaOffset: kafkaOffset[row]},
 				KafkaTopic:       kafkaTopic.Row(row), Disposition: IngestMessageDisposition(disposition.Row(row)),
+				CounterRecordCount: counterRecordCount[row],
 				Counters: IngestAuditCounters{RecordCount: recordCount[row], RawBytes: rawBytes[row], RawPackets: rawPackets[row],
 					EstimatedBytes: estimatedBytes[row], EstimatedPackets: estimatedPackets[row], EstimatedValidRecords: estimatedValid[row]},
 			})
