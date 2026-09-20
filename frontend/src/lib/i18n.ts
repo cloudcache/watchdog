@@ -9,16 +9,25 @@ import { $direction } from "./stores"
 
 const rtlLanguages = new Set(["ar", "fa", "he"])
 
-// activates locale
-function activateLocale(locale: string, messages: Messages = enMessages) {
+// Activates a locale. Bootstrap activation must not overwrite the user's
+// persisted preference before getLocale() has had a chance to read it.
+function activateLocale(locale: string, messages: Messages = enMessages, persist = true) {
 	i18n.load(locale, messages)
 	i18n.activate(locale)
 	document.documentElement.lang = locale
-	localStorage.setItem("lang", locale)
+	if (persist) {
+		try {
+			localStorage.setItem("lang", locale)
+		} catch {
+			// Locale activation must not fail when storage is blocked.
+		}
+	}
 	$direction.set(rtlLanguages.has(locale) ? "rtl" : "ltr")
 }
 
-activateLocale("en")
+// Supply messages for code that runs before mountApplication(), without
+// turning every MPA document load into an explicit English selection.
+activateLocale("en", enMessages, false)
 
 // dynamically loads translations for the given locale
 export async function dynamicActivate(locale: string) {
