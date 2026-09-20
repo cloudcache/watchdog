@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -23,6 +24,7 @@ import (
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowplan"
 	"github.com/cloudcache/watchdog/internal/flowworker"
+	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 )
@@ -212,7 +214,15 @@ func (s *Server) startFlowEnrichment(ctx context.Context) error {
 	// The operation key prevents a restart from creating duplicate versions.
 	if _, err := s.enqueueFlowEnrichmentForActivation(ctx, "", time.Now().UTC().Truncate(time.Minute).Add(time.Minute)); err != nil &&
 		!errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errFlowEnrichmentNoTargets) {
-		return fmt.Errorf("enqueue current Flow enrichment pair: %w", err)
+		// A drifted content hash on the already-recorded activation job must not
+		// brick the whole hub at startup: the running publication stays
+		// authoritative and a fresh pair can be published explicitly. Stopgap
+		// until the idempotency key incorporates the request content.
+		if errors.Is(err, opjob.ErrHashMismatch) {
+			log.Printf("watchdog-server: enrichment pair activation skipped; existing job has a different content hash: %v", err)
+		} else {
+			return fmt.Errorf("enqueue current Flow enrichment pair: %w", err)
+		}
 	}
 	return nil
 }
