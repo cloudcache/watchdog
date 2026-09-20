@@ -1,5 +1,6 @@
 [Unit]
 Description=Watchdog Flow collector
+Wants=network-online.target
 After=network-online.target watchdog-server.service watchdog-infra.service
 Requires=watchdog-infra.service
 ConditionPathExists=/etc/watchdog/flow/collector-plan.json
@@ -14,6 +15,11 @@ EnvironmentFile=-/etc/watchdog/agents/watchdog-flow-collect.env
 ExecStart=/opt/watchdog/current/bin/watchdog-flow-collect -plan /etc/watchdog/flow/collector-plan.json -plan-public-key /etc/watchdog/flow/source-plan.pub -kafka-brokers 127.0.0.1:9092 -kafka-topic watchdog.flow.raw -sflow-listen :6343 -netflow-listen :2055 -metrics-listen 127.0.0.1:9090 $WATCHDOG_AGENT_ARGS
 Restart=on-failure
 RestartSec=5
+# Grace for the shutdown Kafka flush; the collector bounds it internally.
+TimeoutStopSec=45
+LimitNOFILE=65536
+# Bounds a producer-buffer runaway to this service instead of the host.
+MemoryMax=1G
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

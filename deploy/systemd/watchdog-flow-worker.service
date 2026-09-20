@@ -1,5 +1,6 @@
 [Unit]
 Description=Watchdog Flow worker
+Wants=network-online.target
 After=network-online.target watchdog-server.service watchdog-infra.service
 Requires=watchdog-infra.service
 ConditionPathExists=/etc/watchdog/flow/worker.env
@@ -14,6 +15,13 @@ EnvironmentFile=-/etc/watchdog/agents/watchdog-flow-worker.env
 ExecStart=/opt/watchdog/current/bin/watchdog-flow-worker $WATCHDOG_FLOW_WORKER_ARGS $WATCHDOG_AGENT_ARGS
 Restart=on-failure
 RestartSec=5
+# The worker commits with a fresh 10s context on shutdown; allow it to finish.
+TimeoutStopSec=30
+LimitNOFILE=65536
+# Backstop for transient fetch/decode memory spikes (e.g. a poison-pill
+# datagram): scope the OOM kill to this service rather than the host. Raise
+# for large per-partition fetch budgets.
+MemoryMax=2G
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
