@@ -57,9 +57,13 @@ type KafkaConfig struct {
 func (c KafkaConfig) Validate() error { return c.validate() }
 
 type ProducerConfig struct {
-	Kafka       KafkaConfig
-	QueueSize   int
-	Compression string
+	Kafka KafkaConfig
+	// QueueSize bounds buffered records; MaxBufferedBytes bounds their total
+	// size. Without the byte bound, QueueSize large datagrams during a broker
+	// outage can grow the producer buffer to gigabytes and OOM the collector.
+	QueueSize        int
+	MaxBufferedBytes int
+	Compression      string
 }
 
 type ConsumerConfig struct {
@@ -81,8 +85,9 @@ func DefaultProducerConfig() ProducerConfig {
 			Topic:    "watchdog.flow.raw",
 			ClientID: "watchdog-flow-collect",
 		},
-		QueueSize:   65536,
-		Compression: "lz4",
+		QueueSize:        65536,
+		MaxBufferedBytes: 256 << 20,
+		Compression:      "lz4",
 	}
 }
 
@@ -163,6 +168,9 @@ func (c ProducerConfig) Validate() error {
 	}
 	if c.QueueSize < 1 {
 		return errors.New("Kafka producer queue size must be positive")
+	}
+	if c.MaxBufferedBytes < 0 {
+		return errors.New("Kafka producer max buffered bytes must not be negative")
 	}
 	_, err := compressionCodec(c.Compression)
 	return err

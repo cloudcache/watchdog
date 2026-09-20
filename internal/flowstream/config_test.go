@@ -84,6 +84,15 @@ func TestKafkaConfigValidation(t *testing.T) {
 		t.Fatalf("SCRAM without TLS must remain allowed: %v", err)
 	}
 	producer = DefaultProducerConfig()
+	producer.MaxBufferedBytes = -1
+	if err := producer.Validate(); err == nil {
+		t.Fatal("negative max buffered bytes was accepted")
+	}
+	producer = DefaultProducerConfig()
+	if producer.MaxBufferedBytes <= 0 {
+		t.Fatalf("default producer must bound buffered bytes, got %d", producer.MaxBufferedBytes)
+	}
+	producer = DefaultProducerConfig()
 	producer.Compression = "invalid"
 	if err := producer.Validate(); err == nil {
 		t.Fatal("invalid compression was accepted")

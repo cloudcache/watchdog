@@ -64,6 +64,12 @@ func NewProducer(config ProducerConfig) (*Producer, error) {
 		kgo.ProducerBatchCompression(compression),
 		kgo.RecordPartitioner(kgo.UniformBytesPartitioner(64<<20, true, true, nil)),
 	)
+	if config.MaxBufferedBytes > 0 {
+		// Bound total buffered bytes so a broker outage applies backpressure
+		// (Produce blocks, kernel-drop accounting stays honest) instead of growing
+		// the producer buffer until the collector OOMs.
+		opts = append(opts, kgo.MaxBufferedBytes(config.MaxBufferedBytes))
+	}
 	if err := kgo.ValidateOpts(opts...); err != nil {
 		return nil, err
 	}
