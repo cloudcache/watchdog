@@ -43,6 +43,7 @@ type pipelineStats struct {
 	samplingUnknown      atomic.Uint64
 	samplingConflict     atomic.Uint64
 	snapshotMiss         atomic.Uint64
+	rejected             atomic.Uint64
 	quarantinedDatagrams atomic.Uint64
 	quarantinedRecords   atomic.Uint64
 }
@@ -52,6 +53,7 @@ type PipelineStats struct {
 	SamplingUnknown      uint64
 	SamplingConflict     uint64
 	SnapshotMiss         uint64
+	Rejected             uint64
 	QuarantinedDatagrams uint64
 	QuarantinedRecords   uint64
 }
@@ -102,6 +104,23 @@ func (p *Pipeline) Handle(ctx context.Context, batches []*flowworker.RecordBatch
 		}
 		result, err := p.enricher.EnrichBatch(batch)
 		if err != nil {
+			// A permanent data-shape failure (future skew beyond the bound, record
+			// count over the limit, a malformed record/counter) can never succeed on
+			// replay. Returning it here fails the whole partition group and, since
+			// the offset is never marked, crash-loops the worker on one bad datagram
+			// — halting every partition. Record a mapping_rejected receipt at this
+			// offset and advance instead; the rejection stays visible via the
+			// receipt, the reconciliation, and the reject-observer log. Version and
+			// initialization errors are transient/loud and still fail the group.
+			if errors.Is(err, flowworker.ErrInvalidRecordBatch) {
+				rejected, rejectErr := p.enricher.EnrichBatch(rejectedReceiptBatch(batch))
+				if rejectErr != nil {
+					return fmt.Errorf("build rejected receipt for flow batch %d: %w", index, rejectErr)
+				}
+				p.stats.rejected.Add(1)
+				enriched = append(enriched, rejected)
+				continue
+			}
 			if errors.Is(err, flowworker.ErrVersionUnavailable) {
 				p.stats.snapshotMiss.Add(1)
 			}
@@ -152,6 +171,23 @@ func (p *Pipeline) Stats() PipelineStats {
 	return PipelineStats{
 		Records: p.stats.records.Load(), SamplingUnknown: p.stats.samplingUnknown.Load(),
 		SamplingConflict: p.stats.samplingConflict.Load(), SnapshotMiss: p.stats.snapshotMiss.Load(),
+		Rejected:             p.stats.rejected.Load(),
 		QuarantinedDatagrams: p.stats.quarantinedDatagrams.Load(), QuarantinedRecords: p.stats.quarantinedRecords.Load(),
+	}
+}
+
+// rejectedReceiptBatch mirrors the failed datagram's identity as a receipt-only
+// batch. validateBatch requires only schema version, Kafka identity, receive
+// time, and a non-persisted disposition with no records, so this enriches into a
+// mapping_rejected receipt that records the drop at the datagram's offset.
+func rejectedReceiptBatch(batch *flowworker.RecordBatch) *flowworker.RecordBatch {
+	return &flowworker.RecordBatch{
+		BatchSchemaVersion: flowworker.RecordBatchSchemaVersion,
+		MessageDisposition: flowworker.MessageDispositionMappingRejected,
+		SourceStreamID:     batch.SourceStreamID,
+		KafkaTopic:         batch.KafkaTopic,
+		KafkaPartition:     batch.KafkaPartition,
+		KafkaOffset:        batch.KafkaOffset,
+		ReceivedAtUnixMS:   batch.ReceivedAtUnixMS,
 	}
 }

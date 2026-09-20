@@ -6,6 +6,7 @@ package flowch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -26,6 +27,11 @@ func (e *recordingEnricher) EnrichBatch(batch *flowworker.RecordBatch) (*flowwor
 			return nil, e.failErr
 		}
 		return nil, errors.New("snapshot unavailable")
+	}
+	// A rejected-receipt re-enrichment (a fresh non-persisted batch built by the
+	// pipeline) enriches into a receipt-only result, mirroring the real enricher.
+	if batch.MessageDisposition == flowworker.MessageDispositionMappingRejected {
+		return &flowworker.EnrichedBatch{KafkaOffset: batch.KafkaOffset, MessageDisposition: flowworker.MessageDispositionMappingRejected}, nil
 	}
 	return e.results[batch], nil
 }
@@ -91,6 +97,57 @@ func TestPipelineDoesNotWritePartiallyEnrichedGroup(t *testing.T) {
 	}
 	if stats := pipeline.Stats(); stats.SnapshotMiss != 1 || stats.Records != 0 {
 		t.Fatalf("unexpected failed enrichment stats: %+v", stats)
+	}
+}
+
+func TestPipelineRejectsPermanentDataShapeFailureAsReceipt(t *testing.T) {
+	// A permanent data-shape failure (ErrInvalidRecordBatch: future skew, record
+	// count over the limit, malformed record) must become a mapping_rejected
+	// receipt at the datagram's offset and advance, not fail the whole group and
+	// crash-loop the worker.
+	good := &flowworker.RecordBatch{KafkaOffset: 10}
+	bad := &flowworker.RecordBatch{KafkaOffset: 11, SourceStreamID: "kafka:test", KafkaTopic: "watchdog.flow.raw-v1", KafkaPartition: 0, ReceivedAtUnixMS: 1}
+	goodEnriched := &flowworker.EnrichedBatch{KafkaOffset: 10, Records: []flowworker.EnrichedRecord{{EstimatedValid: true}}}
+	enricher := &recordingEnricher{
+		results: map[*flowworker.RecordBatch]*flowworker.EnrichedBatch{good: goodEnriched},
+		failOn:  bad,
+		failErr: fmt.Errorf("%w: record[0]: event time exceeds the allowed receive-time future skew", flowworker.ErrInvalidRecordBatch),
+	}
+	writer := &recordingBatchWriter{}
+	pipeline := &Pipeline{enricher: enricher, writer: writer}
+	if err := pipeline.Handle(context.Background(), []*flowworker.RecordBatch{good, bad}); err != nil {
+		t.Fatalf("permanent data-shape failure must not fail the group: %v", err)
+	}
+	if len(writer.batches) != 2 {
+		t.Fatalf("expected the good batch and a rejected receipt, got %d writes", len(writer.batches))
+	}
+	if writer.batches[1].MessageDisposition != flowworker.MessageDispositionMappingRejected || writer.batches[1].KafkaOffset != 11 {
+		t.Fatalf("second write is not a rejected receipt at offset 11: %+v", writer.batches[1])
+	}
+	if stats := pipeline.Stats(); stats.Rejected != 1 || stats.Records != 1 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestPipelineKeepsTransientVersionFailureRetryable(t *testing.T) {
+	// A transient version failure must remain a retryable error (offset unmarked,
+	// self-healing) and must not be dropped as a rejection.
+	bad := &flowworker.RecordBatch{KafkaOffset: 11}
+	enricher := &recordingEnricher{
+		results: map[*flowworker.RecordBatch]*flowworker.EnrichedBatch{},
+		failOn:  bad,
+		failErr: &flowworker.VersionBlockedError{Dependency: "geo", Cause: flowworker.ErrVersionUnavailable},
+	}
+	writer := &recordingBatchWriter{}
+	pipeline := &Pipeline{enricher: enricher, writer: writer}
+	if err := pipeline.Handle(context.Background(), []*flowworker.RecordBatch{bad}); err == nil {
+		t.Fatal("transient version failure must remain retryable")
+	}
+	if len(writer.batches) != 0 {
+		t.Fatalf("transient failure must not write: %d", len(writer.batches))
+	}
+	if stats := pipeline.Stats(); stats.Rejected != 0 || stats.SnapshotMiss != 1 {
+		t.Fatalf("transient failure must be a snapshot miss, not a rejection: %+v", stats)
 	}
 }
 
