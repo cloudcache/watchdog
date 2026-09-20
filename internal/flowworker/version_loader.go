@@ -297,8 +297,14 @@ func matchPublicationMetadata(publication EnrichmentVersionPublication, dimensio
 }
 
 func matchDimensionMetadata(publication EnrichmentVersionPublication, dimension flowdimension.SnapshotMetadata) error {
+	// A dimension object's identity is SnapshotID + Version + Checksum. Its baked
+	// EffectiveFrom is a build artifact, not part of its identity: the same
+	// address object can be paired at different effective boundaries, so the
+	// pair's effective time is owned by the publication/classification, not the
+	// object. Comparing the object's baked EffectiveFrom here wrongly rejected
+	// reusing an object across pairs (and any object activated with a stale time).
 	if dimension.SnapshotID != publication.DimensionSnapshotID ||
-		dimension.Version != publication.DimensionVersion || !dimension.EffectiveFrom.Equal(publication.DimensionEffectiveFrom) ||
+		dimension.Version != publication.DimensionVersion ||
 		dimension.Checksum != publication.Dimension.Checksum {
 		return fmt.Errorf("%w: dimension metadata differs from publication", ErrInvalidVersionPublication)
 	}

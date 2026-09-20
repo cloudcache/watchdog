@@ -63,10 +63,17 @@ func TestEnrichmentVersionCatalogRejectsInvalidOrNonMonotonicPairs(t *testing.T)
 	if err := catalog.Install(EnrichmentVersion{Dimension: dimensionV1, Classification: lateOldDimension}); err == nil {
 		t.Fatal("dimension version rollback was accepted")
 	}
+	// A new dimension may take effect at a classification boundary later than the
+	// object's baked build time: the object's EffectiveFrom is a build artifact
+	// and does not gate the pair (decoupled from publish timing). Version
+	// monotonicity still applies.
 	dimensionV3 := compileDimension(t, "dimension-3", 3, testMinute(14, 0), nil)
 	delayedClassification := compileClassification(t, 3, testMinute(15, 0), "dimension-3", "count", "count")
-	if err := catalog.Install(EnrichmentVersion{Dimension: dimensionV3, Classification: delayedClassification}); err == nil {
-		t.Fatal("new dimension with a later classification boundary was accepted")
+	if err := catalog.Install(EnrichmentVersion{Dimension: dimensionV3, Classification: delayedClassification}); err != nil {
+		t.Fatalf("new dimension at a later classification boundary must be accepted: %v", err)
+	}
+	if selected, err := catalog.Select(testMinute(15, 0)); err != nil || selected.Metadata().DimensionVersion != 3 {
+		t.Fatalf("v3 pair not selectable after decoupled install: err=%v meta=%+v", err, selected.Metadata())
 	}
 }
 

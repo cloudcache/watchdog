@@ -740,7 +740,11 @@ func (s *Server) createFlowEnrichmentPublication(ctx context.Context, bootstrap,
 	publication = flowEnrichmentPublication{
 		ID: publicationID, PairSchemaVersion: flowEnrichmentPairSchemaVersion,
 		ClassificationVersion: classificationVersion, EffectiveFrom: effectiveFrom, ProfileRowVersion: profile.RowVersion,
-		DimensionSnapshotID: snapshot.ID, DimensionVersion: snapshot.Version, DimensionEffectiveFrom: snapshot.EffectiveFrom.UTC(),
+		// The pair's effective_from is a publish-time decision, not a property of
+		// the (timing-agnostic) address object. Declaring the dimension effective
+		// at the same instant as its classification keeps the pair coherent even
+		// when the snapshot was activated with a stale (past) effective_from.
+		DimensionSnapshotID: snapshot.ID, DimensionVersion: snapshot.Version, DimensionEffectiveFrom: effectiveFrom,
 		DimensionObjectRef: snapshot.ObjectRef, DimensionObjectFormat: snapshot.ObjectFormat,
 		DimensionObjectFormatVersion: uint16(snapshot.ObjectFormatVersion), DimensionChecksum: snapshot.Checksum,
 		ClassificationSchemaVersion: uint16(flowdimension.ClassificationSchemaVersion), ClassificationObjectRef: object.Ref,

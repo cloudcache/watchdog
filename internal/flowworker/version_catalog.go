@@ -92,9 +92,10 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 	if dimension.SnapshotID != classification.DimensionSnapshotID {
 		return errors.New("dimension and classification identities do not form a version pair")
 	}
-	if dimension.EffectiveFrom.After(classification.EffectiveFrom) {
-		return errors.New("classification cannot become effective before its dimension snapshot")
-	}
+	// The pair's effective boundary is classification.EffectiveFrom. The address
+	// object's baked EffectiveFrom is a build artifact and is not used to gate the
+	// pair (a timing-agnostic object may be paired at any boundary), so it is not
+	// compared here.
 	c.installMu.Lock()
 	defer c.installMu.Unlock()
 	current := c.state.Load()
@@ -102,7 +103,6 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 		current = &enrichmentVersionCatalogState{}
 	}
 	items := append([]EnrichmentVersion(nil), current.versions...)
-	dimensionSeen := false
 	var installedDimension DimensionSnapshot
 	for _, existing := range items {
 		if sameEnrichmentVersion(existing, version) {
@@ -114,7 +114,6 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 		existingDimension := existing.Dimension.Metadata()
 		existingClassification := existing.Classification.Metadata()
 		if sameDimensionReference(existing.Dimension, version.Dimension) {
-			dimensionSeen = true
 			installedDimension = existing.Dimension
 		}
 		if existingClassification.Version == classification.Version {
@@ -134,14 +133,12 @@ func (c *EnrichmentVersionCatalog) install(version EnrichmentVersion, beforePubl
 			return errors.New("enrichment versions and effective_from are not monotonic")
 		}
 	}
-	// A cold catalog may start at a retained classification horizon whose
-	// AddressSnap became active earlier. There is no usable pair before that
-	// first classification, so Select still fails closed for older events. Once
-	// version history exists, a newly introduced dimension must be paired at its
-	// own activation boundary to avoid silently extending the previous one.
-	if len(items) != 0 && !dimensionSeen && !dimension.EffectiveFrom.Equal(classification.EffectiveFrom) {
-		return errors.New("a new dimension snapshot must become effective with its classification")
-	}
+	// A newly introduced dimension takes effect at its pair's boundary
+	// (classification.EffectiveFrom); Select keys on that boundary, so a new
+	// dimension cannot silently extend the previous pair's coverage. The object's
+	// own baked EffectiveFrom is not consulted here (it is a build artifact), so
+	// activating a snapshot with a stale time no longer diverges the pair. Version
+	// monotonicity above still forbids going backwards.
 	if installedDimension != nil {
 		version.Dimension = installedDimension
 	}
