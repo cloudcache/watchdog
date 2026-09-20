@@ -16,6 +16,7 @@ import (
 	"github.com/netsampler/goflow2/v3/decoders/sflow"
 	decoderutils "github.com/netsampler/goflow2/v3/decoders/utils"
 	goflowpb "github.com/netsampler/goflow2/v3/pb"
+	"github.com/netsampler/goflow2/v3/utils/store/templates"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 )
@@ -423,5 +424,51 @@ func TestRecoverDecoderPanicConvertsPanicToError(t *testing.T) {
 	// Success returns nil.
 	if got := recoverDecoderPanic(func() error { return nil }); got != nil {
 		t.Fatalf("success path returned %v", got)
+	}
+}
+
+func TestZeroProgressTemplateDetection(t *testing.T) {
+	cases := []struct {
+		name string
+		tmpl interface{}
+		want bool
+	}{
+		{"empty data template", netflow.TemplateRecord{}, true},
+		{"all zero-length fixed fields", netflow.TemplateRecord{Fields: []netflow.Field{{Type: 1, Length: 0}, {Type: 2, Length: 0}}}, true},
+		{"normal fixed field", netflow.TemplateRecord{Fields: []netflow.Field{{Type: 1, Length: 4}}}, false},
+		{"variable-length field forces progress", netflow.TemplateRecord{Fields: []netflow.Field{{Type: 1, Length: 0xffff}}}, false},
+		{"ipfix options both empty", netflow.IPFIXOptionsTemplateRecord{}, true},
+		{"ipfix options scopes present", netflow.IPFIXOptionsTemplateRecord{Scopes: []netflow.Field{{Type: 1, Length: 4}}}, false},
+		{"nfv9 options both empty", netflow.NFv9OptionsTemplateRecord{}, true},
+		{"nfv9 options only variable", netflow.NFv9OptionsTemplateRecord{Options: []netflow.Field{{Type: 1, Length: 0xffff}}}, false},
+	}
+	for _, c := range cases {
+		if got := zeroProgressTemplate(9, c.tmpl); got != c.want {
+			t.Errorf("%s: zeroProgressTemplate=%v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestGuardedTemplateStoreRejectsZeroProgressTemplate(t *testing.T) {
+	store := templates.NewTemplateFlowStore(templates.WithTTL(time.Minute))
+	store.Start()
+	defer store.Close()
+	guard := guardedTemplateStore{store}
+
+	// A zero-field template (e.g. an RFC 7011 withdrawal) is rejected before it
+	// can be stored, so a later data set cannot drive the unbounded decode loop.
+	if _, err := guard.AddTemplate(netflow.FlowContext{}, 9, 0, 256, netflow.TemplateRecord{}); err == nil {
+		t.Fatal("zero-field template must be rejected")
+	}
+	if _, err := guard.GetTemplate(netflow.FlowContext{}, 9, 0, 256); err == nil {
+		t.Fatal("rejected template must not be stored")
+	}
+	// A well-formed template is stored unchanged.
+	valid := netflow.TemplateRecord{TemplateId: 257, Fields: []netflow.Field{{Type: 1, Length: 4}}}
+	if _, err := guard.AddTemplate(netflow.FlowContext{}, 9, 0, 257, valid); err != nil {
+		t.Fatalf("valid template rejected: %v", err)
+	}
+	if _, err := guard.GetTemplate(netflow.FlowContext{}, 9, 0, 257); err != nil {
+		t.Fatalf("valid template was not stored: %v", err)
 	}
 }

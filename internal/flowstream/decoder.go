@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowstream/flowpb"
+	"github.com/netsampler/goflow2/v3/decoders/netflow"
 	goflowpb "github.com/netsampler/goflow2/v3/pb"
 	"github.com/netsampler/goflow2/v3/producer"
 	protoproducer "github.com/netsampler/goflow2/v3/producer/proto"
@@ -185,6 +186,59 @@ type Decoder struct {
 // carrying many distinct identities cannot grow it without limit.
 const maxInternedIDs = 1024
 
+// guardedTemplateStore rejects NetFlow v9 / IPFIX templates that would make a
+// data set decode consume zero bytes per record. goflow2's DecodeDataSet loops
+// `for payload.Len() >= listFieldsSize`; when a template has no fields (or only
+// zero-length fixed fields) listFieldsSize is 0, so every iteration reads nothing
+// and appends an empty record forever — an unbounded loop and heap growth that
+// recoverDecoderPanic cannot interrupt (it catches panics, not live loops) and
+// that OOMs the worker. A single crafted or truncated datagram triggers it, e.g.
+// an RFC 7011 template withdrawal (field count 0) followed by a data set for that
+// id, or reordered UDP delivering the two out of order. Rejecting at store time
+// leaves the later data set to resolve as a finite template-not-found error.
+type guardedTemplateStore struct {
+	*templates.TemplateFlowStore
+}
+
+func (g guardedTemplateStore) AddTemplate(ctx netflow.FlowContext, version uint16, obsDomainID uint32, templateID uint16, template interface{}) (netflow.TemplateStatus, error) {
+	if zeroProgressTemplate(version, template) {
+		return netflow.TemplateUnchanged, fmt.Errorf("flowstream: rejecting zero-progress NetFlow/IPFIX template obs=%d id=%d", obsDomainID, templateID)
+	}
+	return g.TemplateFlowStore.AddTemplate(ctx, version, obsDomainID, templateID, template)
+}
+
+// zeroProgressTemplate reports whether decoding a data set with this template
+// would make no forward progress. Options templates loop on scopes+options, so
+// they stall only when both sides are zero-progress.
+func zeroProgressTemplate(version uint16, template interface{}) bool {
+	switch t := template.(type) {
+	case netflow.TemplateRecord:
+		return fieldsScoreZero(version, t.Fields)
+	case netflow.IPFIXOptionsTemplateRecord:
+		return fieldsScoreZero(version, t.Scopes) && fieldsScoreZero(version, t.Options)
+	case netflow.NFv9OptionsTemplateRecord:
+		return fieldsScoreZero(version, t.Scopes) && fieldsScoreZero(version, t.Options)
+	default:
+		return false
+	}
+}
+
+// fieldsScoreZero reports whether these fields score zero fixed bytes and carry
+// no variable-length field. A variable-length (0xffff) field reads at least one
+// byte per record, so the decode terminates on buffer exhaustion; without one, a
+// zero scorable size is the unbounded-loop condition.
+func fieldsScoreZero(version uint16, fields []netflow.Field) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	for _, field := range fields {
+		if field.Length == 0xffff {
+			return false
+		}
+	}
+	return netflow.GetTemplateSize(version, fields) == 0
+}
+
 func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
 	if stateTTL <= 0 {
 		stateTTL = defaultDecoderStateTTL
@@ -212,7 +266,7 @@ func NewDecoder(stateTTL time.Duration) (*Decoder, error) {
 	// from the producer (zero-copy) instead of unmarshalling a transport payload.
 	decoder.pipe = utils.NewFlowPipe(&utils.PipeConfig{
 		Producer:      metadata,
-		TemplateStore: templateStore,
+		TemplateStore: guardedTemplateStore{templateStore},
 	})
 	templateStore.Start()
 	decoder.pipe.Start()
