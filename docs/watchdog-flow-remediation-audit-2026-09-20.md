@@ -174,7 +174,7 @@
 | R6.2 跨 poll 合批 | 部分（只加旋钮） | `config.go` 新增 `FetchMaxBytes/FetchMaxPartitionBytes/PartitionBatchRecords`；worker `main.go:110-114`；无跨 poll 累加器；018 让每块多了**第三次**同步 INSERT（`native.go:224-231`） | part 率只会上升（推断，未测） |
 | R6.3 / R6.4 / CH3 / CH4 / CH7 / HP1–HP4 | 未开始 | `pipeline.go:103` 仍 `EnrichBatch`；`native.go:265+` 每次调用重建列；`quarantine.go:74,84`；`record.go:105-106` `[]byte` 地址 | ✅ |
 | R7.1 / R7.2 / R7.3 | 未开始 | `reconciliation_scanner.go:281-283` 无 `event_time`；`archive.go:138-157` 从 `NextHour`（新作业为 0）重跑；`archive_scheduler.go:73-86`；`reclassification.go:19-22,438-449` 未变，`045d7b3a` 仅在 `:406,:423,:434` 加列 | ✅ |
-| CH1 / CH5 / CH6 hub 池拆分、`QueryID`、TLS/超时 | 未开始 | `server.go:387-391`（工作树 `:395`）`MaxConns: 8, MinConns: 1`，无 `TLS`、无超时、无 `.Stat()`；`313a0ac0` 只 +5 行起 opjob worker | ✅ |
+| CH1 / CH5 / CH6 hub 池拆分、`QueryID`、TLS/超时 | 部分 | 池拆分（交互/批处理）+ TLS + `.Stat()` 已修（`0ef47e87`，见 §表列各项）；`QueryID`（CH5）与每操作超时调优（CH6，`operationTimeoutExecutor` 仍 2m 含 Acquire 排队）未做 | ✅ |
 | CH8 loopback LZ4 | 未开始 | `native.go:106` 常量 `CompressionLZ4`（文档自述未验证） | — |
 | Phase 1.2 / 1.7 / 1.8、Phase 2.1–2.3 | 未开始 | — | — |
 | IX P0 `.18` 实测 | 部分（仅文档） | perf-audit §8；§8.4 列出 Kafka lag/硬件/水位仍缺 | — |
@@ -388,13 +388,13 @@ B/C/D/E 组（发布闭环、幂等一致性、性能、文档）其余项均**�
 
 | 表列问题 | 状态 | 说明 |
 |---|---|---|
-| CH 连接：hub 池硬编码 8/1、无 TLS、无 `Stat()`；拆交互/批处理池 | ⛔ 阻塞 | 全在 `server.go`（并行会话占用，`HEAD:server.go:390` 仍 `MaxConns: 8`）；不能安全改 |
+| CH 连接：hub 池硬编码 8/1、无 TLS、无 `Stat()`；拆交互/批处理池 | ✅ 已修 | `0ef47e87`：`server.go` 起两池（交互 `watchdog-server` + 批处理 `watchdog-server-batch`），TLS 走 `flowstream.TLSConfig.ClientConfig()`，大小可配（默认 8/1 交互、4 批处理），四个后台作业（rollup/重分类/对账/VPN）改走批处理池；`NativeInserter.Stat()` 暴露 puddle 快照，`monitorClickHousePools` 每 30s 记录排队压力；build/vet/单测通过。并行会话的 5 行 deployment worker 未纳入本提交（仍在工作树） |
 | 连接复用：每块 2–3 次 `Do`（各自 Acquire/UUID/往返）；整个 `Write` 钉一个 client、receipts 按 chunk 合并 | ◐ 未做 | `native.go` 三次 `Do` 仍在（已核）；改动在干净文件，但属写路径 + 连接持有语义变更，需 DSN 集成验证 part 率/延迟收益 |
 | zero-copy：采集器每 datagram 5 拷贝 + 11–13 分配；worker `EnrichBatchInto` 未调用、每记录 3 堆分配 + 4KB 按值 | ◐ 部分 | 采集器 2 分配已去（`1005b5e3`）；其余（`SourceAddress`/key/闭包、worker `EnrichBatchInto` arena、`[16]byte` 地址）需基准 + 池化，且 `EnrichBatchInto` 与"整组丰富化后再写"模型冲突（需 EnrichedBatch 池，写路径风险），未做 |
 | 多线程：`-sockets` 默认 1（已核）、无 `recvmmsg`；worker 每分区两级流水线 | ⛔ 未做 | 需真实 Kafka 负载压测；per-partition pipeline 是 `consumer.go` 重构，盲改风险高（数据丢失/卡分区） |
 | 最短路径：每块 ~100 列对象 + 30 LC 字典重建（估 30–45% CPU）；loopback 仍 LZ4 | ⛔ 未做 | `native.go`（干净）但列复用是并发写路径，需 `sync.Pool` + DSN 验证正确性（错误 = 写错数据）；loopback 关 LZ4 是微优化，审计要求 CPU/解压基准 |
 
-结论：本轮把 **无歧义、可本地验证** 的 zero-copy/越界/OOM 项做完（采集器信封分配、fuzz、`MaxBufferedBytes`）；其余（hub 池、连接复用合批、列构建器复用、per-partition pipeline、`recvmmsg`）要么受 `server.go`/worker `main.go` 并行占用阻塞，要么是写路径/并发/系统调用改动需真实 Kafka+CH 压测与前后基准门禁——不在无验证环境下盲改。
+结论：本轮把 **无歧义、可本地验证** 的 zero-copy/越界/OOM 项做完（采集器信封分配、fuzz、`MaxBufferedBytes`）；hub 池拆分（交互/批处理 + TLS + `Stat()`）在并行会话让出 `server.go` 后补做（`0ef47e87`）；其余（连接复用合批、列构建器复用、per-partition pipeline、`recvmmsg`）要么受 worker `main.go` 并行占用阻塞，要么是写路径/并发/系统调用改动需真实 Kafka+CH 压测与前后基准门禁——不在无验证环境下盲改。
 
 ---
 
