@@ -122,6 +122,9 @@ func TestProducerSendRejectsAlreadyCanceledContext(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || client.record != nil || released != 1 || completed != 1 {
 		t.Fatalf("error=%v record=%v release=%d completion=%d", err, client.record, released, completed)
 	}
+	if got := producer.Stats().Errors; got != 1 {
+		t.Fatalf("synchronous rejection must count as an error: errors=%d", got)
+	}
 }
 
 func TestProducerRejectsInvalidRecordAndClosesOnce(t *testing.T) {
@@ -142,5 +145,9 @@ func TestProducerRejectsInvalidRecordAndClosesOnce(t *testing.T) {
 	}
 	if err := producer.Send(context.Background(), []byte("key"), []byte("payload"), func() { released++ }, nil); err == nil || released != 2 {
 		t.Fatalf("closed producer err=%v release=%d", err, released)
+	}
+	// Invalid-record and closed-producer rejections must both be counted.
+	if got := producer.Stats().Errors; got != 2 {
+		t.Fatalf("synchronous rejections must count as errors: errors=%d", got)
 	}
 }

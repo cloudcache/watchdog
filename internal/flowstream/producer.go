@@ -97,17 +97,24 @@ func (p *Producer) Send(ctx context.Context, key, payload []byte, release func()
 		}
 	}
 	if p == nil || p.client == nil {
+		// p.stats is unreachable here; this is a startup wiring error, not a
+		// per-datagram runtime path. Still finish so the buffer is released.
 		err := errors.New("Kafka producer is not initialized")
 		finish(err)
 		return err
 	}
+	// Every synchronous rejection below must count as an error so the
+	// received = records + errors + buffered identity holds; otherwise a
+	// datagram that never reaches franz-go vanishes from the metrics.
 	if p.closed.Load() {
 		err := errors.New("Kafka producer is closed")
+		p.stats.errors.Add(1)
 		finish(err)
 		return err
 	}
 	if len(key) == 0 || len(payload) == 0 {
 		err := errors.New("Kafka record key and payload are required")
+		p.stats.errors.Add(1)
 		finish(err)
 		return err
 	}
@@ -115,6 +122,7 @@ func (p *Producer) Send(ctx context.Context, key, payload []byte, release func()
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
+		p.stats.errors.Add(1)
 		finish(err)
 		return err
 	}
