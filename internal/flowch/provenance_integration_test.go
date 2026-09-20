@@ -23,13 +23,13 @@ func TestRealClickHouseDetailViewsAndProvenance(t *testing.T) {
 	wanted := netip.MustParseAddr("192.0.2.20")
 	remote := netip.MustParseAddr("2001:db8::20")
 	legacy := integrationProvenanceRecord(1, window.Add(10*time.Second), wanted, remote, 100)
-	insertLegacyIntegrationBatch(t, ctx, native, integrationBatch(40, window.Add(time.Minute), legacy))
+	insertLegacyIntegrationBatch(t, ctx, native, integrationBatch(20, window.Add(time.Minute), legacy))
 
 	dropped := integrationProvenanceRecord(2, window.Add(20*time.Second), wanted, remote, 200)
 	dropped.Disposition = flowdimension.DispositionDrop
 	third := integrationProvenanceRecord(3, window.Add(30*time.Second), wanted, remote, 300)
 	fourth := integrationProvenanceRecord(4, window.Add(30*time.Second), wanted, remote, 400)
-	insertIntegrationBatch(t, ctx, native, integrationBatch(41, window.Add(2*time.Minute), dropped, third, fourth))
+	insertIntegrationBatch(t, ctx, native, integrationBatch(20, window.Add(2*time.Minute), dropped, third, fourth))
 
 	runner, err := flowquery.NewDetailRunner(&integrationBlockExecutor{executor: native.executor})
 	if err != nil {
@@ -139,7 +139,7 @@ func assertSupplierPage(t *testing.T, result flowquery.DetailResult, ids []byte,
 		raw[index] = uint64(id) * 100
 	}
 	assertDetailPage(t, result, ids, raw, hasMore)
-	if !result.SupplierProvenanceComplete || result.MinimumFactSchema != 2 {
+	if !result.SupplierProvenanceComplete || result.MinimumFactSchema != 3 {
 		t.Fatalf("supplier completeness=%+v", result)
 	}
 	for _, row := range result.Rows {

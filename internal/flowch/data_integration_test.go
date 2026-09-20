@@ -485,7 +485,11 @@ func integrationDetailRequest(eventTime time.Time, ip netip.Addr, endpoint flowq
 
 func compileIntegrationDetail(t *testing.T, request flowquery.DetailRequest) flowquery.CompiledDetail {
 	t.Helper()
-	compiled, err := flowquery.CompileDetail(flowquery.Scope{}, request, request.To.Add(time.Hour))
+	// Grant the value-layer view under test; these integration cases exercise
+	// query correctness, while value-layer RBAC enforcement (the fail-closed
+	// customer-only default) is covered by unit tests.
+	scope := flowquery.Scope{AllowedViews: []flowquery.View{request.View}}
+	compiled, err := flowquery.CompileDetail(scope, request, request.To.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,8 +684,8 @@ func TestRealClickHouseRollupCapsPerIPDimension(t *testing.T) {
 	// (100) fold into _other.
 	result := runIntegrationAggregate(t, ctx, queryRunner, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionSourceIP, 100, false)
 	assertAggregatePoints(t, result, map[string]aggregateWant{
-		"::ffff:10.9.0.1": {value: 40, records: 1},
-		"::ffff:10.9.0.2": {value: 30, records: 1},
+		"10.9.0.1": {value: 40, records: 1},
+		"10.9.0.2": {value: 30, records: 1},
 		"_other":          {value: 30, records: 2},
 	})
 }
