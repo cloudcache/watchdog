@@ -355,6 +355,12 @@ func reportPanelSpecs(req flowReportRequest) []reportPanelSpec {
 	return filtered
 }
 
+// flowReportDeadline bounds a whole multi-panel report request. It is far above
+// any legitimate report so it only stops a pathological runaway from monopolizing
+// a pooled ClickHouse connection; per-panel ClickHouse execution limits are set
+// separately by the query compilers.
+const flowReportDeadline = 120 * time.Second
+
 func (s *Server) queryFlowReport(c *gin.Context) {
 	if !s.flowQueryReady(c) {
 		return
@@ -392,7 +398,14 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 	}
 	now := time.Now().UTC()
 	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
-	panels, warnings, err := s.buildFlowReport(c.Request.Context(), scope, view, req, now, currentPrincipal(c).can("flow.vpn.view"))
+	// A report runs several panel queries sequentially, each with its own
+	// ClickHouse execution limit but no overall bound. Cap the whole request so a
+	// pathological report cannot hold a pooled ClickHouse connection far longer
+	// than any legitimate multi-panel report (which completes well under a
+	// second); a report that needs longer belongs in an async export.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), flowReportDeadline)
+	defer cancel()
+	panels, warnings, err := s.buildFlowReport(ctx, scope, view, req, now, currentPrincipal(c).can("flow.vpn.view"))
 	if err != nil {
 		writeFlowQueryError(c, err)
 		return
