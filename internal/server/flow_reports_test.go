@@ -105,6 +105,15 @@ func TestNormalizeFlowReport(t *testing.T) {
 		t.Fatalf("dimensions default group_by: err=%v group_by=%s", err, dims.GroupBy)
 	}
 
+	// remote_prefix/dst_ip are groupable so an unknown breakdown can surface the
+	// destination segments that need base-library correction.
+	for _, grouping := range []flowquery.Dimension{flowquery.DimensionRemotePrefix, flowquery.DimensionDestinationIP} {
+		g := flowReportRequest{Kind: flowReportDimensions, GroupBy: grouping, From: from, To: to}
+		if err := normalizeFlowReport(&g); err != nil {
+			t.Fatalf("dimensions group_by %s: %v", grouping, err)
+		}
+	}
+
 	for _, tc := range []struct {
 		name string
 		req  flowReportRequest
@@ -161,6 +170,20 @@ func TestReportPanelSpecs(t *testing.T) {
 	}
 	if d := specByID(dimSpecs)["dimension_in"]; len(d.Dimensions) != 1 || d.Dimensions[0] != flowquery.DimensionASN {
 		t.Fatalf("dimension_in dims = %+v", d.Dimensions)
+	}
+
+	// Unknown breakdown by destination segment: group by remote_prefix filtered to
+	// the unknown class, so the panels surface the segments needing base correction.
+	unknownDims := flowReportRequest{
+		Kind: flowReportDimensions, GroupBy: flowquery.DimensionRemotePrefix, TopN: 20, From: from, To: to,
+		Filters: flowquery.Filters{Categories: []string{"unknown"}},
+	}
+	unknownSpecs := specByID(reportPanelSpecs(unknownDims))
+	if d := unknownSpecs["dimension_out"]; len(d.Dimensions) != 1 || d.Dimensions[0] != flowquery.DimensionRemotePrefix {
+		t.Fatalf("unknown dimension_out dims = %+v", d.Dimensions)
+	}
+	if got := unknownSpecs["dimension_out"].Filters.Categories; !reflect.DeepEqual(got, []string{"unknown"}) {
+		t.Fatalf("unknown dimension_out categories = %v", got)
 	}
 
 	// panel_ids selects a subset.

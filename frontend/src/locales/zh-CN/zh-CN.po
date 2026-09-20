@@ -7786,3 +7786,19 @@ msgstr "您的角色无权访问此页面。"
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "您的用户设置已更新。"
+
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province (province total)"
+msgstr "本网本省（省内总量）"
+
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province by city"
+msgstr "本网本省・按地市"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination segment"
+msgstr "未识别・按目的地址段"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination IP"
+msgstr "未识别・按目的 IP"

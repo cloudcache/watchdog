@@ -1,7 +1,7 @@
 import type { MessageDescriptor } from "@lingui/core"
 import { msg, t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { DownloadIcon, RefreshCwIcon, SlidersHorizontalIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
@@ -141,12 +141,36 @@ const GROUPINGS = [
 		categories: ["on_net_local_city", "on_net_cross_city", "on_net_cross_province"],
 	},
 	{
+		// On-net same-province traffic broken down by remote city: the panel total is
+		// the in-province total (本网本省 · 省内总量) and each row is a city (地市).
+		value: "onnet_in_province",
+		label: msg`On-net in-province by city`,
+		dimension: "geo.city",
+		categories: ["on_net_local_city", "on_net_cross_city"],
+	},
+	{
 		value: "offnet_operator",
 		label: msg`Off-net by operator`,
 		dimension: "isp",
 		categories: ["off_net_in_province", "off_net_cross_province"],
 	},
 	{ value: "overseas", label: msg`Overseas by country`, dimension: "geo.country", categories: ["overseas"] },
+	{
+		// Unclassified traffic grouped by the matched base-library segment (or the
+		// '_unassigned' bucket for ranges missing from the base library), so the gaps
+		// can be corrected at the source.
+		value: "unknown_prefix",
+		label: msg`Unknown by destination segment`,
+		dimension: "remote_prefix",
+		categories: ["unknown"],
+	},
+	{
+		// Drills the '_unassigned' bucket above down to concrete destination IPs.
+		value: "unknown_dst_ip",
+		label: msg`Unknown by destination IP`,
+		dimension: "dst_ip",
+		categories: ["unknown"],
+	},
 	{ value: "vpn", label: msg`VPN report`, dimension: "category", categories: [] },
 ] as const
 
@@ -204,8 +228,8 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const [metric, setMetric] = useState(() =>
 		queryState("metric", surface === "vpn" ? "estimated_bytes" : "estimated_bps")
 	)
-	const [displayMode, setDisplayMode] = useState<FlowReportDisplayMode>(
-		() => initialFlowReportDisplayMode(typeof window === "undefined" ? "" : window.location.search)
+	const [displayMode, setDisplayMode] = useState<FlowReportDisplayMode>(() =>
+		initialFlowReportDisplayMode(typeof window === "undefined" ? "" : window.location.search)
 	)
 	const [groupBy, setGroupBy] = useState(() => queryState("group", "category"))
 	const [topN, setTopN] = useState(() => boundedNumber(queryState("top", "20"), 1, 100, 20))
@@ -922,6 +946,34 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="grid gap-4">
+				{(() => {
+					// 本网本省 (province total) = on-net local-city + cross-city. A report-only
+					// rollup of the two in-province on-net classes; no separate stored bucket.
+					const inRollup = (inbound.get("on_net_local_city") ?? 0) + (inbound.get("on_net_cross_city") ?? 0)
+					const outRollup = (outbound.get("on_net_local_city") ?? 0) + (outbound.get("on_net_cross_city") ?? 0)
+					const inShare = inboundTotal ? inRollup / inboundTotal : null
+					const outShare = outboundTotal ? outRollup / outboundTotal : null
+					return (
+						<div className="grid gap-1 border-b pb-3">
+							<div className="flex justify-between gap-3 text-sm font-semibold">
+								<span>
+									<Trans>On-net in-province (province total)</Trans>
+								</span>
+								<span>
+									↓ {formatNullablePercent(inShare)} · ↑ {formatNullablePercent(outShare)}
+								</span>
+							</div>
+							<div className="grid h-2 grid-cols-2 gap-1">
+								<div className="overflow-hidden rounded bg-muted">
+									<div className="h-full bg-blue-500" style={{ width: `${Math.min(100, (inShare ?? 0) * 100)}%` }} />
+								</div>
+								<div className="overflow-hidden rounded bg-muted">
+									<div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (outShare ?? 0) * 100)}%` }} />
+								</div>
+							</div>
+						</div>
+					)
+				})()}
 				{FLOW_REPORT_CATEGORIES.map((category) => {
 					const inShare = inboundTotal ? (inbound.get(category) ?? 0) / inboundTotal : null
 					const outShare = outboundTotal ? (outbound.get(category) ?? 0) / outboundTotal : null

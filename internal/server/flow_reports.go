@@ -162,10 +162,14 @@ type reportPanelSpec struct {
 }
 
 // flowReportGroupings are the dimensions a "dimensions" report may group by.
+// remote_prefix/dst_ip are included so an "unknown" breakdown can surface the
+// destination segments (matched base prefix, or the '_unassigned' bucket for
+// ranges missing from the base library) that need correction.
 var flowReportGroupings = map[flowquery.Dimension]struct{}{
 	flowquery.DimensionCategory: {}, flowquery.DimensionGeoProvince: {}, flowquery.DimensionGeoCity: {},
 	flowquery.DimensionISP: {}, flowquery.DimensionGeoCountry: {}, flowquery.DimensionASN: {},
 	flowquery.DimensionBusiness: {}, flowquery.DimensionProtocol: {},
+	flowquery.DimensionRemotePrefix: {}, flowquery.DimensionDestinationIP: {},
 }
 
 func (s *Server) registerFlowReportRoutes(auth *gin.RouterGroup, view gin.HandlerFunc) {

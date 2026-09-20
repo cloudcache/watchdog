@@ -7781,3 +7781,19 @@ msgstr "Your role does not grant access to this page."
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "Your user settings have been updated."
+
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province (province total)"
+msgstr "On-net in-province (province total)"
+
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province by city"
+msgstr "On-net in-province by city"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination segment"
+msgstr "Unknown by destination segment"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination IP"
+msgstr "Unknown by destination IP"
