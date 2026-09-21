@@ -243,6 +243,34 @@ type addressSnapshotSupplierEvidence struct {
 	asns map[uint32]struct{}
 }
 
+// buildASNSupplierIndex maps each ASN to the single operator that claims it in
+// the labeled evidence. An ASN claimed by more than one operator is ambiguous
+// and left unmapped rather than guessed. Used as the operator fallback for
+// prefixes that carry an ASN but no operator_name.
+func buildASNSupplierIndex(evidence map[string]*addressSnapshotSupplierEvidence) map[uint32]string {
+	index := make(map[uint32]string, len(evidence))
+	ambiguous := make(map[uint32]struct{})
+	for key, ev := range evidence {
+		if ev == nil {
+			continue
+		}
+		for asn := range ev.asns {
+			if asn == 0 {
+				continue
+			}
+			if existing, ok := index[asn]; ok && existing != key {
+				ambiguous[asn] = struct{}{}
+				continue
+			}
+			index[asn] = key
+		}
+	}
+	for asn := range ambiguous {
+		delete(index, asn)
+	}
+	return index
+}
+
 func (p *Publisher) loadAddressSnapshotBuildSources(ctx context.Context, manifest []AddressDimensionSource) ([]flowdimension.AddressSnapshotBuildSource, []flowdimension.AddressSnapshotBuildGeoNode, []flowdimension.AddressSnapshotBuildOperator, error) {
 	loaded := make([]addressSnapshotLoadedSource, 0, len(manifest))
 	geoNodes := make(map[string]flowdimension.AddressSnapshotBuildGeoNode)
@@ -280,11 +308,22 @@ func (p *Publisher) loadAddressSnapshotBuildSources(ctx context.Context, manifes
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// ASN -> operator index from the labeled evidence, so a prefix that carries an
+	// ASN but no operator_name still attributes to the right operator (e.g. a
+	// China Mobile sub-ASN range imported without a label).
+	asnSupplier := buildASNSupplierIndex(supplierEvidence)
 	result := make([]flowdimension.AddressSnapshotBuildSource, 0, len(loaded))
 	for _, source := range loaded {
 		for index := range source.prefixes {
-			if source.manifest.Slot != AddressImportSlotGeo && source.prefixes[index].supplierKey != "" {
-				source.prefixes[index].ispID = supplierIDs[source.prefixes[index].supplierKey]
+			if source.manifest.Slot == AddressImportSlotGeo {
+				continue
+			}
+			key := source.prefixes[index].supplierKey
+			if key == "" && source.prefixes[index].asn != 0 {
+				key = asnSupplier[source.prefixes[index].asn]
+			}
+			if key != "" {
+				source.prefixes[index].ispID = supplierIDs[key]
 			}
 		}
 		ranges, err := normalizeAddressSnapshotImportPrefixes(source.prefixes)
