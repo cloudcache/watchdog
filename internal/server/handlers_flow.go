@@ -230,6 +230,7 @@ func (s *Server) queryFlow(c *gin.Context) {
 			From: envelope.From, To: envelope.To, Interval: step, TargetPoints: input.TargetPoints,
 			Metric: input.Metric, Dimensions: input.Dimensions, Filters: input.Filters, Filter: input.Filter,
 			View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
+			ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 		}, now)
 		if err != nil {
 			writeFlowQueryError(c, err)
@@ -260,6 +261,7 @@ func (s *Server) queryFlow(c *gin.Context) {
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: input.Metric, Dimension: input.Dimension, Filters: input.Filters, Filter: input.Filter,
 		View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
 	if err := s.applyFlowStorageBoundary(c.Request.Context(), &queryRequest); err != nil {
 		writeFlowQueryError(c, err)
@@ -321,6 +323,7 @@ func (s *Server) queryFlowOverseas(c *gin.Context) {
 		return
 	}
 	input.View = view
+	input.ExecutionTimeout = s.cfg.Flow.Query.ExecutionTimeout
 	if err := s.applyFlowOverseasStorageBoundary(c.Request.Context(), &input); err != nil {
 		writeFlowQueryError(c, err)
 		return

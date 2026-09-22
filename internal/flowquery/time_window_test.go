@@ -41,7 +41,7 @@ func TestCompileFlowTimeWindowsUsesTypedTimezoneAndBucketColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(compiled.Query.Body, "toTimeZone(bucket, {time_window_timezone:String})") ||
+	if !strings.Contains(compiled.Query.Body, "toTimeZone(toDateTime(bucket), {time_window_timezone:String})") ||
 		queryParameter(compiled.Query, "time_window_timezone") != "'Asia/Singapore'" ||
 		queryParameter(compiled.Query, "time_window_0_start") != "'720'" {
 		t.Fatalf("query=%s parameters=%+v", compiled.Query.Body, compiled.Query.Parameters)
@@ -55,7 +55,7 @@ func TestCompileFlowTimeWindowsUsesTypedTimezoneAndBucketColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(joint.Query.Body, "toTimeZone(event_time, {time_window_timezone:String})") {
+	if !strings.Contains(joint.Query.Body, "toTimeZone(toDateTime(event_time), {time_window_timezone:String})") {
 		t.Fatalf("joint query = %s", joint.Query.Body)
 	}
 }

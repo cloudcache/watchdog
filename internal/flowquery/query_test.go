@@ -25,7 +25,7 @@ func TestRegistryIsFixedAndMarksOnlyAddressSetsNonAdditive(t *testing.T) {
 		t.Fatalf("metric definitions=%d", got)
 	}
 	dimensions := Dimensions()
-	if len(dimensions) != 18 {
+	if len(dimensions) != 19 {
 		t.Fatalf("dimension definitions=%d", len(dimensions))
 	}
 	for _, current := range dimensions {
@@ -54,19 +54,26 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 		t.Fatal("same request compiled to a different query")
 	}
 	for _, required := range []string{
-		"FROM flow_aggregate_1m FINAL",
+		"FROM flow_aggregate_1m\n",
+		"FROM flow_aggregate_1m AS source FINAL",
 		"AND dimension_kind = '_generation'",
 		"INNER JOIN latest USING (bucket, generation)",
 		"AND dimension_kind = {dimension:String}",
 		"AND business_direction IN ({direction_0:String}, {direction_1:String})",
-		"ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC",
-		"if(is_top, dimension_value, '_other') AS grouped_dimension_value",
+		"ORDER BY rank_value DESC, query_dimension_value ASC, dimension_snapshot_id ASC,",
+		"series_rank <= {top_n:UInt16}",
+		"if(is_top, query_dimension_value, '_other') AS grouped_dimension_value",
 		"toFloat64(sum(estimated_bytes)) * 8 / greatest(toUInt32(1), least({bucket_seconds:UInt32}",
 		"toUInt8(1), toUInt64(count())",
 		"is_metadata ASC, bucket ASC",
 	} {
 		if !strings.Contains(first.Query.Body, required) {
 			t.Fatalf("query missing %q:\n%s", required, first.Query.Body)
+		}
+	}
+	for _, forbidden := range []string{"top_series AS", "FROM top_series"} {
+		if strings.Contains(first.Query.Body, forbidden) {
+			t.Fatalf("legacy aggregate query still rescans grouped rows through %q:\n%s", forbidden, first.Query.Body)
 		}
 	}
 	for _, secret := range []string{"tenant-a", "customer's", "target-a", "330100"} {
@@ -86,12 +93,87 @@ func TestCompileBuildsDeterministicLatestGenerationTopNQuery(t *testing.T) {
 	if setting(first.Query, "max_result_rows") != "250000" || setting(first.Query, "read_overflow_mode") != "throw" {
 		t.Fatalf("query safety settings=%+v", first.Query.Settings)
 	}
+	if setting(first.Query, "do_not_merge_across_partitions_select_final") != "1" {
+		t.Fatalf("query does not constrain FINAL to physical partitions: %+v", first.Query.Settings)
+	}
 	// The heaviest reader must carry both a byte and a memory ceiling so a wide
 	// query throws rather than starving the shared server.
 	if setting(first.Query, "max_bytes_to_read") == "" || setting(first.Query, "max_memory_usage") == "" ||
 		setting(first.Query, "max_bytes_before_external_group_by") != "1073741824" ||
 		setting(first.Query, "max_bytes_before_external_sort") != "1073741824" {
 		t.Fatalf("query missing byte/memory guards: %+v", first.Query.Settings)
+	}
+}
+
+func TestCompileDirectionGroupsTotalRowsInOneScan(t *testing.T) {
+	request := validRequest()
+	request.Dimension = DimensionDirection
+	request.TopN = 2
+	request.IncludeOther = false
+	request.Filters.Directions = []string{"in", "out"}
+	request.Filters.DimensionValues = []string{"out"}
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.Dimension.Kind != DimensionDirection || queryParameter(compiled.Query, "dimension") != "'total'" {
+		t.Fatalf("direction query metadata=%+v parameters=%+v", compiled.Dimension, compiled.Query.Parameters)
+	}
+	for _, required := range []string{
+		"CAST(business_direction AS String) AS query_dimension_value",
+		"AND business_direction IN ({direction_0:String}, {direction_1:String})",
+		"AND business_direction IN ({dimension_value_0:String})",
+		"FROM flow_aggregate_1m AS source FINAL",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("direction query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	if strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1m FINAL") {
+		t.Fatalf("generation marker scan still uses FINAL:\n%s", compiled.Query.Body)
+	}
+
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.Interval = time.Hour
+	request.StorageV2 = true
+	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	compiled, err = Compile(Scope{}, request, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"CAST(source.business_direction AS String) AS dimension_value",
+		"CAST(toString(business_direction) AS String) AS dimension_value",
+		"FROM flow_aggregate_1h AS source FINAL",
+	} {
+		if !strings.Contains(compiled.Query.Body, required) {
+			t.Fatalf("Storage V2 direction query missing %q:\n%s", required, compiled.Query.Body)
+		}
+	}
+	if strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") {
+		t.Fatalf("Storage V2 generation marker scan still uses FINAL:\n%s", compiled.Query.Body)
+	}
+}
+
+func TestCompileUsesCallerOwnedExecutionTimeout(t *testing.T) {
+	request := validRequest()
+	request.ExecutionTimeout = 1500 * time.Millisecond
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := setting(compiled.Query, "max_execution_time"); got != "2" {
+		t.Fatalf("configured max_execution_time=%q, want rounded-up 2 seconds", got)
+	}
+	request.ExecutionTimeout = 0
+	compiled, err = Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := setting(compiled.Query, "max_execution_time"); got != "" {
+		t.Fatalf("compiler injected an unconfigured max_execution_time=%q", got)
 	}
 }
 
@@ -166,8 +248,27 @@ func TestCompileOneHourNormalizesTimesAndDefaultsPresentationTimezone(t *testing
 	if compiled.From.Location() != time.UTC || compiled.From.Hour() != 0 || compiled.To.Hour() != 0 || compiled.Timezone != "UTC" || compiled.EstimatedRows != 49 {
 		t.Fatalf("compiled metadata=%+v", compiled)
 	}
-	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") || queryParameter(compiled.Query, "bucket_seconds") != "'3600'" {
+	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h AS source FINAL") || queryParameter(compiled.Query, "bucket_seconds") != "'3600'" {
 		t.Fatalf("one-hour query is wrong: %s", compiled.Query.Body)
+	}
+}
+
+func TestCompileOneDayUsesDailyTierAndCanBridgeRawTail(t *testing.T) {
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = request.From.Add(4 * 24 * time.Hour)
+	request.Bucket = BucketOneDay
+	request.Interval = 2 * 24 * time.Hour
+	request.StorageV2 = true
+	request.ArchiveThrough = request.From.Add(3 * 24 * time.Hour)
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.SourceBucketDuration != 24*time.Hour || compiled.BucketDuration != 2*24*time.Hour || !compiled.UsesRawFacts ||
+		!strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1d AS source FINAL") ||
+		queryParameter(compiled.Query, "source_seconds") != "'86400'" {
+		t.Fatalf("daily query metadata=%+v\n%s", compiled, compiled.Query.Body)
 	}
 }
 
@@ -185,7 +286,7 @@ func TestCompileSeparatesSourceResolutionFromPresentationInterval(t *testing.T) 
 		t.Fatalf("compiled resolution metadata=%+v", compiled)
 	}
 	for _, required := range []string{
-		"FROM flow_aggregate_1m FINAL",
+		"FROM flow_aggregate_1m AS source FINAL",
 		"intDiv(toUnixTimestamp(bucket) - toUnixTimestamp({from:DateTime('UTC')}), {bucket_seconds:UInt32})",
 		"output_bucket AS bucket",
 	} {
@@ -270,7 +371,7 @@ func TestCompileStorageV2ScopedRawQueryProjectsMetricAndUsesScopedBudget(t *test
 		}
 	}
 	if setting(compiled.Query, "max_rows_to_read") != "250000000" || setting(compiled.Query, "max_bytes_to_read") != "17179869184" ||
-		setting(compiled.Query, "max_execution_time") != "30" {
+		setting(compiled.Query, "max_execution_time") != "60" {
 		t.Fatalf("scoped raw guards rows=%q bytes=%q", setting(compiled.Query, "max_rows_to_read"), setting(compiled.Query, "max_bytes_to_read"))
 	}
 }
@@ -348,7 +449,7 @@ func TestCompileStorageV2PushesSelectiveFiltersBelowRawAggregation(t *testing.T)
 	}
 }
 
-func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.T) {
+func TestCompileStorageV2MinuteRangeUsesCoveredHotPrefixAndRawTail(t *testing.T) {
 	request := validRequest()
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From
@@ -361,8 +462,13 @@ func TestCompileStorageV2MinuteRangeIsRawOnlyAndRejectsMinuteArchive(t *testing.
 		t.Fatalf("compiled raw minute query=%+v", compiled)
 	}
 	request.ArchiveThrough = request.From.Add(time.Minute)
-	if _, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorUnsupported) {
-		t.Fatalf("minute archive error=%v", err)
+	compiled, err = Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compiled.UsesRawFacts || !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1m AS source FINAL") ||
+		queryParameter(compiled.Query, "archive_through") != "'2026-09-05 00:01:00'" {
+		t.Fatalf("compiled hot-minute query=%+v\n%s", compiled, compiled.Query.Body)
 	}
 }
 
@@ -446,15 +552,19 @@ func TestCompileStorageV2EndpointWithResidualFilterKeepsExactFallback(t *testing
 	}
 }
 
-func TestCompileStorageV2RejectsUnalignedSplit(t *testing.T) {
+func TestCompileStorageV2AcceptsCoveredHourlySplitAndRejectsSourceUnalignedSplit(t *testing.T) {
 	request := validRequest()
 	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	request.To = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
 	request.Bucket = BucketOneHour
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From.Add(25 * time.Hour)
+	if _, err := Compile(Scope{}, request, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("covered hourly split error=%v", err)
+	}
+	request.ArchiveThrough = request.From.Add(25*time.Hour + time.Minute)
 	if _, err := Compile(Scope{}, request, time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)); !IsRequestError(err, "archive_through", ErrorInvalid) {
-		t.Fatalf("split error=%v", err)
+		t.Fatalf("source-unaligned split error=%v", err)
 	}
 }
 
@@ -476,6 +586,7 @@ func validRequest() Request {
 		To:     time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC),
 		Bucket: BucketOneMinute, Metric: MetricEstimatedBPS, Dimension: DimensionGeoCity,
 		View: ViewCustomer, TopN: 3, IncludeOther: true, Timezone: "Asia/Shanghai",
+		ExecutionTimeout: 60 * time.Second,
 	}
 }
 
@@ -559,5 +670,22 @@ func TestCompileStorageV2EndpointCandidateMarksApproximate(t *testing.T) {
 	}
 	if exact.Approximate {
 		t.Fatal("explicit dimension values use the exact path, not the candidate sketch")
+	}
+}
+
+func TestCompileMarksBoundedRemotePortArchiveApproximate(t *testing.T) {
+	request := validRequest()
+	request.Dimension = DimensionRemotePort
+	request.StorageV2 = true
+	request.ArchiveThrough = request.To
+	compiled, err := Compile(Scope{}, request, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compiled.Approximate {
+		t.Fatal("bounded remote-port archive must be marked approximate")
+	}
+	if !strings.Contains(compiled.Query.Body, "('src_ip', 'dst_ip', 'remote_port')") {
+		t.Fatal("remote-port _other rows are not recognized as materialized long-tail data")
 	}
 }

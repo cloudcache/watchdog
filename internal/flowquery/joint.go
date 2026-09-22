@@ -23,19 +23,20 @@ const (
 // cannot reconstruct correlations or apply filters on dimensions it did not
 // materialize.
 type JointRequest struct {
-	From         time.Time
-	To           time.Time
-	Interval     time.Duration
-	TargetPoints uint16
-	Metric       Metric
-	Dimensions   []Dimension
-	Filters      Filters
-	Filter       *FilterExpression
-	View         View
-	TopN         uint16
-	IncludeOther bool
-	Timezone     string
-	TimeWindows  []LocalTimeWindow
+	From             time.Time
+	To               time.Time
+	Interval         time.Duration
+	TargetPoints     uint16
+	Metric           Metric
+	Dimensions       []Dimension
+	Filters          Filters
+	Filter           *FilterExpression
+	View             View
+	TopN             uint16
+	IncludeOther     bool
+	Timezone         string
+	TimeWindows      []LocalTimeWindow
+	ExecutionTimeout time.Duration
 	// Reclassification is server-owned. It switches the bounded base-fact
 	// query to one already activated historical generation; clients never
 	// supply a table name or SQL fragment.
@@ -203,20 +204,22 @@ func CompileJoint(scope Scope, request JointRequest, now time.Time) (CompiledJoi
 		Source: sourceTable, StepSeconds: uint32(interval / time.Second), TargetPoints: targetPoints,
 		MaxRangeSeconds: uint32(MaxJointRange / time.Second),
 	}
+	settings := executionTimeSetting(request.ExecutionTimeout)
+	settings = append(settings, []ch.Setting{
+		{Key: "do_not_merge_across_partitions_select_final", Value: "1", Important: true},
+		{Key: "max_result_rows", Value: fmt.Sprint(maxResultRows), Important: true},
+		{Key: "result_overflow_mode", Value: "throw", Important: true},
+		{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
+		{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
+		{Key: "read_overflow_mode", Value: "throw", Important: true},
+		{Key: "max_memory_usage", Value: "4294967296", Important: true},
+		{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
+		{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
+	}...)
 	return CompiledJoint{
 		Query: ch.Query{
 			Body: body, Parameters: parameters,
-			Settings: []ch.Setting{
-				{Key: "max_execution_time", Value: rawExecutionTime(hasIdentityScope(request.Filters)), Important: true},
-				{Key: "max_result_rows", Value: fmt.Sprint(maxResultRows), Important: true},
-				{Key: "result_overflow_mode", Value: "throw", Important: true},
-				{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
-				{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
-				{Key: "read_overflow_mode", Value: "throw", Important: true},
-				{Key: "max_memory_usage", Value: "4294967296", Important: true},
-				{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
-				{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
-			},
+			Settings: settings,
 		},
 		View: request.View, From: from, To: to, BucketDuration: interval, Metric: metric.definition,
 		Dimensions: dimensions, Timezone: timezone, EstimatedRows: uint64(estimatedRows),
@@ -336,6 +339,7 @@ func baseFilterValueCount(filters Filters) int {
 
 var jointDimensionExpressions = map[Dimension]string{
 	DimensionTotal:                "'total'",
+	DimensionDirection:            "toString(business_direction)",
 	DimensionCategory:             "toString(category)",
 	DimensionGeoContinent:         "if(empty(remote_geo_continent_id), '_unassigned', remote_geo_continent_id)",
 	DimensionGeoRegion:            "if(empty(remote_geo_region_id), '_unassigned', remote_geo_region_id)",

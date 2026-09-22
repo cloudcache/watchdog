@@ -530,6 +530,7 @@ func (s *Server) overseasDirectionTotalBytes(ctx context.Context, scope flowquer
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: req.Filter,
 		View: view, TopN: 1, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
 	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
 		return 0, err

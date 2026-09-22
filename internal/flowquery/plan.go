@@ -87,7 +87,9 @@ func PlanAggregate(from, to time.Time, requestedStep time.Duration, targetPoints
 
 	source, sourceStep, maxSourcePoints := BucketOneMinute, time.Minute, 10_080
 	minuteSourcePoints := int((to.Sub(from) + time.Minute - 1) / time.Minute)
-	if interval >= time.Hour {
+	if interval >= 24*time.Hour {
+		source, sourceStep, maxSourcePoints = BucketOneDay, 24*time.Hour, 400
+	} else if interval >= time.Hour {
 		source, sourceStep, maxSourcePoints = BucketOneHour, time.Hour, 9_600
 	} else if minuteSourcePoints > maxSourcePoints {
 		if requestedStep != 0 {

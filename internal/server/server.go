@@ -72,6 +72,7 @@ type Server struct {
 	flowReconciliationCancel   context.CancelFunc
 	flowArchiveCancel          context.CancelFunc
 	flowLifecycle              *flowlifecycle.Store
+	flowRollup                 *flowch.RollupRunner
 	flowDeleteEvidence         flowlifecycle.RawDayEvidenceReader
 	flowArchiveDeleteEvidence  flowlifecycle.ArchiveMonthEvidenceReader
 	flowReclassificationRunner *flowch.ReclassificationRunner
@@ -390,6 +391,7 @@ func (s *Server) stopRuntime() {
 	s.snmpMetrics = nil
 	s.flowQuery = nil
 	s.flowLifecycle = nil
+	s.flowRollup = nil
 	s.flowDeleteEvidence = nil
 	s.flowArchiveDeleteEvidence = nil
 	s.flowReclassificationRunner = nil
@@ -411,22 +413,23 @@ func (s *Server) startClickHouse(ctx context.Context) error {
 		return fmt.Errorf("ClickHouse TLS: %w", err)
 	}
 	maxConns, minConns, batchConns := clickHousePoolSizes(s.cfg.ClickHouse)
-	newPool := func(clientName string, conns int32) (*flowch.NativeInserter, error) {
+	newPool := func(clientName string, conns int32, operationTimeout time.Duration) (*flowch.NativeInserter, error) {
 		return flowch.NewNativeInserter(ctx, flowch.NativeConfig{
 			Address: s.cfg.ClickHouse.Address, Database: s.cfg.ClickHouse.Database,
 			User: s.cfg.ClickHouse.Username, Password: password,
-			ClientName: clientName, MaxConns: conns, MinConns: minConns, TLS: tlsConfig,
+			ClientName: clientName, OperationTimeout: operationTimeout,
+			MaxConns: conns, MinConns: minConns, TLS: tlsConfig,
 		})
 	}
 	// Interactive pool serves flow queries, SNMP reads and billing; the batch pool
 	// serves the background rollup/reclassification/reconciliation/VPN jobs, so a
 	// long job cannot occupy every connection and stall user queries behind an
 	// Acquire wait hidden inside the operation timeout.
-	native, err := newPool("watchdog-server", maxConns)
+	native, err := newPool("watchdog-server", maxConns, s.cfg.ClickHouse.OperationTimeout)
 	if err != nil {
 		return err
 	}
-	batch, err := newPool("watchdog-server-batch", batchConns)
+	batch, err := newPool("watchdog-server-batch", batchConns, s.cfg.ClickHouse.BatchOperationTimeout)
 	if err != nil {
 		native.Close()
 		return err
@@ -448,7 +451,8 @@ func (s *Server) startClickHouse(ctx context.Context) error {
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	s.clickHousePoolCancel = cancel
 	go s.monitorClickHousePools(monitorCtx, native, batch)
-	log.Printf("ClickHouse pools ready: interactive=%d batch=%d min=%d tls=%t", maxConns, batchConns, minConns, tlsConfig != nil)
+	log.Printf("ClickHouse pools ready: interactive=%d batch=%d min=%d operation_timeout=%s batch_operation_timeout=%s tls=%t",
+		maxConns, batchConns, minConns, s.cfg.ClickHouse.OperationTimeout, s.cfg.ClickHouse.BatchOperationTimeout, tlsConfig != nil)
 	return nil
 }
 
@@ -466,7 +470,7 @@ func clickHousePoolSizes(cfg ClickHouseConfig) (maxConns, minConns, batchConns i
 		minConns = maxConns
 	}
 	if batchConns <= 0 {
-		batchConns = 4
+		batchConns = 1
 	}
 	return maxConns, minConns, batchConns
 }

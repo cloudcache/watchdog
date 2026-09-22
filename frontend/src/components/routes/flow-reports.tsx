@@ -68,6 +68,34 @@ type FlowReportExportQuery = {
 	parameters: Record<string, unknown>
 }
 
+type FlowReportQueryJob = {
+	job_id: string
+	status: "queued" | "running" | "cancel_requested"
+	poll_after_ms: number
+}
+
+function isFlowReportQueryJob(value: FlowReportResponse | FlowReportQueryJob): value is FlowReportQueryJob {
+	return "job_id" in value
+}
+
+function waitForFlowReportQuery(delayMs: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal.aborted) {
+			reject(new DOMException("Aborted", "AbortError"))
+			return
+		}
+		const onAbort = () => {
+			clearTimeout(timer)
+			reject(new DOMException("Aborted", "AbortError"))
+		}
+		const timer = window.setTimeout(() => {
+			signal.removeEventListener("abort", onAbort)
+			resolve()
+		}, delayMs)
+		signal.addEventListener("abort", onAbort, { once: true })
+	})
+}
+
 type TableControl = {
 	search: string
 	page: number
@@ -398,11 +426,18 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					}
 				}
 				const { from, to, step_seconds, limit, value_layer, ...parameters } = body
-				const result = await api.send<FlowReportResponse>("/api/v1/flow/reports/query", {
+				let result = await api.send<FlowReportResponse | FlowReportQueryJob>("/api/v1/flow/reports/query", {
 					method: "POST",
 					body,
 					signal: controller.signal,
 				})
+				while (isFlowReportQueryJob(result)) {
+					await waitForFlowReportQuery(result.poll_after_ms, controller.signal)
+					result = await api.send<FlowReportResponse | FlowReportQueryJob>(
+						`/api/v1/flow/reports/query/${encodeURIComponent(result.job_id)}`,
+						{ signal: controller.signal },
+					)
+				}
 				if (sequence !== requestSequence.current) return
 				setResponse(result)
 				lastExportQuery.current = {

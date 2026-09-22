@@ -120,13 +120,27 @@ func (s *Server) startFlowExports() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	queryDir := strings.TrimSpace(s.cfg.Flow.Query.AsyncResultDir)
+	if queryDir == "" {
+		return errors.New("flow query async result directory is required")
+	}
+	if err := os.MkdirAll(queryDir, 0700); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.flowExportCancel = cancel
-	worker := &opjob.Worker{
+	exportWorker := &opjob.Worker{
 		Repo: s.jobs, JobType: flowExportJobType, Owner: "watchdog-server/flow-export",
 		Handler: s.runFlowExport(dir),
 	}
-	go worker.Run(ctx)
+	queryWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: flowReportQueryJobType, Owner: "watchdog-server/flow-report-query",
+		Handler: s.runFlowReportQuery(queryDir), PollInterval: s.cfg.Flow.Query.AsyncWorkerPoll,
+		LeaseFor: s.cfg.Flow.Query.AsyncWorkerLease, MaxAttempts: s.cfg.Flow.Query.AsyncWorkerMaxAttempts,
+		RetryBase: s.cfg.Flow.Query.AsyncWorkerRetryBase,
+	}
+	go exportWorker.Run(ctx)
+	go queryWorker.Run(ctx)
 	return nil
 }
 
@@ -477,6 +491,7 @@ func (s *Server) runFlowQueryExportResult(ctx context.Context, view flowquery.Vi
 			From: input.From, To: input.To, Interval: step, TargetPoints: input.TargetPoints,
 			Metric: input.Metric, Dimensions: input.Dimensions, Filters: input.Filters, Filter: input.Filter,
 			View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone,
+			ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 		}, now)
 		if err != nil {
 			return nil, err
@@ -495,6 +510,7 @@ func (s *Server) runFlowQueryExportResult(ctx context.Context, view flowquery.Vi
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: input.Metric, Dimension: input.Dimension, Filters: input.Filters, Filter: input.Filter,
 		View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
 	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
 		return nil, err

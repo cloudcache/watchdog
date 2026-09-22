@@ -16,8 +16,8 @@ import (
 
 // flow_query_modes.go carries the two /flow/query "special modes" that compose over
 // the existing ClickHouse runners rather than adding engine grammar: the
-// inbound/outbound direction split (two per-direction total queries merged under a
-// synthetic "direction" dimension) and the address-set combination (a flow_records
+// inbound/outbound direction split (one total-row query grouped under a synthetic
+// "direction" dimension) and the address-set combination (a flow_records
 // membership scan via the address-set runner). Both are faithful ports of the hub
 // query gateway's queryDirections / queryAddressSets, keeping the same wire shape so
 // the unchanged frontend works. operator_selection is prepared before these modes
@@ -40,10 +40,9 @@ func directionSplitAllowed(input flowQueryParameters) bool {
 	return len(input.Dimensions) == 0 && input.TopN <= 1 && !input.IncludeOther && len(input.Filters.Directions) == 0
 }
 
-// queryFlowDirectionSplit runs the inbound/outbound split as two authorized
-// per-direction total queries merged into one result, so the API never asks the
-// browser to merge two independently admitted responses. A non-aggregate typed
-// filter falls back to the joint (flow_records) runner, mirroring the hub.
+// queryFlowDirectionSplit runs the inbound/outbound split as one authorized
+// query grouped by the business_direction carried on additive total rows. A
+// non-aggregate typed filter uses the equivalent one-scan joint query.
 func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvelope, input flowQueryParameters, view flowquery.View, now time.Time, tableReq *flowTableRequest) {
 	if !directionSplitAllowed(input) {
 		fail(c, http.StatusBadRequest, "invalid_request", "direction_split requires dimension=total, top_n=1, include_other=false, and no direction filter")
@@ -67,34 +66,30 @@ func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvel
 		return
 	}
 	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
-	results := make([]flowquery.Result, 0, len(flowDirectionParts))
-	labels := make([]string, 0, len(flowDirectionParts))
-	for _, part := range flowDirectionParts {
-		filters := input.Filters
-		filters.Directions = []string{part.direction}
-		queryRequest := flowquery.Request{
-			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
-			Metric: input.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: input.Filter,
-			View: view, TopN: 1, IncludeOther: false, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
-		}
-		if err := s.applyFlowStorageBoundary(c.Request.Context(), &queryRequest); err != nil {
-			writeFlowQueryError(c, err)
-			return
-		}
-		compiled, err := flowquery.Compile(scope, queryRequest, now)
-		if err != nil {
-			writeFlowQueryError(c, err)
-			return
-		}
-		result, err := s.flowQuery.aggregate.Run(c.Request.Context(), compiled)
-		if err != nil {
-			writeFlowQueryError(c, err)
-			return
-		}
-		results = append(results, result)
-		labels = append(labels, part.label)
+	filters := input.Filters
+	filters.Directions = flowDirectionValues()
+	queryRequest := flowquery.Request{
+		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
+		Metric: input.Metric, Dimension: flowquery.DimensionDirection, Filters: filters, Filter: input.Filter,
+		View: view, TopN: uint16(len(flowDirectionParts)), IncludeOther: false, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
-	combined := mergeFlowDirectionResults(&plan, labels, results)
+	if err := s.applyFlowStorageBoundary(c.Request.Context(), &queryRequest); err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	compiled, err := flowquery.Compile(scope, queryRequest, now)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	combined, err := s.flowQuery.aggregate.Run(c.Request.Context(), compiled)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
+	}
+	labelFlowDirectionResult(&combined)
+	combined.Plan = &plan
 	raw, err := marshalFlowAggregateResult(combined, tableReq, s.flowGeo)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "internal", "encode flow result")
@@ -104,6 +99,43 @@ func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvel
 	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(raw), "meta": flowQueryResultMeta(
 		view, combined.Metric.Unit, string(plan.Source), input.Timezone, plan.StepSeconds,
 		combined.RollupCompleteness.Ratio, !combined.RollupCompleteness.Complete, input.Operator)})
+}
+
+func flowDirectionValues() []string {
+	values := make([]string, 0, len(flowDirectionParts))
+	for _, part := range flowDirectionParts {
+		values = append(values, part.direction)
+	}
+	return values
+}
+
+func flowDirectionLabel(value string) string {
+	for _, part := range flowDirectionParts {
+		if value == part.direction {
+			return part.label
+		}
+	}
+	return value
+}
+
+func labelFlowDirectionResult(result *flowquery.Result) {
+	if result == nil {
+		return
+	}
+	for index := range result.Points {
+		result.Points[index].DimensionValue = flowDirectionLabel(result.Points[index].DimensionValue)
+	}
+}
+
+func labelFlowDirectionJointResult(result *flowquery.JointResult) {
+	if result == nil {
+		return
+	}
+	for index := range result.Points {
+		if len(result.Points[index].DimensionValues) == 1 {
+			result.Points[index].DimensionValues[0] = flowDirectionLabel(result.Points[index].DimensionValues[0])
+		}
+	}
 }
 
 // mergeFlowDirectionResults folds the per-direction total results (aligned with
@@ -138,43 +170,29 @@ func mergeFlowDirectionResults(plan *flowquery.AggregatePlan, labels []string, r
 }
 
 // queryFlowDirectionSplitJoint is the flow_records fallback used when the typed
-// filter is not rollup-supported: it merges two per-direction total tuple queries.
+// filter is not rollup-supported.
 func (s *Server) queryFlowDirectionSplitJoint(c *gin.Context, envelope flowQueryEnvelope, input flowQueryParameters, view flowquery.View, now time.Time, tableReq *flowTableRequest) {
 	step := time.Duration(envelope.StepSeconds) * time.Second
 	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
-	combined := flowquery.JointResult{
-		View:       view,
-		Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.Dimension("direction"), Additive: true}},
+	filters := input.Filters
+	filters.Directions = flowDirectionValues()
+	compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
+		From: envelope.From, To: envelope.To, Interval: step, TargetPoints: input.TargetPoints,
+		Metric: input.Metric, Dimensions: []flowquery.Dimension{flowquery.DimensionDirection},
+		Filters: filters, Filter: input.Filter, View: view, TopN: uint16(len(flowDirectionParts)), IncludeOther: false,
+		Timezone: input.Timezone, TimeWindows: input.TimeWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
+	}, now)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
 	}
-	first := true
-	for _, part := range flowDirectionParts {
-		filters := input.Filters
-		filters.Directions = []string{part.direction}
-		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
-			From: envelope.From, To: envelope.To, Interval: step, TargetPoints: input.TargetPoints,
-			Metric: input.Metric, Dimensions: []flowquery.Dimension{flowquery.DimensionTotal},
-			Filters: filters, Filter: input.Filter, View: view, TopN: 1, IncludeOther: false,
-			Timezone: input.Timezone, TimeWindows: input.TimeWindows,
-		}, now)
-		if err != nil {
-			writeFlowQueryError(c, err)
-			return
-		}
-		result, err := s.flowQuery.joint.Run(c.Request.Context(), compiled)
-		if err != nil {
-			writeFlowQueryError(c, err)
-			return
-		}
-		if first {
-			combined.Metric = result.Metric
-			combined.Plan = result.Plan
-			first = false
-		}
-		for _, point := range result.Points {
-			point.DimensionValues = []string{part.label}
-			combined.Points = append(combined.Points, point)
-		}
+	combined, err := s.flowQuery.joint.Run(c.Request.Context(), compiled)
+	if err != nil {
+		writeFlowQueryError(c, err)
+		return
 	}
+	labelFlowDirectionJointResult(&combined)
 	raw, err := marshalFlowJointResult(combined, tableReq, s.flowGeo)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "internal", "encode flow result")

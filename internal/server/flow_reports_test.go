@@ -5,12 +5,14 @@ package server
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowquery"
+	"github.com/cloudcache/watchdog/internal/opjob"
 	"github.com/gin-gonic/gin"
 )
 
@@ -76,11 +78,40 @@ func TestFlowObservedQueryWindowsBoundsHighCardinalityScans(t *testing.T) {
 		t.Fatalf("hour windows = %+v", windows)
 	}
 	minute := flowObservedQueryWindows(from, from.Add(time.Hour), time.Minute)
-	if len(minute) != 5 || minute[0][1].Sub(minute[0][0]) != 12*time.Minute {
+	if len(minute) != 1 || minute[0][1].Sub(minute[0][0]) != time.Hour {
 		t.Fatalf("minute windows = %+v", minute)
 	}
 	if invalid := flowObservedQueryWindows(from, from, time.Hour); invalid != nil {
 		t.Fatalf("invalid windows = %+v", invalid)
+	}
+}
+
+func TestFlowReportQueryAsyncThresholdAndArtifact(t *testing.T) {
+	cfg := defaultConfig()
+	dir := t.TempDir()
+	cfg.Flow.Query.AsyncResultDir = dir
+	s := &Server{cfg: cfg}
+	from := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	if s.flowReportQueryNeedsAsync(flowReportRequest{From: from, To: from.Add(time.Hour)}) {
+		t.Fatal("range at the synchronous ceiling must stay synchronous")
+	}
+	if !s.flowReportQueryNeedsAsync(flowReportRequest{From: from, To: from.Add(6 * time.Hour)}) {
+		t.Fatal("wide report must use an asynchronous job")
+	}
+	ref, err := writeFlowReportQueryArtifact(dir, "job-a", []byte(`{"data":{"schema_version":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, checksum, err := s.flowReportQueryArtifact(opjob.Job{ID: "job-a", ResultRef: ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checksum != sha256hex(string(data)) {
+		t.Fatalf("artifact checksum=%q data=%q", checksum, data)
 	}
 }
 

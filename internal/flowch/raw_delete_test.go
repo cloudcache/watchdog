@@ -11,12 +11,14 @@ import (
 )
 
 type rawDeleteExecutor struct {
-	query ch.Query
-	err   error
+	query   ch.Query
+	queries []ch.Query
+	err     error
 }
 
 func (executor *rawDeleteExecutor) Do(_ context.Context, query ch.Query) error {
 	executor.query = query
+	executor.queries = append(executor.queries, query)
 	return executor.err
 }
 
@@ -54,8 +56,10 @@ func TestDropArchiveMonthUsesExactPartitionAndStableQueryID(t *testing.T) {
 	if err := runner.DropArchiveMonth(context.Background(), month, "flow-archive-delete-job-a"); err != nil {
 		t.Fatal(err)
 	}
-	if executor.query.Body != "ALTER TABLE flow_aggregate_1h DROP PARTITION 202609" || executor.query.QueryID != "flow-archive-delete-job-a" {
-		t.Fatalf("query = %+v", executor.query)
+	if len(executor.queries) != 2 || executor.queries[0].Body != "ALTER TABLE flow_aggregate_1d DROP PARTITION 202609" ||
+		executor.queries[0].QueryID != "flow-archive-delete-job-a-1d" ||
+		executor.queries[1].Body != "ALTER TABLE flow_aggregate_1h DROP PARTITION 202609" || executor.queries[1].QueryID != "flow-archive-delete-job-a" {
+		t.Fatalf("queries = %+v", executor.queries)
 	}
 	if len(executor.query.Settings) != 1 || executor.query.Settings[0].Key != "alter_sync" || executor.query.Settings[0].Value != "2" {
 		t.Fatalf("settings = %+v", executor.query.Settings)
@@ -71,7 +75,7 @@ func TestDropArchiveMonthFailsClosed(t *testing.T) {
 		}
 	}
 	err := runner.DropArchiveMonth(context.Background(), month, "job")
-	if err == nil || !strings.Contains(err.Error(), "drop Flow archive partition") {
+	if err == nil || !strings.Contains(err.Error(), "drop Flow") {
 		t.Fatalf("error = %v", err)
 	}
 }

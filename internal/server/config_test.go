@@ -62,8 +62,22 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Server.Listen == "" || cfg.MySQL.DSN == "" || cfg.Admin.Username != "admin" {
 		t.Fatalf("incomplete defaults: %+v", cfg)
 	}
+	if cfg.ClickHouse.OperationTimeout != 2*time.Minute || cfg.ClickHouse.BatchOperationTimeout != 15*time.Minute {
+		t.Fatalf("unexpected ClickHouse operation timeouts: %+v", cfg.ClickHouse)
+	}
+	if cfg.ClickHouse.MaxConns != 8 || cfg.ClickHouse.MinConns != 1 || cfg.ClickHouse.BatchMaxConns != 1 {
+		t.Fatalf("unexpected ClickHouse pool sizes: %+v", cfg.ClickHouse)
+	}
 	if cfg.Flow.Reconciliation.Enabled || cfg.Flow.Reconciliation.Interval != 5*time.Minute || cfg.Flow.Reconciliation.MaxBatches != 1000 {
 		t.Fatalf("unexpected reconciliation defaults: %+v", cfg.Flow.Reconciliation)
+	}
+	if cfg.Flow.HotRollup.MaxThreads != 4 || cfg.Flow.HotRollup.Priority != 10 || cfg.Flow.HotRollup.MaxMemoryBytes != 6<<30 {
+		t.Fatalf("unexpected hot-rollup resource guards: %+v", cfg.Flow.HotRollup)
+	}
+	if cfg.Flow.Query.ExecutionTimeout != 2*time.Minute || cfg.Flow.Query.SynchronousTimeout != 25*time.Second ||
+		cfg.Flow.Query.SynchronousMaxRange != time.Hour || cfg.Flow.Query.PanelConcurrency != 3 ||
+		cfg.Flow.Query.AsyncPollInterval != time.Second || cfg.Flow.Query.AsyncResultDir != "data/flow-query-results" {
+		t.Fatalf("unexpected flow query defaults: %+v", cfg.Flow.Query)
 	}
 	if cfg.Billing.MaxAccountPorts != 1000 || cfg.Billing.MaxPageSize != 500 || cfg.Billing.MaxPeriodDuration != 400*24*time.Hour ||
 		cfg.Billing.WorkerLease != 30*time.Second || cfg.Billing.WorkerMaxAttempts != 5 {
@@ -72,6 +86,94 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	if cfg.SNMP.QueryMaxIntermediateRows != 250000 || cfg.SNMP.QueryMaxExecutionTime != 15*time.Second ||
 		cfg.SNMP.QueryMaxRowsToRead != 50000000 || cfg.SNMP.QueryMaxBytesToRead != 4<<30 || cfg.SNMP.QueryMaxMemoryBytes != 2<<30 {
 		t.Fatalf("unexpected SNMP query defaults: %+v", cfg.SNMP)
+	}
+}
+
+func TestLoadConfigClickHouseOperationTimeouts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte(`
+clickhouse:
+  operation_timeout: 90s
+  batch_operation_timeout: 12m
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClickHouse.OperationTimeout != 90*time.Second || cfg.ClickHouse.BatchOperationTimeout != 12*time.Minute {
+		t.Fatalf("unexpected ClickHouse operation timeouts: %+v", cfg.ClickHouse)
+	}
+}
+
+func TestLoadConfigRejectsInvalidClickHouseOperationTimeouts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("clickhouse:\n  batch_operation_timeout: 0s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "validate ClickHouse") {
+		t.Fatalf("expected ClickHouse timeout validation failure, got %v", err)
+	}
+}
+
+func TestLoadConfigFlowQueryRuntimeLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte(`
+flow:
+  query:
+    execution_timeout: 3m
+    synchronous_timeout: 20s
+    synchronous_max_range: 30m
+    panel_concurrency: 2
+    async_poll_interval: 750ms
+    async_worker_poll_interval: 250ms
+    async_worker_lease: 45s
+    async_worker_max_attempts: 4
+    async_worker_retry_base: 3s
+    async_result_dir: data/custom-flow-query-results
+    async_result_retention: 48h
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Flow.Query.ExecutionTimeout != 3*time.Minute || cfg.Flow.Query.SynchronousTimeout != 20*time.Second ||
+		cfg.Flow.Query.SynchronousMaxRange != 30*time.Minute || cfg.Flow.Query.PanelConcurrency != 2 ||
+		cfg.Flow.Query.AsyncPollInterval != 750*time.Millisecond || cfg.Flow.Query.AsyncWorkerLease != 45*time.Second ||
+		cfg.Flow.Query.AsyncWorkerMaxAttempts != 4 || cfg.Flow.Query.AsyncResultRetention != 48*time.Hour {
+		t.Fatalf("unexpected flow query config: %+v", cfg.Flow.Query)
+	}
+}
+
+func TestLoadConfigRejectsInvalidFlowQueryRuntimeLimits(t *testing.T) {
+	for name, body := range map[string]string{
+		"zero timeout":       "flow:\n  query:\n    execution_timeout: 0s\n",
+		"zero concurrency":   "flow:\n  query:\n    panel_concurrency: 0\n",
+		"short worker lease": "flow:\n  query:\n    async_worker_lease: 2s\n",
+		"empty result dir":   "flow:\n  query:\n    async_result_dir: '   '\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "watchdog.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "validate flow query") {
+				t.Fatalf("expected flow query validation failure, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigRejectsUnsafeHotRollupResourceLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte("flow:\n  hot_rollup:\n    enabled: true\n    max_threads: 257\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "validate flow hot rollup") {
+		t.Fatalf("expected hot-rollup resource validation failure, got %v", err)
 	}
 }
 

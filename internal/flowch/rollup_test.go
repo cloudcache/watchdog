@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,37 @@ type rollupGenerationExecutor struct {
 type storageCounterExecutor struct {
 	queries []ch.Query
 	values  []StorageCounters
+}
+
+type rollupMarkerExecutor struct {
+	query   ch.Query
+	markers []RollupMarker
+}
+
+func (executor *rollupMarkerExecutor) Do(ctx context.Context, query ch.Query) error {
+	executor.query = query
+	results, ok := query.Result.(proto.Results)
+	if !ok || len(results) != 3 {
+		return errors.New("unexpected marker result contract")
+	}
+	buckets, ok := results[0].Data.(*proto.ColDateTime)
+	if !ok {
+		return errors.New("unexpected marker bucket column")
+	}
+	generations, ok := results[1].Data.(*proto.ColUInt64)
+	if !ok {
+		return errors.New("unexpected marker generation column")
+	}
+	generatedAt, ok := results[2].Data.(*proto.ColDateTime64)
+	if !ok {
+		return errors.New("unexpected marker generated_at column")
+	}
+	for _, marker := range executor.markers {
+		buckets.Append(marker.Bucket)
+		*generations = append(*generations, marker.Generation)
+		generatedAt.Append(marker.GeneratedAt)
+	}
+	return query.OnResult(ctx, proto.Block{Columns: 3, Rows: len(executor.markers)})
 }
 
 func (executor *storageCounterExecutor) Do(ctx context.Context, query ch.Query) error {
@@ -77,6 +109,7 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 		Resolution: RollupOneMinute,
 		Bucket:     time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC), Generation: 17,
 		GeneratedAt: time.Date(2026, 9, 5, 1, 5, 0, 0, time.UTC),
+		MaxThreads:  4, Priority: 10, MaxMemoryBytes: 6 << 30,
 	}
 	first, err := buildRollupQuery(request)
 	if err != nil {
@@ -95,6 +128,7 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 		"'geo.continent'", "'geo.region'", "'geo.country'", "'geo.province'", "'geo.city'", "'_unassigned'",
 		"tuple('asn', if(remote_asn = 0, '_unassigned'", "tuple('business', if(empty(business), '_unassigned'",
 		"tuple('local_prefix', if(empty(local_prefix_id), '_unassigned'", "tuple('remote_port', if(remote_port = 0, '_unassigned'",
+		"dimension_kind IN ('src_ip', 'dst_ip', 'remote_port')", "rollup_port_top_n",
 	} {
 		if !strings.Contains(first.Body, required) {
 			t.Fatalf("rollup query missing %q", required)
@@ -115,6 +149,113 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	// ceiling rather than fail with retryable MEMORY_LIMIT_EXCEEDED.
 	if setting(first, "max_bytes_before_external_group_by") == "" || setting(first, "max_memory_usage") == "" {
 		t.Fatalf("rollup missing memory spill/ceiling guards: %+v", first.Settings)
+	}
+	if setting(first, "max_threads") != "4" || setting(first, "priority") != "10" ||
+		setting(first, "max_memory_usage") != "6442450944" || setting(first, "max_bytes_before_external_group_by") != "3221225472" {
+		t.Fatalf("rollup did not apply request-owned resource guards: %+v", first.Settings)
+	}
+}
+
+func TestBuildDailyRollupReadsOnlyCompleteHourlyGenerations(t *testing.T) {
+	request := RollupRequest{
+		Resolution: RollupOneDay,
+		Bucket:     time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC), Generation: 17,
+		GeneratedAt: time.Date(2026, 9, 6, 1, 0, 0, 0, time.UTC),
+	}
+	query, err := buildRollupQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"INSERT INTO flow_aggregate_1d", "FROM flow_aggregate_1h AS source FINAL",
+		"max(generation)", "dimension_kind = '_generation'", "INNER JOIN latest USING (bucket, generation)",
+		"dimension_value != '_other'", "UNION ALL", "'_generation'",
+	} {
+		if !strings.Contains(query.Body, required) {
+			t.Fatalf("daily rollup query missing %q", required)
+		}
+	}
+	if strings.Contains(query.Body, "FROM flow_records") {
+		t.Fatal("daily rollup unexpectedly re-read raw facts")
+	}
+}
+
+func TestBuildHourlyRollupCanMergeCompleteMinuteGenerations(t *testing.T) {
+	request := RollupRequest{
+		Resolution: RollupOneHour, SourceResolution: RollupOneMinute,
+		Bucket: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Generation: 18,
+		GeneratedAt: time.Date(2026, 9, 5, 2, 5, 0, 0, time.UTC),
+	}
+	query, err := buildRollupQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"INSERT INTO flow_aggregate_1h", "FROM flow_aggregate_1m AS source FINAL",
+		"FROM flow_aggregate_1m", "INNER JOIN latest USING (bucket, generation)",
+		"dimension_kind = '_generation'", "'_generation'",
+	} {
+		if !strings.Contains(query.Body, required) {
+			t.Fatalf("hourly derived rollup query missing %q", required)
+		}
+	}
+	if strings.Contains(query.Body, "FROM flow_records") || strings.Contains(query.Body, "ARRAY JOIN") {
+		t.Fatal("hourly derived rollup unexpectedly expanded raw facts")
+	}
+}
+
+func TestBuildMinuteRollupBatchScansHourOnceAndPublishesEveryMarker(t *testing.T) {
+	request := RollupRequest{
+		Resolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC),
+		BucketEnd:  time.Date(2026, 9, 22, 2, 0, 0, 0, time.UTC),
+		Generation: 19, GeneratedAt: time.Date(2026, 9, 22, 2, 5, 0, 0, time.UTC),
+	}
+	query, err := buildRollupQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"toStartOfMinute(event_time) AS bucket", "PARTITION BY bucket,",
+		"FROM numbers(", "rollup_bucket_seconds", "GROUP BY\n      bucket,",
+	} {
+		if !strings.Contains(query.Body, required) {
+			t.Fatalf("minute batch query missing %q", required)
+		}
+	}
+	if parameter(query, "bucket_start") != "'2026-09-22 01:00:00'" ||
+		parameter(query, "bucket_end") != "'2026-09-22 02:00:00'" ||
+		parameter(query, "bucket_seconds") != "'60'" {
+		t.Fatalf("minute batch parameters=%+v", query.Parameters)
+	}
+}
+
+func TestBuildMarkerOnlyRollupDoesNotReadRaw(t *testing.T) {
+	request := RollupRequest{
+		Resolution: RollupOneHour, Bucket: time.Date(2026, 9, 21, 6, 0, 0, 0, time.UTC),
+		Generation: 20, GeneratedAt: time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC),
+		MarkerOnly: true,
+	}
+	query, err := buildRollupQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query.Body, "INSERT INTO flow_aggregate_1h") ||
+		!strings.Contains(query.Body, "'_generation'") || strings.Contains(query.Body, "flow_records") {
+		t.Fatalf("marker-only query=%s", query.Body)
+	}
+}
+
+func TestRollupRunnerChecksPhysicalRawBucketWithoutFinal(t *testing.T) {
+	bucket := time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC)
+	executor := &scalarSequenceExecutor{values: []uint64{1}}
+	hasRecords, err := (&RollupRunner{executor: executor}).RawBucketHasRecords(context.Background(), RollupOneHour, bucket)
+	if err != nil || !hasRecords || len(executor.queries) != 1 {
+		t.Fatalf("hasRecords=%v err=%v queries=%d", hasRecords, err, len(executor.queries))
+	}
+	if body := executor.queries[0].Body; strings.Contains(body, "FINAL") || !strings.Contains(body, "LIMIT 1") ||
+		!strings.Contains(body, "PREWHERE event_time") {
+		t.Fatalf("raw existence query=%s", body)
 	}
 }
 
@@ -222,6 +363,22 @@ func TestBuildRollupQueryRejectsUnalignedOrUnsafeRequests(t *testing.T) {
 		func(value *RollupRequest) { value.Generation = 0 },
 		func(value *RollupRequest) { value.GeneratedAt = value.GeneratedAt.In(time.FixedZone("local", 3600)) },
 		func(value *RollupRequest) { value.GeneratedAt = value.Bucket.Add(30 * time.Minute) },
+		func(value *RollupRequest) { value.MaxThreads = 257 },
+		func(value *RollupRequest) { value.MaxMemoryBytes = 512 << 20 },
+		func(value *RollupRequest) { value.SourceResolution = RollupOneHour },
+		func(value *RollupRequest) {
+			value.MarkerOnly = true
+			value.SourceResolution = RollupOneMinute
+		},
+		func(value *RollupRequest) {
+			value.Resolution = RollupOneMinute
+			value.BucketEnd = value.Bucket.Add(time.Hour + time.Minute)
+		},
+		func(value *RollupRequest) {
+			value.Resolution = RollupOneMinute
+			value.Bucket = time.Date(2026, 9, 5, 1, 59, 0, 0, time.UTC)
+			value.BucketEnd = value.Bucket.Add(2 * time.Minute)
+		},
 		func(value *RollupRequest) {
 			value.Bucket = time.Date(1969, 12, 31, 23, 0, 0, 0, time.UTC)
 			value.GeneratedAt = value.Bucket.Add(time.Hour)
@@ -361,6 +518,19 @@ func TestBucketNeedsRepairComparesStoredAndLiveCounts(t *testing.T) {
 	}
 }
 
+func TestDailyBucketRepairTracksHourlyGenerationFreshness(t *testing.T) {
+	bucket := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	inSyncExecutor := &scalarSequenceExecutor{values: []uint64{3, 3, 0}}
+	needs, err := (&RollupRunner{executor: inSyncExecutor}).BucketNeedsRepair(context.Background(), RollupOneDay, bucket)
+	if err != nil || needs || len(inSyncExecutor.queries) != 3 || !strings.Contains(inSyncExecutor.queries[1].Body, "FROM flow_aggregate_1h FINAL") {
+		t.Fatalf("daily in-sync check: needs=%v err=%v queries=%+v", needs, err, inSyncExecutor.queries)
+	}
+	newerHour := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 3, 1}}}
+	if needs, err := newerHour.BucketNeedsRepair(context.Background(), RollupOneDay, bucket); err != nil || !needs {
+		t.Fatalf("newer hourly generation: needs=%v err=%v", needs, err)
+	}
+}
+
 func TestRollupRunnerClassifiesPermanentAndRetryableFailures(t *testing.T) {
 	request := RollupRequest{
 		Resolution: RollupOneMinute,
@@ -402,6 +572,61 @@ func TestRollupRunnerReadsAuthoritativeGenerationMarker(t *testing.T) {
 	var permanentError *PermanentError
 	if !errors.As(err, &permanentError) {
 		t.Fatalf("schema error was not permanent: %v", err)
+	}
+}
+
+func TestRollupRunnerFindsContinuousGenerationMarkerCoverage(t *testing.T) {
+	from := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	executor := &rollupMarkerExecutor{markers: []RollupMarker{
+		{Bucket: from, Generation: 10, GeneratedAt: from.Add(2 * time.Hour)},
+		{Bucket: from.Add(time.Hour), Generation: 11, GeneratedAt: from.Add(2 * time.Hour)},
+		{Bucket: from.Add(3 * time.Hour), Generation: 12, GeneratedAt: from.Add(4 * time.Hour)},
+	}}
+	runner := &RollupRunner{executor: executor}
+	through, err := runner.CoveredThrough(context.Background(), RollupOneHour, from, from.Add(4*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !through.Equal(from.Add(2 * time.Hour)) {
+		t.Fatalf("covered through=%s", through)
+	}
+	if !strings.Contains(executor.query.Body, "argMax(generated_at, generation)") ||
+		!strings.Contains(executor.query.Body, "max(generation) AS latest_generation") ||
+		strings.Contains(executor.query.Body, "max(generation) AS generation,") ||
+		strings.Contains(executor.query.Body, "FINAL") {
+		t.Fatalf("marker query=%s", executor.query.Body)
+	}
+
+	executor.markers = append(executor.markers, RollupMarker{
+		Bucket: from.Add(2 * time.Hour), Generation: 13, GeneratedAt: from.Add(4 * time.Hour),
+	})
+	sort.Slice(executor.markers, func(i, j int) bool { return executor.markers[i].Bucket.Before(executor.markers[j].Bucket) })
+	through, err = runner.CoveredThrough(context.Background(), RollupOneHour, from, from.Add(4*time.Hour))
+	if err != nil || !through.Equal(from.Add(4*time.Hour)) {
+		t.Fatalf("complete coverage=%s err=%v", through, err)
+	}
+}
+
+func TestRollupRunnerCoverageRejectsOldHotGenerationsButAcceptsLifecycle(t *testing.T) {
+	from := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	executor := &rollupMarkerExecutor{markers: []RollupMarker{
+		{Bucket: from, Generation: 20, GeneratedAt: from.Add(time.Hour)},
+		{Bucket: from.Add(time.Hour), Generation: 14, GeneratedAt: from.Add(2 * time.Hour)},
+		{Bucket: from.Add(2 * time.Hour), Generation: LifecycleGenerationFloor, GeneratedAt: from.Add(3 * time.Hour)},
+	}}
+	runner := &RollupRunner{executor: executor}
+	through, err := runner.CoveredThroughAtLeast(context.Background(), RollupOneHour, from, from.Add(3*time.Hour), 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !through.Equal(from.Add(time.Hour)) {
+		t.Fatalf("old hot generation authorized coverage through %s", through)
+	}
+
+	executor.markers[1].Generation = LifecycleGenerationFloor
+	through, err = runner.CoveredThroughAtLeast(context.Background(), RollupOneHour, from, from.Add(3*time.Hour), 15)
+	if err != nil || !through.Equal(from.Add(3*time.Hour)) {
+		t.Fatalf("lifecycle generation coverage=%s err=%v", through, err)
 	}
 }
 

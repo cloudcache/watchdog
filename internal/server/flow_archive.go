@@ -32,6 +32,7 @@ func (s *Server) startFlowArchive() error {
 	if err != nil {
 		return err
 	}
+	s.flowRollup = runner
 	store := s.flowLifecycle
 	if store == nil {
 		store = flowlifecycle.NewStore(s.db)
@@ -76,42 +77,90 @@ func (s *Server) startFlowArchive() error {
 	go deleteWorker.Run(workerContext)
 	go archiveDeleteWorker.Run(workerContext)
 	go scheduler.Run(workerContext)
+	if s.cfg.Flow.HotRollup.Enabled {
+		hot := &flowHotRollupScheduler{config: s.cfg.Flow.HotRollup, runner: runner, logf: log.Printf}
+		go hot.Run(workerContext)
+	}
 	return nil
 }
 
 // applyFlowStorageBoundary makes raw facts authoritative after the largest
-// contiguous reconciled UTC-day prefix. One-minute queries always use raw facts
-// because Storage V2 intentionally has no one-minute archive.
+// contiguous generation-marked prefix for the selected physical tier. A
+// lifecycle state alone is not sufficient: older reconciled days may predate a
+// newly introduced derived tier and therefore have no rows in that table.
 func (s *Server) applyFlowStorageBoundary(ctx context.Context, request *flowquery.Request) error {
-	if request == nil || s.flowLifecycle == nil {
+	if request == nil || (s.flowLifecycle == nil && s.flowRollup == nil) {
 		return nil
 	}
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From.UTC()
-	if request.Bucket == flowquery.BucketOneMinute {
+	// The remote-port archive is deliberately top-N bounded. An explicit port
+	// lookup must stay exact, so it uses raw facts instead of treating an absent
+	// long-tail aggregate row as zero.
+	if request.Dimension == flowquery.DimensionRemotePort && len(request.Filters.DimensionValues) > 0 {
 		return nil
 	}
-	boundary, err := s.flowLifecycle.ArchiveThrough(ctx, request.From, request.To)
-	if err != nil {
-		return err
+	boundary := request.From.UTC()
+	if s.flowRollup != nil {
+		resolution := flowch.RollupOneHour
+		if request.Bucket == flowquery.BucketOneMinute {
+			resolution = flowch.RollupOneMinute
+		} else if request.Bucket == flowquery.BucketOneDay {
+			resolution = flowch.RollupOneDay
+		}
+		covered, err := s.flowRollup.CoveredThroughAtLeast(
+			ctx, resolution, request.From, request.To, s.flowReadableGenerationFloor(),
+		)
+		if err != nil {
+			return err
+		}
+		boundary = covered
+	} else if s.flowLifecycle != nil && request.Bucket == flowquery.BucketOneHour {
+		var err error
+		boundary, err = s.flowLifecycle.ArchiveThrough(ctx, request.From, request.To)
+		if err != nil {
+			return err
+		}
 	}
 	request.ArchiveThrough = boundary
 	return nil
 }
 
 func (s *Server) applyFlowOverseasStorageBoundary(ctx context.Context, request *flowquery.OverseasRequest) error {
-	if request == nil || s.flowLifecycle == nil {
+	if request == nil || (s.flowLifecycle == nil && s.flowRollup == nil) {
 		return nil
 	}
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From.UTC()
-	if request.Bucket == flowquery.BucketOneMinute {
-		return nil
-	}
-	boundary, err := s.flowLifecycle.ArchiveThrough(ctx, request.From, request.To)
-	if err != nil {
-		return err
+	boundary := request.From.UTC()
+	if s.flowRollup != nil {
+		resolution := flowch.RollupOneHour
+		if request.Bucket == flowquery.BucketOneMinute {
+			resolution = flowch.RollupOneMinute
+		} else if request.Bucket == flowquery.BucketOneDay {
+			resolution = flowch.RollupOneDay
+		}
+		covered, err := s.flowRollup.CoveredThroughAtLeast(
+			ctx, resolution, request.From, request.To, s.flowReadableGenerationFloor(),
+		)
+		if err != nil {
+			return err
+		}
+		boundary = covered
+	} else if s.flowLifecycle != nil && request.Bucket == flowquery.BucketOneHour {
+		var err error
+		boundary, err = s.flowLifecycle.ArchiveThrough(ctx, request.From, request.To)
+		if err != nil {
+			return err
+		}
 	}
 	request.ArchiveThrough = boundary
 	return nil
+}
+
+func (s *Server) flowReadableGenerationFloor() uint64 {
+	if s == nil || !s.cfg.Flow.HotRollup.Enabled {
+		return 0
+	}
+	return s.cfg.Flow.HotRollup.MinimumGeneration
 }

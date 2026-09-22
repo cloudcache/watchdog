@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	clickhousemigration "github.com/cloudcache/watchdog/deploy/migration/clickhouse"
 	"github.com/cloudcache/watchdog/internal/flowch"
@@ -164,7 +163,8 @@ func (s *Server) applyClickHouseSchema(ctx context.Context) error {
 	}
 	native, err := flowch.NewNativeInserter(ctx, flowch.NativeConfig{
 		Address: s.cfg.ClickHouse.Address, Database: "default", User: s.cfg.ClickHouse.Username, Password: password,
-		ClientName: "watchdog-installer", MaxConns: 1, MinConns: 1, OperationTimeout: time.Hour,
+		ClientName: "watchdog-installer", MaxConns: 1, MinConns: 1,
+		OperationTimeout: s.cfg.ClickHouse.BatchOperationTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("connect ClickHouse installer: %w", err)

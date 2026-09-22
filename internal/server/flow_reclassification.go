@@ -575,6 +575,7 @@ func (s *Server) queryFlowReclassification(c *gin.Context) {
 		Metric: input.Metric, Dimensions: dimensions, Filters: input.Filters, Filter: input.Filter,
 		View: view, TopN: input.TopN, IncludeOther: input.IncludeOther, Timezone: input.Timezone, TimeWindows: input.TimeWindows,
 		Reclassification: &flowquery.ReclassificationSource{ID: run.ID, Generation: run.Generation},
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}, time.Now().UTC())
 	if err != nil {
 		writeFlowQueryError(c, err)

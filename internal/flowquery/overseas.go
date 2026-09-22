@@ -30,17 +30,18 @@ type OverseasFilters struct {
 }
 
 type OverseasRequest struct {
-	From           time.Time        `json:"from"`
-	To             time.Time        `json:"to"`
-	Bucket         Bucket           `json:"bucket"`
-	Metric         Metric           `json:"metric"`
-	GeoLevel       OverseasGeoLevel `json:"geo_level"`
-	View           View             `json:"view"`
-	TopN           uint16           `json:"top_n"`
-	IncludeOther   bool             `json:"include_other"`
-	Filters        OverseasFilters  `json:"filters,omitempty"`
-	StorageV2      bool             `json:"-"`
-	ArchiveThrough time.Time        `json:"-"`
+	From             time.Time        `json:"from"`
+	To               time.Time        `json:"to"`
+	Bucket           Bucket           `json:"bucket"`
+	Metric           Metric           `json:"metric"`
+	GeoLevel         OverseasGeoLevel `json:"geo_level"`
+	View             View             `json:"view"`
+	TopN             uint16           `json:"top_n"`
+	IncludeOther     bool             `json:"include_other"`
+	Filters          OverseasFilters  `json:"filters,omitempty"`
+	StorageV2        bool             `json:"-"`
+	ArchiveThrough   time.Time        `json:"-"`
+	ExecutionTimeout time.Duration    `json:"-"`
 }
 
 type CompiledOverseas struct {
@@ -141,12 +142,9 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		if archiveThrough.Before(from) || archiveThrough.After(to) || archiveThrough.Truncate(duration) != archiveThrough {
 			return CompiledOverseas{}, requestError("archive_through", ErrorInvalid, "archive boundary must be within the range and bucket-aligned")
 		}
-		if request.Bucket == BucketOneMinute && archiveThrough.After(from) {
-			return CompiledOverseas{}, requestError("archive_through", ErrorUnsupported, "Storage V2 has no one-minute overseas archive")
-		}
-		if archiveThrough.After(from) && archiveThrough.Before(to) && archiveThrough.Truncate(24*time.Hour) != archiveThrough {
-			return CompiledOverseas{}, requestError("archive_through", ErrorInvalid, "a Storage V2 overseas archive/raw split must be a UTC day boundary")
-		}
+		// The split is selected from complete generation markers. Recent hot
+		// buckets and reconciled cold buckets share the same atomic rollup
+		// contract, so source-bucket alignment is sufficient.
 		parameters = append(parameters,
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(duration/time.Second)),
@@ -187,20 +185,22 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 	identityScoped := len(request.Filters.DeviceIDs) > 0 || len(request.Filters.TargetIDs) > 0 || len(request.Filters.ExporterIDs) > 0
 	allRaw := request.StorageV2 && archiveThrough.Equal(from)
 	maxRowsToRead, maxBytesToRead := overseasScanBudgets(usesRawFacts && identityScoped)
+	settings := executionTimeSetting(request.ExecutionTimeout)
+	settings = append(settings, []ch.Setting{
+		{Key: "do_not_merge_across_partitions_select_final", Value: "1", Important: true},
+		{Key: "max_memory_usage", Value: "4294967296", Important: true},
+		{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
+		{Key: "result_overflow_mode", Value: "throw", Important: true},
+		{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
+		{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
+		{Key: "read_overflow_mode", Value: "throw", Important: true},
+		{Key: "join_use_nulls", Value: "0", Important: true},
+		{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
+		{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
+	}...)
 	query := ch.Query{
 		Body: body, Parameters: parameters,
-		Settings: []ch.Setting{
-			{Key: "max_execution_time", Value: rawExecutionTime(usesRawFacts && identityScoped), Important: true},
-			{Key: "max_memory_usage", Value: "4294967296", Important: true},
-			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
-			{Key: "result_overflow_mode", Value: "throw", Important: true},
-			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
-			{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
-			{Key: "read_overflow_mode", Value: "throw", Important: true},
-			{Key: "join_use_nulls", Value: "0", Important: true},
-			{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
-			{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
-		},
+		Settings: settings,
 	}
 	return CompiledOverseas{
 		Query: query, From: from, To: to, Bucket: request.Bucket, BucketDuration: duration,
@@ -275,7 +275,7 @@ func compileOverseasStorageV2Filters(filters OverseasFilters) (archive, raw []st
 const overseasLegacySourceSQL = `WITH
   latest AS (
     SELECT bucket, max(generation) AS generation
-    FROM {{TABLE}} FINAL
+    FROM {{TABLE}}
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
@@ -427,7 +427,7 @@ ORDER BY
 const overseasStorageV2SourceSQL = `WITH
   archive_latest AS (
     SELECT bucket, max(generation) AS generation
-    FROM {{TABLE}} FINAL
+    FROM {{TABLE}}
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket

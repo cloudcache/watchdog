@@ -49,10 +49,23 @@ func (r *RollupRunner) DropArchiveMonth(ctx context.Context, monthStart time.Tim
 	month := monthStart.UTC()
 	queryID = strings.TrimSpace(queryID)
 	if month.IsZero() || month.Location() != time.UTC || month.Day() != 1 || month.Hour() != 0 || month.Minute() != 0 || month.Second() != 0 || month.Nanosecond() != 0 ||
-		queryID == "" || len(queryID) > 128 {
+		queryID == "" || len(queryID) > 125 {
 		return Permanent(errors.New("archive deletion requires a UTC month and bounded query ID"))
 	}
 	partition := month.Year()*100 + int(month.Month())
+	// The 1d table is a derivative of the 1h lifecycle archive. Drop it first so
+	// a partial failure can only leave the authoritative 1h data available; a
+	// retry safely repeats the exact partition operation.
+	daily := ch.Query{
+		Body:    fmt.Sprintf("ALTER TABLE flow_aggregate_1d DROP PARTITION %d", partition),
+		QueryID: queryID + "-1d",
+		Settings: []ch.Setting{
+			{Key: "alter_sync", Value: "2", Important: true},
+		},
+	}
+	if err := r.executor.Do(ctx, daily); err != nil {
+		return classifyClickHouseError(fmt.Errorf("drop Flow daily archive partition %d: %w", partition, err))
+	}
 	query := ch.Query{
 		Body:    fmt.Sprintf("ALTER TABLE flow_aggregate_1h DROP PARTITION %d", partition),
 		QueryID: queryID,

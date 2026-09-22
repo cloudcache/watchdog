@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -21,10 +22,37 @@ type RollupResolution string
 const (
 	RollupOneMinute RollupResolution = "1m"
 	RollupOneHour   RollupResolution = "1h"
+	RollupOneDay    RollupResolution = "1d"
+
+	// LifecycleGenerationFloor reserves the high generation namespace for
+	// retention-policy rollups, which stay authoritative across hot-cache
+	// storage-shape rollouts.
+	LifecycleGenerationFloor = uint64(1) << 32
 )
 
 type RollupRequest struct {
-	Resolution  RollupResolution
+	Resolution       RollupResolution
+	SourceResolution RollupResolution
+	Bucket           time.Time
+	// BucketEnd enables one atomic, hour-local batch of one-minute buckets.
+	// Zero preserves the single-bucket contract used by lifecycle jobs.
+	BucketEnd   time.Time
+	Generation  uint64
+	GeneratedAt time.Time
+	// MarkerOnly publishes an authoritative empty bucket after the caller has
+	// separately proved that no physical countable raw record exists.
+	MarkerOnly bool
+	// Optional batch resource guards. Zero preserves the lifecycle runner's
+	// existing defaults; the hot scheduler supplies deployment-owned limits.
+	MaxThreads     uint64
+	Priority       uint64
+	MaxMemoryBytes uint64
+}
+
+// RollupMarker is the latest atomically published generation for one aggregate
+// bucket. Generations below 2^32 are reserved for the recent-query cache;
+// lifecycle archive generations use the policy-version namespace above it.
+type RollupMarker struct {
 	Bucket      time.Time
 	Generation  uint64
 	GeneratedAt time.Time
@@ -45,7 +73,7 @@ type StorageCounters struct {
 
 type RollupRunner struct {
 	executor queryExecutor
-	stats    [2]rollupCounters
+	stats    [3]rollupCounters
 	terminal terminalCounters
 	reaper   reaperCounters
 	now      func() time.Time
@@ -87,6 +115,7 @@ type RollupResolutionStats struct {
 type RollupStats struct {
 	OneMinute RollupResolutionStats
 	OneHour   RollupResolutionStats
+	OneDay    RollupResolutionStats
 	// TerminalPermanentFailures counts buckets abandoned on a non-retryable
 	// (permanent) classification; TerminalExhaustedFailures counts buckets whose
 	// retryable error (e.g. MEMORY_LIMIT) ran out of attempts. Both mean the
@@ -170,6 +199,139 @@ WHERE bucket = {bucket:DateTime('UTC')}
 	return generation, nil
 }
 
+// GenerationMarkers returns the latest complete generation for every covered
+// bucket in [from,to). The _generation row is written in the same INSERT SELECT
+// as the aggregate rows, so its presence is the coverage authority for both
+// the hot cache and the reconciled archive.
+func (r *RollupRunner) GenerationMarkers(ctx context.Context, resolution RollupResolution, from, to time.Time) ([]RollupMarker, error) {
+	duration, table, err := rollupTarget(resolution)
+	if err != nil {
+		return nil, Permanent(err)
+	}
+	from, to = from.UTC(), to.UTC()
+	if r == nil || r.executor == nil {
+		return nil, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	if from.IsZero() || !to.After(from) || from.Truncate(duration) != from || to.Truncate(duration) != to {
+		return nil, Permanent(fmt.Errorf("%s rollup marker range must be increasing and bucket-aligned", resolution))
+	}
+	var buckets proto.ColDateTime
+	buckets.Location = time.UTC
+	var generations proto.ColUInt64
+	generatedAt := new(proto.ColDateTime64).WithPrecision(proto.PrecisionMilli).WithLocation(time.UTC)
+	markers := make([]RollupMarker, 0, int(to.Sub(from)/duration))
+	query := ch.Query{
+		Body: fmt.Sprintf(`SELECT
+  bucket,
+  max(generation) AS latest_generation,
+  argMax(generated_at, generation) AS generated_at
+FROM %s
+WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
+  AND dimension_kind = '_generation'
+GROUP BY bucket
+ORDER BY bucket ASC`, table),
+		Parameters: ch.Parameters(map[string]any{
+			"from": from.Format("2006-01-02 15:04:05"),
+			"to":   to.Format("2006-01-02 15:04:05"),
+		}),
+		Result: proto.Results{
+			{Name: "bucket", Data: &buckets},
+			{Name: "latest_generation", Data: &generations},
+			{Name: "generated_at", Data: generatedAt},
+		},
+	}
+	query.OnResult = func(_ context.Context, block proto.Block) error {
+		if buckets.Rows() != block.Rows || generations.Rows() != block.Rows || generatedAt.Rows() != block.Rows {
+			return Permanent(errors.New("ClickHouse rollup marker query returned inconsistent columns"))
+		}
+		for index := 0; index < block.Rows; index++ {
+			markers = append(markers, RollupMarker{
+				Bucket: buckets.Row(index).UTC(), Generation: generations[index], GeneratedAt: generatedAt.Row(index).UTC(),
+			})
+		}
+		return nil
+	}
+	if err := r.executor.Do(ctx, query); err != nil {
+		return nil, classifyClickHouseError(fmt.Errorf("read ClickHouse %s rollup markers: %w", resolution, err))
+	}
+	return markers, nil
+}
+
+// CoveredThrough returns the first uncovered bucket boundary in [from,to), or
+// to when every bucket has a complete generation marker. It deliberately does
+// not distinguish hot and lifecycle generations: both were built by the same
+// replay-safe rollup and a later lifecycle generation supersedes the hot one.
+func (r *RollupRunner) CoveredThrough(ctx context.Context, resolution RollupResolution, from, to time.Time) (time.Time, error) {
+	return r.CoveredThroughAtLeast(ctx, resolution, from, to, 0)
+}
+
+// CoveredThroughAtLeast is CoveredThrough with a lower bound for hot-cache
+// generations. It is used during an online storage-shape rollout so markers
+// written by older binaries cannot authorize reads before their buckets have
+// been republished. Lifecycle generations occupy the reserved high namespace
+// and remain authoritative regardless of the hot-cache floor.
+func (r *RollupRunner) CoveredThroughAtLeast(ctx context.Context, resolution RollupResolution, from, to time.Time, minimumGeneration uint64) (time.Time, error) {
+	duration, _, err := rollupTarget(resolution)
+	if err != nil {
+		return time.Time{}, Permanent(err)
+	}
+	markers, err := r.GenerationMarkers(ctx, resolution, from, to)
+	if err != nil {
+		return time.Time{}, err
+	}
+	expected := from.UTC()
+	for _, marker := range markers {
+		if marker.Bucket.Before(expected) {
+			continue
+		}
+		validGeneration := marker.Generation >= LifecycleGenerationFloor ||
+			marker.Generation >= minimumGeneration
+		if !marker.Bucket.Equal(expected) || marker.Generation == 0 || !validGeneration {
+			break
+		}
+		expected = expected.Add(duration)
+	}
+	if expected.After(to.UTC()) {
+		return to.UTC(), nil
+	}
+	return expected, nil
+}
+
+// RawBucketHasRecords cheaply tests physical countable input without FINAL.
+// It is used only to prove that a marker-only hot bucket is safe. A physical
+// row is sufficient to reject that shortcut; absence is definitive.
+func (r *RollupRunner) RawBucketHasRecords(ctx context.Context, resolution RollupResolution, bucket time.Time) (bool, error) {
+	duration, _, err := rollupTarget(resolution)
+	if err != nil {
+		return false, Permanent(err)
+	}
+	bucket = bucket.UTC()
+	if r == nil || r.executor == nil {
+		return false, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	if bucket.IsZero() || bucket.Truncate(duration) != bucket {
+		return false, Permanent(fmt.Errorf("%s raw existence bucket must be UTC-aligned", resolution))
+	}
+	value, err := r.scalarUInt64(ctx, ch.Query{
+		Body: `SELECT toUInt64(count()) AS value
+FROM (
+  SELECT 1
+  FROM flow_records
+  PREWHERE event_time >= {start:DateTime('UTC')} AND event_time < {end:DateTime('UTC')}
+  WHERE disposition = 'count'
+  LIMIT 1
+)`,
+		Parameters: ch.Parameters(map[string]any{
+			"start": bucket.Format("2006-01-02 15:04:05"),
+			"end":   bucket.Add(duration).Format("2006-01-02 15:04:05"),
+		}),
+	})
+	if err != nil {
+		return false, fmt.Errorf("check %s physical raw bucket: %w", resolution, err)
+	}
+	return value != 0, nil
+}
+
 // BucketNeedsRepair reports whether a bucket's latest rolled generation no
 // longer reflects its base data: the number of base records now in flow_records
 // for the bucket differs from the received_records its aggregate recorded. Base
@@ -205,7 +367,7 @@ WHERE bucket = {bucket:DateTime('UTC')}
 	if err != nil {
 		return false, fmt.Errorf("read %s aggregate received_records: %w", resolution, err)
 	}
-	live, err := r.scalarUInt64(ctx, ch.Query{
+	baseQuery := ch.Query{
 		Body: `SELECT count() AS value
 FROM flow_records FINAL
 WHERE event_time >= {start:DateTime('UTC')}
@@ -214,11 +376,51 @@ WHERE event_time >= {start:DateTime('UTC')}
 		Parameters: ch.Parameters(map[string]any{
 			"start": bucketParam, "end": end.Format("2006-01-02 15:04:05"),
 		}),
-	})
+	}
+	if resolution == RollupOneDay {
+		baseQuery.Body = `SELECT sum(received_records) AS value
+FROM flow_aggregate_1h FINAL
+INNER JOIN (
+  SELECT bucket, max(generation) AS generation
+  FROM flow_aggregate_1h
+  WHERE bucket >= {start:DateTime('UTC')} AND bucket < {end:DateTime('UTC')}
+    AND dimension_kind = '_generation'
+  GROUP BY bucket
+) AS latest USING (bucket, generation)
+WHERE bucket >= {start:DateTime('UTC')} AND bucket < {end:DateTime('UTC')}
+  AND dimension_kind = 'total'`
+	}
+	live, err := r.scalarUInt64(ctx, baseQuery)
 	if err != nil {
 		return false, fmt.Errorf("read %s base record count: %w", resolution, err)
 	}
-	return live != stored, nil
+	if live != stored || resolution != RollupOneDay {
+		return live != stored, nil
+	}
+	newerSource, err := r.scalarUInt64(ctx, ch.Query{
+		Body: `SELECT toUInt64(
+  (SELECT max(source.generated_at)
+   FROM flow_aggregate_1h AS source FINAL
+   INNER JOIN (
+     SELECT bucket, max(generation) AS generation
+     FROM flow_aggregate_1h
+     WHERE bucket >= {start:DateTime('UTC')} AND bucket < {end:DateTime('UTC')}
+       AND dimension_kind = '_generation'
+     GROUP BY bucket
+   ) AS latest USING (bucket, generation)
+   WHERE source.bucket >= {start:DateTime('UTC')} AND source.bucket < {end:DateTime('UTC')}
+     AND source.dimension_kind = '_generation')
+  >
+  (SELECT argMax(generated_at, generation)
+   FROM flow_aggregate_1d FINAL
+   WHERE bucket = {start:DateTime('UTC')} AND dimension_kind = '_generation')
+) AS value`,
+		Parameters: baseQuery.Parameters,
+	})
+	if err != nil {
+		return false, fmt.Errorf("compare %s source generation time: %w", resolution, err)
+	}
+	return newerSource != 0, nil
 }
 
 // scalarUInt64 runs a query returning a single UInt64 column named "value" and
@@ -478,7 +680,11 @@ func (r *RollupRunner) Run(ctx context.Context, request RollupRequest) error {
 		now = r.now()
 	}
 	storeMax(&r.stats[index].lastSuccessUnix, uint64(now.UTC().Unix()))
-	storeMax(&r.stats[index].latestCompletedBucketUnix, uint64(request.Bucket.UTC().Add(duration).Unix()))
+	completedThrough := request.Bucket.UTC().Add(duration)
+	if !request.BucketEnd.IsZero() {
+		completedThrough = request.BucketEnd.UTC()
+	}
+	storeMax(&r.stats[index].latestCompletedBucketUnix, uint64(completedThrough.Unix()))
 	return nil
 }
 
@@ -489,6 +695,7 @@ func (r *RollupRunner) Stats() RollupStats {
 	return RollupStats{
 		OneMinute:                 snapshotRollupCounters(&r.stats[0]),
 		OneHour:                   snapshotRollupCounters(&r.stats[1]),
+		OneDay:                    snapshotRollupCounters(&r.stats[2]),
 		TerminalPermanentFailures: r.terminal.permanent.Load(),
 		TerminalExhaustedFailures: r.terminal.exhausted.Load(),
 		ReaperRepairsGap:          r.reaper.repairsGap.Load(),
@@ -556,6 +763,9 @@ func snapshotRollupCounters(value *rollupCounters) RollupResolutionStats {
 }
 
 func rollupStatsTarget(resolution RollupResolution) (int, time.Duration) {
+	if resolution == RollupOneDay {
+		return 2, 24 * time.Hour
+	}
 	if resolution == RollupOneHour {
 		return 1, time.Hour
 	}
@@ -578,8 +788,19 @@ func ValidateRollupRequest(request RollupRequest) error {
 	if err != nil {
 		return err
 	}
+	if request.SourceResolution != "" &&
+		!(request.Resolution == RollupOneHour && request.SourceResolution == RollupOneMinute) {
+		return errors.New("rollup source resolution is invalid")
+	}
+	if request.MarkerOnly && (request.SourceResolution != "" || !request.BucketEnd.IsZero() || request.Resolution == RollupOneDay) {
+		return errors.New("marker-only rollup must be one empty minute/hour bucket without a derived source")
+	}
 	if request.Generation == 0 || request.GeneratedAt.IsZero() {
 		return errors.New("rollup generation and generated_at are required")
+	}
+	if request.MaxThreads > 256 || request.Priority > 10_000 ||
+		(request.MaxMemoryBytes > 0 && request.MaxMemoryBytes < 1<<30) {
+		return errors.New("rollup resource limits are invalid")
 	}
 	bucket := request.Bucket.UTC()
 	end := bucket.Add(duration)
@@ -587,6 +808,15 @@ func ValidateRollupRequest(request RollupRequest) error {
 	_, generatedOffset := request.GeneratedAt.Zone()
 	if bucket.IsZero() || bucketOffset != 0 || generatedOffset != 0 || bucket.Truncate(duration) != bucket {
 		return fmt.Errorf("%s rollup bucket and generated_at must be UTC and bucket-aligned", request.Resolution)
+	}
+	if !request.BucketEnd.IsZero() {
+		_, endOffset := request.BucketEnd.Zone()
+		end = request.BucketEnd.UTC()
+		if request.Resolution != RollupOneMinute || endOffset != 0 || !end.After(bucket) ||
+			end.Sub(bucket) > time.Hour || end.Truncate(time.Minute) != end ||
+			bucket.Truncate(time.Hour) != end.Add(-time.Nanosecond).Truncate(time.Hour) {
+			return errors.New("minute rollup batch must be UTC-aligned, increasing, at most one hour and hour-local")
+		}
 	}
 	if request.GeneratedAt.UTC().Before(end) {
 		return fmt.Errorf("%s rollup generated_at precedes the closed bucket end", request.Resolution)
@@ -604,6 +834,11 @@ func ValidateRollupRequest(request RollupRequest) error {
 // a test can lower it; wire it to config when deployment tuning is needed.
 var rollupIPTopN uint32 = 1000
 
+// remote_port was the live cardinality outlier: roughly 3.7M of 3.8M latest
+// rows across seven hourly buckets. Keep enough candidates for report top-N,
+// but fold its long tail just like IP dimensions so the read tier stays small.
+var rollupPortTopN uint32 = 256
+
 func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 	duration, table, err := rollupTarget(request.Resolution)
 	if err != nil {
@@ -615,14 +850,31 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 	bucket := request.Bucket.UTC()
 	generatedAt := request.GeneratedAt.UTC()
 	end := bucket.Add(duration)
-	tokenInput := fmt.Sprintf("watchdog-flow-rollup-v1\x00%s\x00%d\x00%d", request.Resolution, bucket.Unix(), request.Generation)
+	if !request.BucketEnd.IsZero() {
+		end = request.BucketEnd.UTC()
+	}
+	tokenInput := fmt.Sprintf("watchdog-flow-rollup-v2\x00%s\x00%d\x00%d\x00%d\x00%t", request.Resolution, bucket.Unix(), end.Unix(), request.Generation, request.MarkerOnly)
 	token := sha256.Sum256([]byte(tokenInput))
+	bucketExpression := "toStartOfMinute(event_time)"
+	if request.Resolution == RollupOneHour {
+		bucketExpression = "toStartOfHour(event_time)"
+	}
+	body := fmt.Sprintf(rollupSQL, table, bucketExpression)
+	if request.MarkerOnly {
+		body = fmt.Sprintf(markerOnlyRollupSQL, table)
+	} else if request.Resolution == RollupOneDay {
+		body = fmt.Sprintf(derivedRollupSQL, table, "flow_aggregate_1h", "flow_aggregate_1h")
+	} else if request.Resolution == RollupOneHour && request.SourceResolution == RollupOneMinute {
+		body = fmt.Sprintf(derivedRollupSQL, table, "flow_aggregate_1m", "flow_aggregate_1m")
+	}
 	query := ch.Query{
-		Body: fmt.Sprintf(rollupSQL, table),
+		Body: body,
 		Parameters: ch.Parameters(map[string]any{
 			"bucket_start": bucket.Format("2006-01-02 15:04:05"),
 			"bucket_end":   end.Format("2006-01-02 15:04:05"), "generation": request.Generation,
-			"generated_at": generatedAt.Format("2006-01-02 15:04:05.000"), "top_n": rollupIPTopN,
+			"generated_at":   generatedAt.Format("2006-01-02 15:04:05.000"),
+			"bucket_seconds": uint32(duration / time.Second),
+			"top_n":          rollupIPTopN, "port_top_n": rollupPortTopN,
 		}),
 		Settings: []ch.Setting{
 			{Key: "async_insert", Value: "0", Important: true},
@@ -635,6 +887,17 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 			{Key: "max_memory_usage", Value: "10737418240", Important: true},
 		},
 	}
+	if request.MaxMemoryBytes > 0 {
+		groupBySpill := min(request.MaxMemoryBytes/2, uint64(4<<30))
+		query.Settings[3].Value = strconv.FormatUint(groupBySpill, 10)
+		query.Settings[4].Value = strconv.FormatUint(request.MaxMemoryBytes, 10)
+	}
+	if request.MaxThreads > 0 {
+		query.Settings = append(query.Settings, ch.Setting{Key: "max_threads", Value: strconv.FormatUint(request.MaxThreads, 10), Important: true})
+	}
+	if request.Priority > 0 {
+		query.Settings = append(query.Settings, ch.Setting{Key: "priority", Value: strconv.FormatUint(request.Priority, 10), Important: true})
+	}
 	return query, nil
 }
 
@@ -644,6 +907,8 @@ func rollupTarget(resolution RollupResolution) (time.Duration, string, error) {
 		return time.Minute, "flow_aggregate_1m", nil
 	case RollupOneHour:
 		return time.Hour, "flow_aggregate_1h", nil
+	case RollupOneDay:
+		return 24 * time.Hour, "flow_aggregate_1d", nil
 	default:
 		return 0, "", fmt.Errorf("unsupported rollup resolution %q", resolution)
 	}
@@ -665,14 +930,17 @@ WITH
   {bucket_end:DateTime('UTC')} AS rollup_end,
   {generation:UInt64} AS rollup_generation,
   {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at,
-  {top_n:UInt32} AS rollup_top_n
+  {bucket_seconds:UInt32} AS rollup_bucket_seconds,
+  {top_n:UInt32} AS rollup_top_n,
+  {port_top_n:UInt32} AS rollup_port_top_n
 SELECT
   bucket, target_id, device_id, exporter_id,
   business_direction, category, business, dimension_kind,
-  -- Fold the per-IP long tail (beyond the top-N by traffic) into one _other
-  -- bucket so src_ip/dst_ip do not materialize at ~raw cardinality into the
-  -- 180/400-day aggregate tables. Non-IP kinds have ip_rank = 0 and pass through.
-  if(dimension_kind IN ('src_ip', 'dst_ip') AND ip_rank > rollup_top_n, '_other', dimension_value) AS dimension_value,
+  -- Fold high-cardinality long tails into one _other bucket. remote_port was
+  -- the live outlier, while src_ip/dst_ip retain a larger diagnostic budget.
+  if(dimension_kind IN ('src_ip', 'dst_ip', 'remote_port') AND cardinality_rank >
+       if(dimension_kind = 'remote_port', rollup_port_top_n, rollup_top_n),
+     '_other', dimension_value) AS dimension_value,
   dimension_snapshot_id, geo_version, classification_version,
   sum(raw_bytes) AS raw_bytes,
   sum(raw_packets) AS raw_packets,
@@ -690,16 +958,16 @@ FROM (
     raw_bytes, raw_packets, estimated_bytes, estimated_packets,
     received_records, unknown_sampling_records, quality_records,
     generation, generated_at,
-    if(dimension_kind IN ('src_ip', 'dst_ip'),
+    if(dimension_kind IN ('src_ip', 'dst_ip', 'remote_port'),
        row_number() OVER (
-         PARTITION BY target_id, device_id, exporter_id,
+         PARTITION BY bucket, target_id, device_id, exporter_id,
            business_direction, category, business, dimension_kind,
            dimension_snapshot_id, geo_version, classification_version
          ORDER BY estimated_bytes DESC, dimension_value ASC),
-       0) AS ip_rank
+       0) AS cardinality_rank
   FROM (
     SELECT
-      rollup_start AS bucket,
+      %s AS bucket,
       target_id,
       device_id,
       exporter_id,
@@ -747,9 +1015,104 @@ FROM (
       AND event_time < rollup_end
       AND disposition = 'count'
     GROUP BY
-      target_id, device_id, exporter_id, business_direction, category,
+      bucket, target_id, device_id, exporter_id, business_direction, category,
       business, dimension_kind, dimension_value, dimension_snapshot_id,
       geo_version, classification_version
+  )
+)
+GROUP BY
+  bucket, target_id, device_id, exporter_id, business_direction, category,
+  business, dimension_kind, dimension_value, dimension_snapshot_id,
+  geo_version, classification_version, generation, generated_at
+UNION ALL
+SELECT
+  toDateTime(rollup_start + toIntervalSecond(toUInt32(number) * rollup_bucket_seconds)),
+  '', '', '', 'ambiguous', 'unknown', '',
+  '_generation', '', '', '', 0,
+  0, 0, 0, 0, 0, 0, 0, rollup_generation, rollup_generated_at
+FROM numbers(toUInt64(intDiv(dateDiff('second', rollup_start, rollup_end), rollup_bucket_seconds)))`
+
+const markerOnlyRollupSQL = `INSERT INTO %s (
+  bucket, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind, dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
+  raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+  received_records, unknown_sampling_records, quality_records,
+  generation, generated_at)
+SELECT
+  {bucket_start:DateTime('UTC')}, '', '', '', 'ambiguous', 'unknown', '',
+  '_generation', '', '', '', 0,
+  0, 0, 0, 0, 0, 0, 0, {generation:UInt64}, {generated_at:DateTime64(3, 'UTC')}`
+
+// derivedRollupSQL compacts a finer, atomically published aggregate tier into
+// a coarser one. The hot scheduler uses it for 1m -> 1h only after verifying
+// all 60 source markers; lifecycle uses it for 1h -> 1d after reconciliation.
+// It avoids expanding the raw EAV dimensions a second time for every hour.
+const derivedRollupSQL = `INSERT INTO %s (
+  bucket, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind, dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
+  raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+  received_records, unknown_sampling_records, quality_records,
+  generation, generated_at)
+WITH
+  {bucket_start:DateTime('UTC')} AS rollup_start,
+  {bucket_end:DateTime('UTC')} AS rollup_end,
+  {generation:UInt64} AS rollup_generation,
+  {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at,
+  {top_n:UInt32} AS rollup_top_n,
+  {port_top_n:UInt32} AS rollup_port_top_n,
+  latest AS (
+    SELECT bucket, max(generation) AS generation
+    FROM %s
+    WHERE bucket >= rollup_start AND bucket < rollup_end
+      AND dimension_kind = '_generation'
+    GROUP BY bucket
+  )
+SELECT
+  bucket, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind,
+  if(dimension_kind IN ('src_ip', 'dst_ip', 'remote_port') AND dimension_value != '_other' AND cardinality_rank >
+       if(dimension_kind = 'remote_port', rollup_port_top_n, rollup_top_n),
+     '_other', dimension_value) AS dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
+  sum(raw_bytes), sum(raw_packets), sum(estimated_bytes), sum(estimated_packets),
+  sum(received_records), sum(unknown_sampling_records), sum(quality_records),
+  generation, generated_at
+FROM (
+  SELECT *,
+    if(dimension_kind IN ('src_ip', 'dst_ip', 'remote_port'),
+       row_number() OVER (
+         PARTITION BY target_id, device_id, exporter_id,
+           business_direction, category, business, dimension_kind,
+           dimension_snapshot_id, geo_version, classification_version
+         ORDER BY (dimension_value = '_other') ASC, estimated_bytes DESC, dimension_value ASC),
+       0) AS cardinality_rank
+  FROM (
+    SELECT
+      rollup_start AS bucket,
+      source.target_id, source.device_id, source.exporter_id,
+      source.business_direction, source.category, source.business,
+      source.dimension_kind, source.dimension_value,
+      source.dimension_snapshot_id, source.geo_version, source.classification_version,
+      sum(source.raw_bytes) AS raw_bytes,
+      sum(source.raw_packets) AS raw_packets,
+      sum(source.estimated_bytes) AS estimated_bytes,
+      sum(source.estimated_packets) AS estimated_packets,
+      sum(source.received_records) AS received_records,
+      sum(source.unknown_sampling_records) AS unknown_sampling_records,
+      sum(source.quality_records) AS quality_records,
+      rollup_generation AS generation,
+      rollup_generated_at AS generated_at
+    FROM %s AS source FINAL
+    INNER JOIN latest USING (bucket, generation)
+    WHERE source.bucket >= rollup_start AND source.bucket < rollup_end
+      AND source.dimension_kind != '_generation'
+    GROUP BY
+      source.target_id, source.device_id, source.exporter_id,
+      source.business_direction, source.category, source.business,
+      source.dimension_kind, source.dimension_value,
+      source.dimension_snapshot_id, source.geo_version, source.classification_version
   )
 )
 GROUP BY

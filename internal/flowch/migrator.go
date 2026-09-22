@@ -138,7 +138,8 @@ func (m *Migrator) Apply(ctx context.Context, available []Migration, options Mig
 			return run, fmt.Errorf("record ClickHouse migration %03d applying state: %w", migration.Version, err)
 		}
 		for statementIndex := int(completed); statementIndex < len(migration.Statements); statementIndex++ {
-			if err := m.executor.Do(ctx, synchronousMigrationQuery(migration.Statements[statementIndex])); err != nil {
+			statement := migrationStatementForExecution(migration.Version, migration.Statements[statementIndex])
+			if err := m.executor.Do(ctx, synchronousMigrationQuery(statement)); err != nil {
 				statementErr := fmt.Errorf("execute ClickHouse migration %03d statement %d: %w", migration.Version, statementIndex+1, err)
 				generation++
 				if stateErr := m.writeState(ctx, migration, MigrationFailed, uint32(statementIndex), options.LockOwner, statementErr.Error(), generation); stateErr != nil {
@@ -164,6 +165,21 @@ func (m *Migrator) Apply(ctx context.Context, available []Migration, options Mig
 		run.AppliedVersions = append(run.AppliedVersions, migration.Version)
 	}
 	return run, nil
+}
+
+// migrationStatementForExecution preserves the immutable released migration
+// bytes/checksum while adapting two legacy DateTime64 TTL expressions to the
+// syntax accepted by ClickHouse 24.9. Both tables are rebuilt without those
+// TTLs by Storage V2 migration 011; this compatibility applies only while a
+// fresh installation crosses migration 001.
+func migrationStatementForExecution(version uint32, statement string) string {
+	if version != 1 {
+		return statement
+	}
+	return strings.NewReplacer(
+		"TTL event_time + INTERVAL", "TTL toDateTime(event_time) + INTERVAL",
+		"TTL inserted_at + INTERVAL", "TTL toDateTime(inserted_at) + INTERVAL",
+	).Replace(statement)
 }
 
 // Unlock removes an orphaned lock only when the exact owner token is given.

@@ -155,6 +155,18 @@ func NewArchiveHandler(store archiveStore, runner archiveRunner) opjob.Handler {
 				return "", err
 			}
 		}
+		// The daily tier is derived from the 24 complete hourly generations. It
+		// is query acceleration, not a second conservation authority; the raw
+		// versus hourly comparison below remains the deletion gate.
+		if err := runner.Run(ctx, flowch.RollupRequest{
+			Resolution: flowch.RollupOneDay, Bucket: day, Generation: payload.Generation, GeneratedAt: generatedAt,
+		}); err != nil {
+			var permanent *flowch.PermanentError
+			if errors.As(err, &permanent) {
+				return "", opjob.TerminalError(err)
+			}
+			return "", err
+		}
 		if err := store.MarkArchiveWritten(ctx, policy, day, payload.Generation, job.ID, time.Now()); err != nil {
 			return "", err
 		}

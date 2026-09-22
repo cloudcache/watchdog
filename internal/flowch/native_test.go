@@ -93,6 +93,13 @@ func TestOperationTimeoutExecutorBoundsUnboundedAndLongerContexts(t *testing.T) 
 	}
 }
 
+func TestNewNativeInserterRequiresExplicitOperationTimeout(t *testing.T) {
+	if _, err := NewNativeInserter(context.Background(), NativeConfig{}); err == nil ||
+		!strings.Contains(err.Error(), "operation timeout must be positive") {
+		t.Fatalf("expected explicit operation timeout validation, got %v", err)
+	}
+}
+
 func TestNativeReadyRequiresStorageV2WithoutLegacyHashColumns(t *testing.T) {
 	ready := &NativeInserter{executor: readinessExecutor{requiredRecords: 6, requiredReceipts: 12, requiredQuarantine: 8, requiredCounters: 9}}
 	if err := ready.Ready(context.Background()); err != nil {

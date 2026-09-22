@@ -23,7 +23,6 @@ import (
 const (
 	defaultClickHouseAddress  = "127.0.0.1:9000"
 	defaultClickHouseDatabase = "watchdog_flow"
-	defaultOperationTimeout   = 2 * time.Minute
 	flowRecordsTable          = "flow_records"
 	flowReceiptsTable         = "flow_ingest_receipts"
 	flowQuarantineTable       = "flow_quarantined_datagrams"
@@ -104,17 +103,14 @@ func NewNativeInserter(ctx context.Context, config NativeConfig) (*NativeInserte
 	if config.ClientName == "" {
 		config.ClientName = "watchdog-flow-worker"
 	}
-	if config.OperationTimeout == 0 {
-		config.OperationTimeout = defaultOperationTimeout
-	}
 	if !validClickHouseIdentifier(config.Database) {
 		return nil, errors.New("ClickHouse database name is invalid")
 	}
 	if config.MaxConns < 0 || config.MinConns < 0 || (config.MaxConns != 0 && config.MinConns > config.MaxConns) {
 		return nil, errors.New("ClickHouse connection limits are invalid")
 	}
-	if config.DialTimeout < 0 || config.ReadTimeout < 0 || config.OperationTimeout < 0 {
-		return nil, errors.New("ClickHouse timeouts must not be negative")
+	if config.DialTimeout < 0 || config.ReadTimeout < 0 || config.OperationTimeout <= 0 {
+		return nil, errors.New("ClickHouse dial/read timeouts must not be negative and operation timeout must be positive")
 	}
 	var tlsConfig *tls.Config
 	if config.TLS != nil {

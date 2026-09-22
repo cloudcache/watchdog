@@ -118,19 +118,22 @@ func TestArchiveHandlerBuildsAndReconcilesWholeUTCDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantGeneration, _ := Generation(policy.Version, 2)
-	if result != fmt.Sprintf("clickhouse:flow:1h:2026-09-01:p3:g%d", wantGeneration) || len(runner.requests) != 24 {
+	if result != fmt.Sprintf("clickhouse:flow:1h:2026-09-01:p3:g%d", wantGeneration) || len(runner.requests) != 25 {
 		t.Fatalf("result=%q requests=%d", result, len(runner.requests))
 	}
-	for hour, request := range runner.requests {
+	for hour, request := range runner.requests[:24] {
 		if request.Resolution != flowch.RollupOneHour || request.Generation != wantGeneration ||
 			!request.Bucket.Equal(policy.BootstrapFrom.Add(time.Duration(hour)*time.Hour)) {
 			t.Fatalf("hour %d request=%+v", hour, request)
 		}
 	}
+	if daily := runner.requests[24]; daily.Resolution != flowch.RollupOneDay || daily.Generation != wantGeneration || !daily.Bucket.Equal(policy.BootstrapFrom) {
+		t.Fatalf("daily request=%+v", daily)
+	}
 	if store.state.State != PartitionReconciled || store.state.Source != lifecycleCounters(counters) {
 		t.Fatalf("state=%+v", store.state)
 	}
-	if _, err := NewArchiveHandler(store, runner)(context.Background(), job); err != nil || len(runner.requests) != 24 {
+	if _, err := NewArchiveHandler(store, runner)(context.Background(), job); err != nil || len(runner.requests) != 25 {
 		t.Fatalf("completed replay rewrote archive: requests=%d err=%v", len(runner.requests), err)
 	}
 }
@@ -149,7 +152,7 @@ func TestArchiveHandlerResumesFromCheckpointAndClassifiesFailures(t *testing.T) 
 	if _, err := NewArchiveHandler(store, runner)(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.requests) != 7 || !runner.requests[0].Bucket.Equal(policy.BootstrapFrom.Add(17*time.Hour)) {
+	if len(runner.requests) != 8 || !runner.requests[0].Bucket.Equal(policy.BootstrapFrom.Add(17*time.Hour)) || runner.requests[7].Resolution != flowch.RollupOneDay {
 		t.Fatalf("resume requests=%d first=%v", len(runner.requests), runner.requests[0].Bucket)
 	}
 

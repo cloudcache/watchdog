@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowquery"
@@ -177,6 +178,7 @@ func (s *Server) registerFlowReportRoutes(auth *gin.RouterGroup, view gin.Handle
 	reports.GET("/capabilities", s.flowReportCapabilities)
 	reports.GET("/references", s.flowReportReferences)
 	reports.POST("/query", s.queryFlowReport)
+	reports.GET("/query/:id", s.getFlowReportQuery)
 }
 
 // flowReportCapabilities advertises the report kinds, groupings and metrics the v2
@@ -359,12 +361,6 @@ func reportPanelSpecs(req flowReportRequest) []reportPanelSpec {
 	return filtered
 }
 
-// flowReportDeadline bounds a whole multi-panel report request. It is far above
-// any legitimate report so it only stops a pathological runaway from monopolizing
-// a pooled ClickHouse connection; per-panel ClickHouse execution limits are set
-// separately by the query compilers.
-const flowReportDeadline = 120 * time.Second
-
 func (s *Server) queryFlowReport(c *gin.Context) {
 	if !s.flowQueryReady(c) {
 		return
@@ -402,27 +398,33 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 	}
 	now := time.Now().UTC()
 	scope := flowquery.Scope{AllowedViews: []flowquery.View{view}}
-	// A report runs several panel queries sequentially, each with its own
-	// ClickHouse execution limit but no overall bound. Cap the whole request so a
-	// pathological report cannot hold a pooled ClickHouse connection far longer
-	// than any legitimate multi-panel report (which completes well under a
-	// second); a report that needs longer belongs in an async export.
-	ctx, cancel := context.WithTimeout(c.Request.Context(), flowReportDeadline)
+	if s.flowReportQueryNeedsAsync(req) {
+		s.enqueueFlowReportQuery(c, view, req)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), s.cfg.Flow.Query.SynchronousTimeout)
 	defer cancel()
-	panels, warnings, err := s.buildFlowReport(ctx, scope, view, req, now, currentPrincipal(c).can("flow.vpn.view"))
+	response, err := s.buildFlowReportResponse(ctx, scope, view, req, now, currentPrincipal(c).can("flow.vpn.view"))
 	if err != nil {
 		writeFlowQueryError(c, err)
 		return
+	}
+	s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.report.query", "flow_report", string(req.Kind), req.Operator)
+	c.JSON(http.StatusOK, response)
+}
+
+func (s *Server) buildFlowReportResponse(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, now time.Time, canVPNView bool) (gin.H, error) {
+	panels, warnings, err := s.buildFlowReport(ctx, scope, view, req, now, canVPNView)
+	if err != nil {
+		return nil, err
 	}
 	// A report-level plan gives the response its requested/effective range and the
 	// source→display step, mirroring the per-panel aggregate planning.
 	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
 	if err != nil {
-		writeFlowQueryError(c, err)
-		return
+		return nil, err
 	}
 	completeRatio, partial := flowReportCompleteness(panels, warnings)
-	s.auditFlowQuery(c.Request.Context(), currentPrincipal(c).UserID, "flow.report.query", "flow_report", string(req.Kind), req.Operator)
 	data := gin.H{
 		"schema_version": flowReportSchemaVersion,
 		"kind":           req.Kind,
@@ -451,14 +453,14 @@ func (s *Server) queryFlowReport(c *gin.Context) {
 		}
 		meta["operator_selection"] = req.Operator
 	}
-	c.JSON(http.StatusOK, gin.H{
+	return gin.H{
 		"data": data,
 		// meta carries completeness scalars; the report's panel warnings live in
 		// data.warnings. The frontend concatenates data.warnings + meta.warnings, so
 		// mirroring the same list here would double every warning — v2 produces no
 		// separate completeness-level warnings, so meta.warnings stays absent.
 		"meta": meta,
-	})
+	}, nil
 }
 
 // flowReportCompleteness derives the report-level completeness from its panels: the
@@ -491,58 +493,40 @@ func flowReportCompleteness(panels []flowReportPanel, warnings []string) (float6
 	return complete, partial
 }
 
-// buildFlowReport runs a report's panels and returns them with the accumulated
-// warnings. It is the context-free core shared by the queryFlowReport handler and
+// buildFlowReport runs a report's panels with a configured concurrency bound and
+// returns them in spec order with the accumulated warnings. It is the context-free
+// core shared by the queryFlowReport handler and
 // the report export worker: callers first authorize the view, resource filters and
 // (for the vpn kind) flow.vpn.view, then pass canVPNView so the optional overseas
 // vpn_share panel can degrade for flow.view-only callers.
 func (s *Server) buildFlowReport(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, now time.Time, canVPNView bool) ([]flowReportPanel, []string, error) {
 	specs := reportPanelSpecs(req)
+	results := make([]flowReportPanelRun, len(specs))
+	jobs := make(chan int, len(specs))
+	for index := range specs {
+		jobs <- index
+	}
+	close(jobs)
+	workerCount := min(s.cfg.Flow.Query.PanelConcurrency, len(specs))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				results[index] = s.runFlowReportPanelSpec(ctx, scope, view, req, specs[index], now, canVPNView)
+			}
+		}()
+	}
+	workers.Wait()
 	panels := make([]flowReportPanel, 0, len(specs))
 	warnings := make([]string, 0)
-	for _, spec := range specs {
-		switch spec.Special {
-		case "direction_split":
-			raw, meta, err := s.runReportDirectionPanel(ctx, scope, view, req, spec, now)
-			if err != nil {
-				return nil, nil, err
-			}
-			panels = append(panels, flowReportPanel{ID: spec.ID, Status: "ready", Data: raw, Meta: meta})
-		case "observed":
-			panel, err := s.runOverseasObservedPanel(ctx, view, req, now)
-			if err != nil {
-				panels = append(panels, flowReportPanel{ID: "observed", Status: "unavailable", Reason: "overseas observed query failed"})
-				warnings = append(warnings, "observed: unavailable")
-				continue
-			}
-			panels = append(panels, panel)
-		case "vpn_share":
-			// The findings-derived share is mildly sensitive; degrade the optional
-			// panel rather than failing the overseas report for flow.view-only callers.
-			if !canVPNView {
-				panels = append(panels, flowReportPanel{ID: "vpn_share", Status: "unavailable", Reason: "overseas VPN share requires flow.vpn.view"})
-				warnings = append(warnings, "vpn_share: unavailable")
-				continue
-			}
-			panel, err := s.runOverseasVPNSharePanel(ctx, scope, view, req, now)
-			if err != nil {
-				panels = append(panels, flowReportPanel{ID: "vpn_share", Status: "unavailable", Reason: "overseas VPN share query failed"})
-				warnings = append(warnings, "vpn_share: unavailable")
-				continue
-			}
-			panels = append(panels, panel)
-		default:
-			raw, meta, err := s.runReportPanel(ctx, scope, view, req, spec, now)
-			if err != nil {
-				if !spec.Optional {
-					return nil, nil, err
-				}
-				panels = append(panels, flowReportPanel{ID: spec.ID, Status: "unavailable", Reason: "panel query failed"})
-				warnings = append(warnings, spec.ID+": unavailable")
-				continue
-			}
-			panels = append(panels, flowReportPanel{ID: spec.ID, Status: "ready", Data: raw, Meta: meta})
+	for _, result := range results {
+		if result.err != nil {
+			return nil, nil, result.err
 		}
+		panels = append(panels, result.panel)
+		warnings = append(warnings, result.warnings...)
 	}
 	if req.Kind == flowReportOverview {
 		if table := req.Tables["business_matrix"]; table != nil {
@@ -578,6 +562,58 @@ func (s *Server) buildFlowReport(ctx context.Context, scope flowquery.Scope, vie
 	return panels, uniqueSortedStrings(warnings), nil
 }
 
+type flowReportPanelRun struct {
+	panel    flowReportPanel
+	warnings []string
+	err      error
+}
+
+func (s *Server) runFlowReportPanelSpec(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, spec reportPanelSpec, now time.Time, canVPNView bool) flowReportPanelRun {
+	switch spec.Special {
+	case "direction_split":
+		raw, meta, err := s.runReportDirectionPanel(ctx, scope, view, req, spec, now)
+		return flowReportPanelRun{panel: flowReportPanel{ID: spec.ID, Status: "ready", Data: raw, Meta: meta}, err: err}
+	case "observed":
+		panel, err := s.runOverseasObservedPanel(ctx, view, req, now)
+		if err != nil {
+			return flowReportPanelRun{
+				panel:    flowReportPanel{ID: "observed", Status: "unavailable", Reason: "overseas observed query failed"},
+				warnings: []string{"observed: unavailable"},
+			}
+		}
+		return flowReportPanelRun{panel: panel}
+	case "vpn_share":
+		// The findings-derived share is mildly sensitive; degrade the optional
+		// panel rather than failing the overseas report for flow.view-only callers.
+		if !canVPNView {
+			return flowReportPanelRun{
+				panel:    flowReportPanel{ID: "vpn_share", Status: "unavailable", Reason: "overseas VPN share requires flow.vpn.view"},
+				warnings: []string{"vpn_share: unavailable"},
+			}
+		}
+		panel, err := s.runOverseasVPNSharePanel(ctx, scope, view, req, now)
+		if err != nil {
+			return flowReportPanelRun{
+				panel:    flowReportPanel{ID: "vpn_share", Status: "unavailable", Reason: "overseas VPN share query failed"},
+				warnings: []string{"vpn_share: unavailable"},
+			}
+		}
+		return flowReportPanelRun{panel: panel}
+	default:
+		raw, meta, err := s.runReportPanel(ctx, scope, view, req, spec, now)
+		if err != nil {
+			if !spec.Optional {
+				return flowReportPanelRun{err: err}
+			}
+			return flowReportPanelRun{
+				panel:    flowReportPanel{ID: spec.ID, Status: "unavailable", Reason: "panel query failed"},
+				warnings: []string{spec.ID + ": unavailable"},
+			}
+		}
+		return flowReportPanelRun{panel: flowReportPanel{ID: spec.ID, Status: "ready", Data: raw, Meta: meta}}
+	}
+}
+
 // uniqueSortedStrings returns the distinct values in sorted order (nil-safe).
 func uniqueSortedStrings(values []string) []string {
 	if len(values) == 0 {
@@ -609,6 +645,7 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 			From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
 			Dimensions: spec.Dimensions, Filters: spec.Filters, Filter: req.Filter, View: view,
 			TopN: spec.TopN, IncludeOther: spec.IncludeOther, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+			ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 		}, now)
 		if err != nil {
 			return nil, nil, err
@@ -631,6 +668,7 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: req.Metric, Dimension: spec.Dimensions[0], Filters: spec.Filters, Filter: req.Filter,
 		View: view, TopN: spec.TopN, IncludeOther: spec.IncludeOther, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
 	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
 		return nil, nil, err
@@ -660,40 +698,22 @@ func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Sc
 		return nil, nil, err
 	}
 	if baseFacts {
-		combined := flowquery.JointResult{
-			View:       view,
-			Dimensions: []flowquery.DimensionDefinition{{Kind: flowquery.Dimension("direction"), Additive: true}},
+		filters := spec.Filters
+		filters.Directions = flowDirectionValues()
+		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
+			From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
+			Dimensions: []flowquery.Dimension{flowquery.DimensionDirection}, Filters: filters, Filter: req.Filter,
+			View: view, TopN: uint16(len(flowDirectionParts)), IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+			ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
+		}, now)
+		if err != nil {
+			return nil, nil, err
 		}
-		first := true
-		for _, part := range flowDirectionParts {
-			filters := spec.Filters
-			filters.Directions = []string{part.direction}
-			compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
-				From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
-				Dimensions: []flowquery.Dimension{flowquery.DimensionTotal}, Filters: filters, Filter: req.Filter,
-				View: view, TopN: 1, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-			}, now)
-			if err != nil {
-				return nil, nil, err
-			}
-			result, err := s.flowQuery.joint.Run(ctx, compiled)
-			if err != nil {
-				return nil, nil, err
-			}
-			if first {
-				combined.Metric = result.Metric
-				combined.Plan = result.Plan
-				first = false
-			}
-			for _, point := range result.Points {
-				point.DimensionValues = []string{part.label}
-				combined.Points = append(combined.Points, point)
-			}
-			combined.MixedVersions = combined.MixedVersions || result.MixedVersions
-			if result.VersionCount > combined.VersionCount {
-				combined.VersionCount = result.VersionCount
-			}
+		combined, err := s.flowQuery.joint.Run(ctx, compiled)
+		if err != nil {
+			return nil, nil, err
 		}
+		labelFlowDirectionJointResult(&combined)
 		raw, err := marshalFlowJointResult(combined, nil, s.flowGeo)
 		if err != nil {
 			return nil, nil, err
@@ -708,31 +728,27 @@ func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Sc
 	if err != nil {
 		return nil, nil, err
 	}
-	results := make([]flowquery.Result, 0, len(flowDirectionParts))
-	labels := make([]string, 0, len(flowDirectionParts))
-	for _, part := range flowDirectionParts {
-		filters := spec.Filters
-		filters.Directions = []string{part.direction}
-		request := flowquery.Request{
-			From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
-			Metric: req.Metric, Dimension: flowquery.DimensionTotal, Filters: filters, Filter: req.Filter,
-			View: view, TopN: 1, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-		}
-		if err := s.applyFlowStorageBoundary(ctx, &request); err != nil {
-			return nil, nil, err
-		}
-		compiled, err := flowquery.Compile(scope, request, now)
-		if err != nil {
-			return nil, nil, err
-		}
-		result, err := s.flowQuery.aggregate.Run(ctx, compiled)
-		if err != nil {
-			return nil, nil, err
-		}
-		results = append(results, result)
-		labels = append(labels, part.label)
+	filters := spec.Filters
+	filters.Directions = flowDirectionValues()
+	request := flowquery.Request{
+		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
+		Metric: req.Metric, Dimension: flowquery.DimensionDirection, Filters: filters, Filter: req.Filter,
+		View: view, TopN: uint16(len(flowDirectionParts)), IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
-	combined := mergeFlowDirectionResults(&plan, labels, results)
+	if err := s.applyFlowStorageBoundary(ctx, &request); err != nil {
+		return nil, nil, err
+	}
+	compiled, err := flowquery.Compile(scope, request, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	combined, err := s.flowQuery.aggregate.Run(ctx, compiled)
+	if err != nil {
+		return nil, nil, err
+	}
+	labelFlowDirectionResult(&combined)
+	combined.Plan = &plan
 	raw, err := marshalFlowAggregateResult(combined, nil, s.flowGeo)
 	if err != nil {
 		return nil, nil, err
@@ -776,6 +792,7 @@ func (s *Server) runOverseasObservedPanel(ctx context.Context, view flowquery.Vi
 	base := flowquery.OverseasRequest{
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Metric: req.Metric,
 		GeoLevel: flowquery.OverseasGeoCountry, View: view, TopN: req.TopN, IncludeOther: true,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 		Filters: flowquery.OverseasFilters{
 			Directions: req.Filters.Directions, Businesses: req.Filters.Businesses,
 			TargetIDs: req.Filters.TargetIDs, DeviceIDs: req.Filters.DeviceIDs, ExporterIDs: req.Filters.ExporterIDs,
@@ -829,7 +846,10 @@ func (s *Server) runOverseasObservedPanel(ctx context.Context, view flowquery.Vi
 	}}, nil
 }
 
-const flowObservedBucketsPerQuery = 12
+const (
+	flowObservedBucketsPerQuery = 12
+	flowObservedMinQuerySpan    = time.Hour
+)
 
 // flowObservedQueryWindows bounds the high-cardinality src/dst-IP scan without
 // changing the requested report range. Each result is exact for its source
@@ -839,6 +859,9 @@ func flowObservedQueryWindows(from, to time.Time, sourceStep time.Duration) [][2
 		return nil
 	}
 	span := flowObservedBucketsPerQuery * sourceStep
+	if span < flowObservedMinQuerySpan {
+		span = flowObservedMinQuerySpan
+	}
 	windows := make([][2]time.Time, 0, int((to.Sub(from)+span-1)/span))
 	for start := from; start.Before(to); {
 		end := start.Add(span)

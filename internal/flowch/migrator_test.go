@@ -27,6 +27,21 @@ type migrationExecutor struct {
 	dropContextErr      error
 }
 
+func TestMigration001AdaptsLegacyDateTime64TTLWithoutChecksumDrift(t *testing.T) {
+	original := "CREATE TABLE x (event_time DateTime64(3), inserted_at DateTime64(3)) TTL event_time + INTERVAL 30 DAY, inserted_at + INTERVAL 45 DAY"
+	adapted := migrationStatementForExecution(1, original)
+	if !strings.Contains(adapted, "TTL toDateTime(event_time) + INTERVAL 30 DAY") || strings.Contains(adapted, "toDateTime(inserted_at)") {
+		t.Fatalf("unexpected migration 001 adaptation: %s", adapted)
+	}
+	insertedAt := "CREATE TABLE x (inserted_at DateTime64(3)) TTL inserted_at + INTERVAL 45 DAY"
+	if got := migrationStatementForExecution(1, insertedAt); !strings.Contains(got, "TTL toDateTime(inserted_at) + INTERVAL 45 DAY") {
+		t.Fatalf("inserted_at adaptation=%s", got)
+	}
+	if got := migrationStatementForExecution(2, original); got != original {
+		t.Fatalf("non-001 migration changed: %s", got)
+	}
+}
+
 func (e *migrationExecutor) Do(ctx context.Context, query ch.Query) error {
 	e.queries = append(e.queries, query)
 	switch {

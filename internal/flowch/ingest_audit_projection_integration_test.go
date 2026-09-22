@@ -96,6 +96,7 @@ func applyAuditCapacityMigrations(t testing.TB, ctx context.Context, admin *Nati
 	t.Helper()
 	for _, migration := range migrations {
 		for statementIndex, statement := range migration.Statements {
+			statement = migrationStatementForExecution(migration.Version, statement)
 			isolated := strings.ReplaceAll(statement, migrationDatabase, database)
 			if err := admin.executor.Do(ctx, synchronousMigrationQuery(isolated)); err != nil {
 				t.Fatalf("apply audit migration %03d statement %d: %v", migration.Version, statementIndex+1, err)

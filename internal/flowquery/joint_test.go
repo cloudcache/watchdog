@@ -47,10 +47,28 @@ func TestCompileJointUsesSameFactForOrderedDimensionTuple(t *testing.T) {
 	for _, setting := range first.Query.Settings {
 		settings[setting.Key] = setting.Value
 	}
-	for _, key := range []string{"max_execution_time", "max_result_rows", "max_rows_to_read", "max_bytes_to_read", "max_memory_usage", "max_bytes_before_external_group_by", "max_bytes_before_external_sort"} {
+	for _, key := range []string{"max_execution_time", "do_not_merge_across_partitions_select_final", "max_result_rows", "max_rows_to_read", "max_bytes_to_read", "max_memory_usage", "max_bytes_before_external_group_by", "max_bytes_before_external_sort"} {
 		if settings[key] == "" {
 			t.Fatalf("missing ClickHouse guard %s", key)
 		}
+	}
+}
+
+func TestCompileJointGroupsDirectionsInOneFactScan(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	request := validJointRequest(now)
+	request.Dimensions = []Dimension{DimensionDirection}
+	request.Filters.Directions = []string{"in", "out"}
+	request.TopN = 2
+	request.IncludeOther = false
+	compiled, err := CompileJoint(Scope{}, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.Dimensions) != 1 || compiled.Dimensions[0].Kind != DimensionDirection ||
+		!strings.Contains(compiled.Query.Body, "toString(business_direction)") ||
+		strings.Count(compiled.Query.Body, "FROM flow_records FINAL") != 1 {
+		t.Fatalf("compiled direction joint query=%+v\n%s", compiled.Dimensions, compiled.Query.Body)
 	}
 }
 
@@ -88,7 +106,7 @@ func TestCompileJointUsesLargerReadBudgetOnlyWithIdentityScope(t *testing.T) {
 		t.Fatalf("unscoped budgets rows=%q bytes=%q", setting(unscoped.Query, "max_rows_to_read"), setting(unscoped.Query, "max_bytes_to_read"))
 	}
 	if setting(scoped.Query, "max_rows_to_read") != "250000000" || setting(scoped.Query, "max_bytes_to_read") != "17179869184" ||
-		setting(scoped.Query, "max_execution_time") != "30" {
+		setting(scoped.Query, "max_execution_time") != "60" {
 		t.Fatalf("scoped budgets rows=%q bytes=%q", setting(scoped.Query, "max_rows_to_read"), setting(scoped.Query, "max_bytes_to_read"))
 	}
 }
@@ -218,5 +236,6 @@ func validJointRequest(now time.Time) JointRequest {
 		Dimensions: []Dimension{DimensionGeoCountry, DimensionASN},
 		Filters:    Filters{Directions: []string{"out"}}, View: ViewCustomer,
 		TopN: 20, IncludeOther: true, TargetPoints: 300, Timezone: "UTC",
+		ExecutionTimeout: 60 * time.Second,
 	}
 }

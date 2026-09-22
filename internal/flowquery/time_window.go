@@ -31,7 +31,13 @@ func compileLocalTimeWindows(windows []LocalTimeWindow, timezone, column string)
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return "", nil, requestError("timezone", ErrorInvalid, "timezone is not a valid IANA location")
 	}
-	local := fmt.Sprintf("toTimeZone(%s, {time_window_timezone:String})", column)
+	// toDateTime() narrows the column to a plain DateTime before the timezone shift.
+	// event_time is DateTime64 (Decimal64-backed); a toDayOfWeek(...) IN (...) set
+	// filter over it makes ClickHouse relate it to the toYYYYMMDD(event_time)
+	// partition key, where KeyCondition does Field::get<UInt64> on the Decimal64 and
+	// throws "Bad get: has Decimal64, requested UInt64" (CH 24.9). The archive path's
+	// bucket column is already DateTime, so this cast is a no-op there.
+	local := fmt.Sprintf("toTimeZone(toDateTime(%s), {time_window_timezone:String})", column)
 	weekday := "toDayOfWeek(" + local + ")"
 	minute := "(toHour(" + local + ") * 60 + toMinute(" + local + "))"
 	clauses := make([]string, 0, len(windows))

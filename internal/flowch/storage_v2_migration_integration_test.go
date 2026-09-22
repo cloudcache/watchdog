@@ -174,10 +174,27 @@ FROM flow_records FINAL`,
 		hybridResult.RollupCompleteness.ExpectedBuckets != 48 || hybridResult.RollupCompleteness.CoveredBuckets != 48 {
 		t.Fatalf("hybrid result=%+v", hybridResult)
 	}
+	compiledDirectionHybrid, err := flowquery.Compile(flowquery.Scope{}, flowquery.Request{
+		From: day, To: day.Add(48 * time.Hour), Bucket: flowquery.BucketOneHour, Interval: 24 * time.Hour,
+		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionDirection,
+		View: flowquery.ViewCustomer, TopN: 2, StorageV2: true, ArchiveThrough: day.Add(24 * time.Hour),
+		Filters: flowquery.Filters{Directions: []string{"in", "out"}},
+	}, day.Add(72*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directionHybridResult, err := queryRunner.Run(ctx, compiledDirectionHybrid)
+	if err != nil {
+		t.Fatalf("run Storage V2 direction hybrid query: %v", err)
+	}
+	if len(directionHybridResult.Points) != 1 || directionHybridResult.Points[0].DimensionValue != "out" ||
+		directionHybridResult.Points[0].Value != 123400 {
+		t.Fatalf("direction hybrid result=%+v", directionHybridResult)
+	}
 	compiledRaw, err := flowquery.Compile(flowquery.Scope{}, flowquery.Request{
 		From: day.Add(2 * time.Hour), To: day.Add(3 * time.Hour), Bucket: flowquery.BucketOneMinute,
-		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionTotal,
-		View: flowquery.ViewCustomer, TopN: 1, StorageV2: true, ArchiveThrough: day.Add(2 * time.Hour),
+		Metric: flowquery.MetricEstimatedBytes, Dimension: flowquery.DimensionDirection,
+		View: flowquery.ViewCustomer, TopN: 2, StorageV2: true, ArchiveThrough: day.Add(2 * time.Hour),
 		Filters: flowquery.Filters{
 			Directions: []string{"out"}, Categories: []string{"overseas"},
 			DimensionSnapshotIDs: []string{"snapshot-a"}, GeoVersions: []string{"geo-a"},
@@ -191,7 +208,7 @@ FROM flow_records FINAL`,
 	if err != nil {
 		t.Fatalf("run Storage V2 raw-minute query: %v", err)
 	}
-	if len(rawResult.Points) != 1 || rawResult.Points[0].Value != 123400 ||
+	if len(rawResult.Points) != 1 || rawResult.Points[0].DimensionValue != "out" || rawResult.Points[0].Value != 123400 ||
 		rawResult.RollupCompleteness.ExpectedBuckets != 60 || rawResult.RollupCompleteness.CoveredBuckets != 60 {
 		t.Fatalf("raw result=%+v", rawResult)
 	}
@@ -311,6 +328,7 @@ func applyStorageV2Migrations(t testing.TB, ctx context.Context, admin *NativeIn
 	t.Helper()
 	for _, migration := range migrations {
 		for statementIndex, statement := range migration.Statements {
+			statement = migrationStatementForExecution(migration.Version, statement)
 			isolated := strings.ReplaceAll(statement, migrationDatabase, database)
 			if err := admin.executor.Do(ctx, synchronousMigrationQuery(isolated)); err != nil {
 				t.Fatalf("apply isolated migration %03d statement %d: %v", migration.Version, statementIndex+1, err)

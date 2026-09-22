@@ -53,6 +53,11 @@ type ClickHouseConfig struct {
 	Database     string `yaml:"database"`
 	Username     string `yaml:"username"`
 	PasswordFile string `yaml:"password_file"`
+	// OperationTimeout bounds interactive statements at the transport layer.
+	// BatchOperationTimeout is separate because rollup/reconciliation statements
+	// legitimately run longer and must not inherit an implicit library default.
+	OperationTimeout      time.Duration `yaml:"operation_timeout"`
+	BatchOperationTimeout time.Duration `yaml:"batch_operation_timeout"`
 	// MaxConns/MinConns size the interactive pool (flow queries, SNMP reads,
 	// billing). BatchMaxConns sizes a separate pool for the background rollup,
 	// reclassification, reconciliation and VPN jobs, so a long job cannot exhaust
@@ -80,7 +85,47 @@ type FlowConfig struct {
 	Geo            FlowGeoConfig            `yaml:"geo"`
 	VPN            FlowVPNConfig            `yaml:"vpn"`
 	Export         FlowExportConfig         `yaml:"export"`
+	Query          FlowQueryConfig          `yaml:"query"`
+	HotRollup      FlowHotRollupConfig      `yaml:"hot_rollup"`
 	Reconciliation FlowReconciliationConfig `yaml:"reconciliation"`
+}
+
+// FlowQueryConfig owns the operational limits for interactive and asynchronous
+// Flow reads. Keeping these values in deployment configuration avoids coupling
+// browser request deadlines and ClickHouse execution limits to release builds.
+type FlowQueryConfig struct {
+	ExecutionTimeout       time.Duration `yaml:"execution_timeout"`
+	SynchronousTimeout     time.Duration `yaml:"synchronous_timeout"`
+	SynchronousMaxRange    time.Duration `yaml:"synchronous_max_range"`
+	PanelConcurrency       int           `yaml:"panel_concurrency"`
+	AsyncPollInterval      time.Duration `yaml:"async_poll_interval"`
+	AsyncWorkerPoll        time.Duration `yaml:"async_worker_poll_interval"`
+	AsyncWorkerLease       time.Duration `yaml:"async_worker_lease"`
+	AsyncWorkerMaxAttempts uint32        `yaml:"async_worker_max_attempts"`
+	AsyncWorkerRetryBase   time.Duration `yaml:"async_worker_retry_base"`
+	AsyncResultDir         string        `yaml:"async_result_dir"`
+	AsyncResultRetention   time.Duration `yaml:"async_result_retention"`
+}
+
+// FlowHotRollupConfig controls the non-destructive recent aggregate cache. It
+// uses the same generation-marked rollup as the reconciled lifecycle archive,
+// but generations stay below 2^32 so a later policy archive always supersedes
+// them. This is query acceleration only; it never authorizes raw deletion.
+type FlowHotRollupConfig struct {
+	Enabled                 bool          `yaml:"enabled"`
+	ScanInterval            time.Duration `yaml:"scan_interval"`
+	SealDelay               time.Duration `yaml:"seal_delay"`
+	MinuteLookback          time.Duration `yaml:"minute_lookback"`
+	HourLookback            time.Duration `yaml:"hour_lookback"`
+	MinuteLateArrivalWindow time.Duration `yaml:"minute_late_arrival_window"`
+	HourLateArrivalWindow   time.Duration `yaml:"hour_late_arrival_window"`
+	RepairInterval          time.Duration `yaml:"repair_interval"`
+	MaxMinuteBucketsPerRun  int           `yaml:"max_minute_buckets_per_run"`
+	MaxHourBucketsPerRun    int           `yaml:"max_hour_buckets_per_run"`
+	MaxThreads              uint64        `yaml:"max_threads"`
+	Priority                uint64        `yaml:"priority"`
+	MaxMemoryBytes          uint64        `yaml:"max_memory_bytes"`
+	MinimumGeneration       uint64        `yaml:"minimum_generation"`
 }
 
 // FlowReconciliationConfig schedules cold-path Kafka-to-ClickHouse count and
@@ -185,13 +230,33 @@ const DefaultConfigPath = "config/watchdog.yaml"
 
 func defaultConfig() Config {
 	return Config{
-		Server:     ServerConfig{Listen: "127.0.0.1:8091", Origins: []string{"http://127.0.0.1:8090"}},
-		MySQL:      MySQLConfig{DSN: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"},
-		ClickHouse: ClickHouseConfig{Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default", MaxConns: 8, MinConns: 1, BatchMaxConns: 4},
-		Kafka:      KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
-		Flow: FlowConfig{Reconciliation: FlowReconciliationConfig{
-			Interval: 5 * time.Minute, MaxBatches: 1000, MaxFactRows: 250_000, MaxReadBytes: 512 << 20,
-		}},
+		Server: ServerConfig{Listen: "127.0.0.1:8091", Origins: []string{"http://127.0.0.1:8090"}},
+		MySQL:  MySQLConfig{DSN: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"},
+		ClickHouse: ClickHouseConfig{
+			Address: "127.0.0.1:9000", Database: "watchdog_flow", Username: "default",
+			OperationTimeout: 2 * time.Minute, BatchOperationTimeout: 15 * time.Minute,
+			MaxConns: 8, MinConns: 1, BatchMaxConns: 1,
+		},
+		Kafka: KafkaConfig{Brokers: []string{"127.0.0.1:9092"}, Topic: "watchdog.flow.raw", ConsumerGroup: "watchdog-flow-worker"},
+		Flow: FlowConfig{
+			Query: FlowQueryConfig{
+				ExecutionTimeout: 2 * time.Minute, SynchronousTimeout: 25 * time.Second,
+				SynchronousMaxRange: time.Hour, PanelConcurrency: 3, AsyncPollInterval: time.Second,
+				AsyncWorkerPoll: 500 * time.Millisecond, AsyncWorkerLease: 30 * time.Second,
+				AsyncWorkerMaxAttempts: 3, AsyncWorkerRetryBase: 5 * time.Second,
+				AsyncResultDir: "data/flow-query-results", AsyncResultRetention: 24 * time.Hour,
+			},
+			HotRollup: FlowHotRollupConfig{
+				Enabled: false, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+				MinuteLookback: 6 * time.Hour, HourLookback: 72 * time.Hour,
+				MinuteLateArrivalWindow: 30 * time.Minute, HourLateArrivalWindow: 2 * time.Hour,
+				RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 60, MaxHourBucketsPerRun: 4,
+				MaxThreads: 4, Priority: 10, MaxMemoryBytes: 6 << 30,
+			},
+			Reconciliation: FlowReconciliationConfig{
+				Interval: 5 * time.Minute, MaxBatches: 1000, MaxFactRows: 250_000, MaxReadBytes: 512 << 20,
+			},
+		},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
 		SNMP: SNMPConfig{
@@ -238,8 +303,17 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Admin.Username == "" {
 		cfg.Admin.Username = "admin"
 	}
+	if err := validateClickHouseConfig(cfg.ClickHouse); err != nil {
+		return Config{}, fmt.Errorf("validate ClickHouse: %w", err)
+	}
 	if err := validateFlowReconciliationConfig(cfg); err != nil {
 		return Config{}, fmt.Errorf("validate flow reconciliation: %w", err)
+	}
+	if err := validateFlowQueryConfig(cfg.Flow.Query); err != nil {
+		return Config{}, fmt.Errorf("validate flow query: %w", err)
+	}
+	if err := validateFlowHotRollupConfig(cfg.Flow.HotRollup); err != nil {
+		return Config{}, fmt.Errorf("validate flow hot rollup: %w", err)
 	}
 	if err := validateBillingConfig(cfg.Billing); err != nil {
 		return Config{}, fmt.Errorf("validate billing: %w", err)
@@ -248,6 +322,50 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("validate SNMP: %w", err)
 	}
 	return cfg, nil
+}
+
+func validateClickHouseConfig(cfg ClickHouseConfig) error {
+	if cfg.OperationTimeout <= 0 || cfg.BatchOperationTimeout <= 0 {
+		return errors.New("interactive and batch operation timeouts must be positive")
+	}
+	return nil
+}
+
+func validateFlowQueryConfig(cfg FlowQueryConfig) error {
+	if cfg.ExecutionTimeout <= 0 || cfg.SynchronousTimeout <= 0 || cfg.SynchronousMaxRange <= 0 {
+		return errors.New("execution timeout, synchronous timeout and synchronous max range must be positive")
+	}
+	if cfg.PanelConcurrency < 1 || cfg.PanelConcurrency > 32 {
+		return errors.New("panel concurrency must be between 1 and 32")
+	}
+	if cfg.AsyncPollInterval < 100*time.Millisecond || cfg.AsyncWorkerPoll <= 0 || cfg.AsyncWorkerLease < 3*time.Second ||
+		cfg.AsyncWorkerMaxAttempts == 0 || cfg.AsyncWorkerRetryBase <= 0 || cfg.AsyncResultRetention <= 0 {
+		return errors.New("async poll, worker lease/retry and result retention limits are invalid")
+	}
+	if strings.TrimSpace(cfg.AsyncResultDir) == "" {
+		return errors.New("async result directory is required")
+	}
+	return nil
+}
+
+func validateFlowHotRollupConfig(cfg FlowHotRollupConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.ScanInterval < 10*time.Second || cfg.SealDelay < time.Minute ||
+		cfg.MinuteLookback < time.Minute || cfg.MinuteLookback > 48*time.Hour || cfg.HourLookback < time.Hour ||
+		cfg.MinuteLateArrivalWindow < 0 || cfg.MinuteLateArrivalWindow > cfg.MinuteLookback ||
+		cfg.HourLateArrivalWindow < 0 || cfg.HourLateArrivalWindow > cfg.HourLookback ||
+		cfg.RepairInterval < time.Minute || cfg.MinuteLookback%time.Minute != 0 ||
+		cfg.HourLookback%time.Hour != 0 || cfg.MinuteLateArrivalWindow%time.Minute != 0 ||
+		cfg.HourLateArrivalWindow%time.Hour != 0 || cfg.MaxMinuteBucketsPerRun < 1 ||
+		cfg.MaxMinuteBucketsPerRun > 1440 || cfg.MaxHourBucketsPerRun < 1 || cfg.MaxHourBucketsPerRun > 168 ||
+		cfg.MaxThreads > 256 || cfg.Priority > 10_000 ||
+		cfg.MinimumGeneration >= lifecycleGenerationFloor ||
+		(cfg.MaxMemoryBytes > 0 && cfg.MaxMemoryBytes < 1<<30) {
+		return errors.New("hot rollup intervals, lookback or bucket budget are invalid")
+	}
+	return nil
 }
 
 func validateSNMPConfig(cfg SNMPConfig) error {

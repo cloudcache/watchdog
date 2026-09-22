@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudcache/watchdog/internal/flowch"
 	"github.com/cloudcache/watchdog/internal/flowquery"
 	"github.com/gin-gonic/gin"
 )
@@ -135,6 +136,7 @@ func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope
 			From: req.From, To: req.To, TargetPoints: targetPoints, Metric: req.Metric,
 			Dimensions: []flowquery.Dimension{dimension}, Filters: filters, Filter: req.Filter,
 			View: view, TopN: topN, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+			ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 		}, now)
 		if err != nil {
 			return nil, flowquery.AggregatePlan{}, err
@@ -170,6 +172,7 @@ func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope
 		From: plan.EffectiveFrom, To: plan.EffectiveTo, Bucket: plan.Source, Interval: plan.Interval,
 		Metric: req.Metric, Dimension: dimension, Filters: filters, Filter: req.Filter,
 		View: view, TopN: topN, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
 	}
 	if err := s.applyFlowStorageBoundary(ctx, &queryRequest); err != nil {
 		return nil, flowquery.AggregatePlan{}, err
@@ -201,29 +204,16 @@ func (s *Server) runEndpointCategoryPanel(ctx context.Context, scope flowquery.S
 	summaries := make([]endpointCategorySummaryEntry, 0, len(addresses)*len(categories))
 	var unit string
 	var step uint32
-	addressFilter, err := flowEndpointAddressFilter(req.Filter, dimension, addresses)
-	if err != nil {
-		return nil, 0, err
-	}
 	for _, categoryChunk := range flowEndpointCategoryChunks(len(addresses), categories) {
 		filters := req.Filters
 		filters.Directions = []string{direction}
 		filters.Categories = categoryChunk
-		filters.DimensionValues = nil
-		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
-			From: req.From, To: req.To, TargetPoints: flowquery.MinTargetPoints, Metric: req.Metric,
-			Dimensions: []flowquery.Dimension{dimension, flowquery.DimensionCategory}, Filters: filters,
-			Filter: addressFilter, View: view, TopN: flowquery.MaxTopN, IncludeOther: false,
-			Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-		}, now)
+		result, err := s.runEndpointCorrelationJoint(ctx, scope, view, req, dimension,
+			flowquery.DimensionCategory, filters, addresses, flowquery.MinTargetPoints, flowquery.MaxTopN, now)
 		if err != nil {
 			return nil, 0, err
 		}
-		result, err := s.flowQuery.joint.Run(ctx, compiled)
-		if err != nil {
-			return nil, 0, err
-		}
-		step = compiled.Plan.StepSeconds
+		step = result.Plan.StepSeconds
 		unit = result.Metric.Unit
 		combined = append(combined, result.Points...)
 		table := flowTableRequest{SortBy: "dimension", SortDirection: "asc", Limit: flowquery.MaxTopN}
@@ -297,21 +287,9 @@ func flowEndpointCategoryChunks(addressCount int, categories []string) [][]strin
 // joint [endpoint, business] query, constraining to the endpoint set with a typed
 // filter (composed under the caller's filter).
 func (s *Server) runEndpointBusinessPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, dimension flowquery.Dimension, addresses []string, now time.Time) (json.RawMessage, gin.H, error) {
-	addressFilter, err := flowEndpointAddressFilter(req.Filter, dimension, addresses)
-	if err != nil {
-		return nil, nil, err
-	}
 	filters := req.Filters
-	filters.DimensionValues = nil
-	compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
-		From: req.From, To: req.To, TargetPoints: req.TargetPoints, Metric: req.Metric,
-		Dimensions: []flowquery.Dimension{dimension, flowquery.DimensionBusiness}, Filters: filters, Filter: addressFilter,
-		View: view, TopN: 100, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-	}, now)
-	if err != nil {
-		return nil, nil, err
-	}
-	result, err := s.flowQuery.joint.Run(ctx, compiled)
+	result, err := s.runEndpointCorrelationJoint(ctx, scope, view, req, dimension,
+		flowquery.DimensionBusiness, filters, addresses, req.TargetPoints, 100, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -319,7 +297,133 @@ func (s *Server) runEndpointBusinessPanel(ctx context.Context, scope flowquery.S
 	if err != nil {
 		return nil, nil, err
 	}
-	return raw, gin.H{"step_seconds": compiled.Plan.StepSeconds, "source": compiled.Plan.Source}, nil
+	return raw, gin.H{"step_seconds": result.Plan.StepSeconds, "source": result.Plan.Source}, nil
+}
+
+// endpointCorrelationRollupPlan returns the continuous aggregate prefix. The
+// caller may execute the uncovered suffix against raw facts; a marker gap never
+// authorizes aggregate data beyond the returned boundary.
+func (s *Server) endpointCorrelationRollupPlan(ctx context.Context, req flowReportRequest, targetPoints uint16, now time.Time) (flowquery.AggregatePlan, time.Time, error) {
+	plan, err := flowquery.PlanAggregate(req.From, req.To, time.Hour, targetPoints, now)
+	if err != nil {
+		return flowquery.AggregatePlan{}, time.Time{}, err
+	}
+	if s.flowRollup == nil {
+		return plan, plan.EffectiveFrom, nil
+	}
+	if req.Filter != nil {
+		supported, filterErr := flowquery.AggregateFilterSupported(*req.Filter)
+		if filterErr != nil {
+			return flowquery.AggregatePlan{}, time.Time{}, filterErr
+		}
+		if !supported {
+			return plan, plan.EffectiveFrom, nil
+		}
+	}
+	covered, err := s.flowRollup.CoveredThroughAtLeast(
+		ctx, flowch.RollupOneHour, plan.EffectiveFrom, plan.EffectiveTo, s.flowReadableGenerationFloor(),
+	)
+	if err != nil {
+		return flowquery.AggregatePlan{}, time.Time{}, err
+	}
+	return plan, covered, nil
+}
+
+func (s *Server) runEndpointCorrelationJoint(ctx context.Context, scope flowquery.Scope, view flowquery.View,
+	req flowReportRequest, endpoint, secondary flowquery.Dimension, filters flowquery.Filters, addresses []string,
+	targetPoints, topN uint16, now time.Time) (flowquery.JointResult, error) {
+	plan, archiveThrough, err := s.endpointCorrelationRollupPlan(ctx, req, targetPoints, now)
+	if err != nil {
+		return flowquery.JointResult{}, err
+	}
+	addressFilter, err := flowEndpointAddressFilter(req.Filter, endpoint, addresses)
+	if err != nil {
+		return flowquery.JointResult{}, err
+	}
+	base := flowquery.JointRequest{
+		TargetPoints: targetPoints, Metric: req.Metric,
+		Dimensions: []flowquery.Dimension{endpoint, secondary}, Filters: filters,
+		View: view, TopN: topN, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
+	}
+	if !archiveThrough.After(plan.EffectiveFrom) {
+		base.From, base.To, base.Filter = req.From, req.To, addressFilter
+		compiled, compileErr := flowquery.CompileJoint(scope, base, now)
+		if compileErr != nil {
+			return flowquery.JointResult{}, compileErr
+		}
+		return s.flowQuery.joint.Run(ctx, compiled)
+	}
+
+	interval := plan.Interval
+	if archiveThrough.Before(plan.EffectiveTo) {
+		// Keep the aggregate/raw split on a presentation boundary. This prevents
+		// two partial rate values for the same output bucket; at most the final
+		// uncovered hours use raw facts.
+		interval = time.Hour
+	}
+	results := make([]flowquery.JointResult, 0, 2)
+	aggregateRequest := base
+	aggregateRequest.From, aggregateRequest.To, aggregateRequest.Interval = plan.EffectiveFrom, archiveThrough, interval
+	aggregateRequest.Filter = req.Filter
+	aggregateRequest.Filters.DimensionValues = append([]string(nil), addresses...)
+	aggregateCompiled, err := flowquery.CompileEndpointRollupJoint(scope, aggregateRequest, now)
+	if err != nil {
+		return flowquery.JointResult{}, err
+	}
+	aggregateResult, err := s.flowQuery.joint.Run(ctx, aggregateCompiled)
+	if err != nil {
+		return flowquery.JointResult{}, err
+	}
+	results = append(results, aggregateResult)
+
+	if archiveThrough.Before(plan.EffectiveTo) {
+		rawRequest := base
+		rawRequest.From, rawRequest.To, rawRequest.Interval = archiveThrough, plan.EffectiveTo, interval
+		rawRequest.Filter = addressFilter
+		rawRequest.Filters.DimensionValues = nil
+		rawCompiled, compileErr := flowquery.CompileJoint(scope, rawRequest, now)
+		if compileErr != nil {
+			return flowquery.JointResult{}, compileErr
+		}
+		rawResult, runErr := s.flowQuery.joint.Run(ctx, rawCompiled)
+		if runErr != nil {
+			return flowquery.JointResult{}, runErr
+		}
+		results = append(results, rawResult)
+	}
+	return combineEndpointJointSegments(results, plan, interval), nil
+}
+
+func combineEndpointJointSegments(results []flowquery.JointResult, plan flowquery.AggregatePlan, interval time.Duration) flowquery.JointResult {
+	combined := results[0]
+	combined.Points = nil
+	versions := make(map[string]struct{})
+	for _, result := range results {
+		combined.Points = append(combined.Points, result.Points...)
+		for _, point := range result.Points {
+			key := point.DimensionSnapshotID + "\x00" + point.GeoVersion + "\x00" + strconv.FormatUint(uint64(point.ClassificationVersion), 10)
+			versions[key] = struct{}{}
+		}
+	}
+	sort.Slice(combined.Points, func(i, j int) bool {
+		if !combined.Points[i].Bucket.Equal(combined.Points[j].Bucket) {
+			return combined.Points[i].Bucket.Before(combined.Points[j].Bucket)
+		}
+		return strings.Join(combined.Points[i].DimensionValues, "\x00") < strings.Join(combined.Points[j].DimensionValues, "\x00")
+	})
+	combined.MixedVersions = len(versions) > 1
+	combined.VersionCount = uint64(len(versions))
+	combined.Plan = flowquery.JointPlan{
+		RequestedFrom: plan.RequestedFrom, RequestedTo: plan.RequestedTo,
+		EffectiveFrom: plan.EffectiveFrom, EffectiveTo: plan.EffectiveTo,
+		Source: "flow_aggregate_1h", StepSeconds: uint32(interval / time.Second),
+		TargetPoints: plan.TargetPoints, MaxRangeSeconds: uint32((400 * 24 * time.Hour) / time.Second),
+	}
+	if len(results) > 1 {
+		combined.Plan.Source = "flow_aggregate_1h+flow_records"
+	}
+	return combined
 }
 
 func flowReportDimensionPoints(data json.RawMessage) ([]flowquery.Point, error) {

@@ -68,6 +68,10 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 		"geo-city-a": {value: 300, records: 2},
 		"_other":     {value: 50, records: 1},
 	})
+	directionResult := runIntegrationAggregate(t, ctx, queryRunner, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionDirection, 2, false)
+	assertAggregatePoints(t, directionResult, map[string]aggregateWant{
+		"out": {value: 350, records: 3},
+	})
 
 	late := integrationRecord(4, bucket.Add(40*time.Second), "geo-city-b", 500)
 	late.RemoteASN = 4837
@@ -208,6 +212,41 @@ func TestRealClickHouseRollupQueryRepair(t *testing.T) {
 	if err == nil || !errors.Is(err, context.Canceled) || len(canceledResult.Points) != 0 || !cancelExecutor.canceled {
 		t.Fatalf("canceled real query result=%+v error=%v canceled=%t", canceledResult, err, cancelExecutor.canceled)
 	}
+}
+
+func TestRealClickHouseDailyRollupQuery(t *testing.T) {
+	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_daily_rollup")
+	day := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	first := integrationRecord(1, day.Add(10*time.Minute), "geo-city-a", 100)
+	second := integrationRecord(2, day.Add(2*time.Hour+10*time.Minute), "geo-city-b", 250)
+	insertIntegrationBatch(t, ctx, native, integrationBatch(12, day.Add(3*time.Hour), first, second))
+	runner, err := NewRollupRunner(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generatedAt := day.Add(25 * time.Hour)
+	for hour := 0; hour < 24; hour++ {
+		if err := runner.Run(ctx, RollupRequest{
+			Resolution: RollupOneHour, Bucket: day.Add(time.Duration(hour) * time.Hour),
+			Generation: 1, GeneratedAt: generatedAt,
+		}); err != nil {
+			t.Fatalf("hour %d rollup: %v", hour, err)
+		}
+	}
+	if err := runner.Run(ctx, RollupRequest{
+		Resolution: RollupOneDay, Bucket: day, Generation: 1, GeneratedAt: generatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	queryRunner, err := flowquery.NewRunner(native.executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := runIntegrationAggregate(t, ctx, queryRunner, day, day.Add(24*time.Hour), flowquery.BucketOneDay, flowquery.DimensionGeoCity, 2, false)
+	assertAggregatePoints(t, result, map[string]aggregateWant{
+		"geo-city-a": {value: 100, records: 1},
+		"geo-city-b": {value: 250, records: 1},
+	})
 }
 
 func TestRealClickHouseRawDayOffsetCoverage(t *testing.T) {
@@ -430,6 +469,7 @@ func openDataIntegrationClickHouse(t *testing.T, database string) (context.Conte
 	}
 	for _, migration := range migrations {
 		for statementIndex, statement := range migration.Statements {
+			statement = migrationStatementForExecution(migration.Version, statement)
 			isolated := strings.ReplaceAll(statement, migrationDatabase, database)
 			if err := admin.executor.Do(ctx, synchronousMigrationQuery(isolated)); err != nil {
 				t.Fatalf("apply isolated migration %03d statement %d: %v", migration.Version, statementIndex+1, err)
@@ -650,16 +690,19 @@ func (e *integrationBlockExecutor) Do(ctx context.Context, query ch.Query) error
 func TestRealClickHouseRollupCapsPerIPDimension(t *testing.T) {
 	ctx, native := openDataIntegrationClickHouse(t, "watchdog_flow_it_rollup_topn")
 
-	// Cap at top-2 so a four-IP fixture exercises the fold.
+	// Cap at top-2 so four-value fixtures exercise both endpoint and port folds.
 	saved := rollupIPTopN
+	savedPorts := rollupPortTopN
 	rollupIPTopN = 2
-	t.Cleanup(func() { rollupIPTopN = saved })
+	rollupPortTopN = 2
+	t.Cleanup(func() { rollupIPTopN, rollupPortTopN = saved, savedPorts })
 
 	bucket := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
 	records := make([]flowworker.EnrichedRecord, 0, 4)
 	for i, rawBytes := range []uint64{40, 30, 20, 10} {
 		record := integrationRecord(byte(i+1), bucket.Add(time.Duration(i+1)*time.Second), "", rawBytes)
 		record.SourceIP = netip.MustParseAddr(fmt.Sprintf("10.9.0.%d", i+1))
+		record.RemotePort = uint16(10_000 + i)
 		records = append(records, record)
 	}
 	insertIntegrationBatch(t, ctx, native, integrationBatch(20, bucket.Add(2*time.Minute), records...))
@@ -687,5 +730,11 @@ func TestRealClickHouseRollupCapsPerIPDimension(t *testing.T) {
 		"10.9.0.1": {value: 40, records: 1},
 		"10.9.0.2": {value: 30, records: 1},
 		"_other":   {value: 30, records: 2},
+	})
+	ports := runIntegrationAggregate(t, ctx, queryRunner, bucket, bucket.Add(time.Minute), flowquery.BucketOneMinute, flowquery.DimensionRemotePort, 100, false)
+	assertAggregatePoints(t, ports, map[string]aggregateWant{
+		"10000":  {value: 40, records: 1},
+		"10001":  {value: 30, records: 1},
+		"_other": {value: 30, records: 2},
 	})
 }

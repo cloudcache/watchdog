@@ -29,6 +29,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"013_flow_vpn_candidate_features.sql", "014_snmp_events.sql", "015_flow_raw_delete_quarantine.sql",
 		"016_flow_historical_reclassification.sql", "017_flow_reclassification_counter_totals.sql",
 		"018_sflow_interface_counters.sql", "019_flow_estimated_bytes_scale.sql",
+		"020_flow_hot_rollup_and_skip_indexes.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
@@ -48,11 +49,11 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 13 {
-		t.Fatalf("ClickHouse table count=%d, want 13", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 14 {
+		t.Fatalf("ClickHouse table count=%d, want 14", count)
 	}
 	for _, required := range []string{
-		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_ingest_batches", "flow_vpn_candidates",
+		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_aggregate_1d", "flow_ingest_batches", "flow_vpn_candidates",
 		"flow_address_dict_source", "dict_version UInt64", "group_ids Array(String)",
 		"record_id FixedString(32)", "quality_flags UInt64", "estimated_valid Bool",
 		"'on_net_local_city'=1", "'off_net_in_province'=4", "remote_geo_continent_id", "remote_geo_region_id",
@@ -122,6 +123,28 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 	for _, forbidden := range []string{"TTL observed_at", "TTL bucket_start", "tenant_id", "source_kind", "telemetry_samples"} {
 		if strings.Contains(string(snmpData), forbidden) {
 			t.Fatalf("ClickHouse SNMP migration retained forbidden contract %q", forbidden)
+		}
+	}
+	hotRollupData, err := os.ReadFile(paths[19])
+	if err != nil {
+		t.Fatal(err)
+	}
+	hotRollup := string(hotRollupData)
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS watchdog_flow.flow_aggregate_1d",
+		"PARTITION BY toYYYYMMDD(bucket)",
+		"TTL bucket + INTERVAL 2 DAY DELETE",
+		"ttl_only_drop_parts = 1",
+		"flow_device_set", "flow_target_set", "flow_exporter_set",
+		"flow_src_ip_bloom", "flow_dst_ip_bloom", "flow_direction_set", "flow_category_set",
+	} {
+		if !strings.Contains(hotRollup, required) {
+			t.Fatalf("ClickHouse hot-rollup migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"ALTER TABLE watchdog_flow.flow_records MATERIALIZE", "TTL event_time"} {
+		if strings.Contains(hotRollup, forbidden) {
+			t.Fatalf("ClickHouse hot-rollup migration contains unsafe operation %q", forbidden)
 		}
 	}
 }

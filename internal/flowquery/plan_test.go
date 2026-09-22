@@ -22,7 +22,7 @@ func TestPlanAggregateKeepsRangeIndependentFromStorageResolution(t *testing.T) {
 		{"one day", 24 * time.Hour, BucketOneHour, time.Hour},
 		{"seven days", 7 * 24 * time.Hour, BucketOneHour, time.Hour},
 		{"thirty days", 30 * 24 * time.Hour, BucketOneHour, 3 * time.Hour},
-		{"one year", 365 * 24 * time.Hour, BucketOneHour, 2 * 24 * time.Hour},
+		{"one year", 365 * 24 * time.Hour, BucketOneDay, 2 * 24 * time.Hour},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -6,9 +6,32 @@ package server
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowquery"
 )
+
+func TestCombineEndpointJointSegmentsPreservesAggregatePrefixAndRawTail(t *testing.T) {
+	from := time.Date(2026, 9, 21, 7, 0, 0, 0, time.UTC)
+	point := func(bucket time.Time, value float64, version uint32) flowquery.JointPoint {
+		return flowquery.JointPoint{
+			Bucket: bucket, DimensionValues: []string{"2001:db8::1", "overseas"}, Value: value,
+			DimensionSnapshotID: "snapshot", GeoVersion: "geo", ClassificationVersion: version,
+		}
+	}
+	combined := combineEndpointJointSegments([]flowquery.JointResult{
+		{Points: []flowquery.JointPoint{point(from, 1, 1)}, View: flowquery.ViewCustomer},
+		{Points: []flowquery.JointPoint{point(from.Add(23*time.Hour), 2, 2)}, View: flowquery.ViewCustomer},
+	}, flowquery.AggregatePlan{
+		RequestedFrom: from, RequestedTo: from.Add(24 * time.Hour),
+		EffectiveFrom: from, EffectiveTo: from.Add(24 * time.Hour), TargetPoints: 300,
+	}, time.Hour)
+	if len(combined.Points) != 2 || !combined.Points[0].Bucket.Equal(from) ||
+		combined.Plan.Source != "flow_aggregate_1h+flow_records" || combined.Plan.StepSeconds != 3600 ||
+		!combined.MixedVersions || combined.VersionCount != 2 {
+		t.Fatalf("combined endpoint segments=%+v", combined)
+	}
+}
 
 // TestNormalizeFlowReportEndpoints: endpoints require a side, default a table, and
 // reject a table on any other kind.

@@ -28,7 +28,8 @@ func TestCompileOverseasBuildsDeterministicLatestGenerationQuery(t *testing.T) {
 		t.Fatal("same overseas request compiled differently")
 	}
 	for _, required := range []string{
-		"FROM flow_aggregate_1m FINAL",
+		"FROM flow_aggregate_1m\n",
+		"FROM flow_aggregate_1m AS source FINAL",
 		"AND dimension_kind = '_generation'",
 		"INNER JOIN latest USING (bucket, generation)",
 		"dimension_kind IN ('src_ip', 'dst_ip', {geo_dimension:String})",
@@ -47,6 +48,9 @@ func TestCompileOverseasBuildsDeterministicLatestGenerationQuery(t *testing.T) {
 		if !strings.Contains(first.Query.Body, required) {
 			t.Fatalf("overseas query missing %q:\n%s", required, first.Query.Body)
 		}
+	}
+	if strings.Contains(first.Query.Body, "FROM flow_aggregate_1m FINAL") {
+		t.Fatalf("overseas generation marker scan still uses FINAL:\n%s", first.Query.Body)
 	}
 	for _, value := range []string{"tenant-a", "customer's", "target-a", "target-b"} {
 		if strings.Contains(first.Query.Body, value) {
@@ -70,7 +74,8 @@ func TestCompileOverseasBuildsDeterministicLatestGenerationQuery(t *testing.T) {
 		setting(first.Query, "max_memory_usage") != "4294967296" || setting(first.Query, "max_result_rows") != "250000" ||
 		setting(first.Query, "max_bytes_before_external_group_by") != "1073741824" ||
 		setting(first.Query, "max_bytes_before_external_sort") != "1073741824" ||
-		setting(first.Query, "join_use_nulls") != "0" {
+		setting(first.Query, "join_use_nulls") != "0" ||
+		setting(first.Query, "do_not_merge_across_partitions_select_final") != "1" {
 		t.Fatalf("overseas query budgets=%+v", first.Query.Settings)
 	}
 }
@@ -88,7 +93,7 @@ func TestCompileOverseasSupportsRegionHourlyAndNonRateMetric(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h FINAL") ||
+	if !strings.Contains(compiled.Query.Body, "FROM flow_aggregate_1h AS source FINAL") ||
 		!strings.Contains(compiled.Query.Body, "toFloat64(metric_total) AS value") ||
 		queryParameter(compiled.Query, "geo_dimension") != "'geo.region'" || queryParameter(compiled.Query, "include_other") != "'0'" ||
 		queryParameter(compiled.Query, "bucket_seconds") != "'3600'" {
@@ -128,7 +133,7 @@ func TestCompileOverseasStorageV2UnionsArchiveAndRawBeforeAnalysis(t *testing.T)
 		t.Fatalf("compiled=%+v", compiled)
 	}
 	if compiled.PostProcessGeoTopN || setting(compiled.Query, "max_rows_to_read") != "500000000" ||
-		setting(compiled.Query, "max_bytes_to_read") != "34359738368" || setting(compiled.Query, "max_execution_time") != "30" {
+		setting(compiled.Query, "max_bytes_to_read") != "34359738368" || setting(compiled.Query, "max_execution_time") != "60" {
 		t.Fatalf("mixed budgets rows=%q bytes=%q postprocess=%v", setting(compiled.Query, "max_rows_to_read"), setting(compiled.Query, "max_bytes_to_read"), compiled.PostProcessGeoTopN)
 	}
 	archiveEnd := strings.Index(compiled.Query.Body, "raw_base AS")
@@ -184,7 +189,7 @@ func TestCompileOverseasUsesLargerReadBudgetOnlyForIdentityScopedRawFacts(t *tes
 		t.Fatalf("unscoped budgets rows=%q bytes=%q", setting(unscoped.Query, "max_rows_to_read"), setting(unscoped.Query, "max_bytes_to_read"))
 	}
 	if setting(scoped.Query, "max_rows_to_read") != "500000000" || setting(scoped.Query, "max_bytes_to_read") != "34359738368" ||
-		setting(scoped.Query, "max_execution_time") != "30" {
+		setting(scoped.Query, "max_execution_time") != "60" {
 		t.Fatalf("scoped budgets rows=%q bytes=%q", setting(scoped.Query, "max_rows_to_read"), setting(scoped.Query, "max_bytes_to_read"))
 	}
 	if !scoped.PostProcessGeoTopN || strings.Count(scoped.Query.Body, "FROM flow_records FINAL") != 1 ||
@@ -239,7 +244,7 @@ func validOverseasRequest() OverseasRequest {
 		From:   time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC),
 		To:     time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC),
 		Bucket: BucketOneMinute, Metric: MetricEstimatedBPS, GeoLevel: OverseasGeoCountry,
-		View: ViewCustomer, TopN: 5, IncludeOther: true,
+		View: ViewCustomer, TopN: 5, IncludeOther: true, ExecutionTimeout: 60 * time.Second,
 	}
 }
 

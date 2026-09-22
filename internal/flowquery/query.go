@@ -58,11 +58,12 @@ func endpointCandidateScanBudgets() (string, string) {
 	return strconv.Itoa(maxEndpointCandidateScanRows), strconv.FormatUint(maxEndpointCandidateScanBytes, 10)
 }
 
-func rawExecutionTime(identityScoped bool) string {
-	if identityScoped {
-		return "30"
+func executionTimeSetting(timeout time.Duration) []ch.Setting {
+	if timeout <= 0 {
+		return nil
 	}
-	return "15"
+	seconds := (timeout + time.Second - 1) / time.Second
+	return []ch.Setting{{Key: "max_execution_time", Value: strconv.FormatInt(int64(seconds), 10), Important: true}}
 }
 
 type Bucket string
@@ -70,6 +71,7 @@ type Bucket string
 const (
 	BucketOneMinute   Bucket = "1m"
 	BucketOneHour     Bucket = "1h"
+	BucketOneDay      Bucket = "1d"
 	BucketFlowRecords Bucket = "flow_records"
 )
 
@@ -91,6 +93,7 @@ type Dimension string
 
 const (
 	DimensionTotal                Dimension = "total"
+	DimensionDirection            Dimension = "direction"
 	DimensionCategory             Dimension = "category"
 	DimensionGeoContinent         Dimension = "geo.continent"
 	DimensionGeoRegion            Dimension = "geo.region"
@@ -178,8 +181,9 @@ type Request struct {
 	// StorageV2 switches the physical source from the legacy continuously
 	// maintained rollup to a disjoint union: reconciled archive before
 	// ArchiveThrough and raw facts from ArchiveThrough onward.
-	StorageV2      bool      `json:"-"`
-	ArchiveThrough time.Time `json:"-"`
+	StorageV2        bool          `json:"-"`
+	ArchiveThrough   time.Time     `json:"-"`
+	ExecutionTimeout time.Duration `json:"-"`
 }
 
 type DimensionDefinition struct {
@@ -287,6 +291,7 @@ var metricRegistry = map[Metric]metricSpec{
 
 var dimensionRegistry = map[Dimension]DimensionDefinition{
 	DimensionTotal:                {DimensionTotal, true},
+	DimensionDirection:            {DimensionDirection, true},
 	DimensionCategory:             {DimensionCategory, true},
 	DimensionGeoContinent:         {DimensionGeoContinent, true},
 	DimensionGeoRegion:            {DimensionGeoRegion, true},
@@ -413,10 +418,21 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		return Compiled{}, requestError("timezone", ErrorInvalid, "timezone is not a valid IANA location")
 	}
 
+	storageDimension := request.Dimension
+	legacyDimensionExpression := "dimension_value"
+	archiveDimensionExpression := "source.dimension_value"
+	if request.Dimension == DimensionDirection {
+		// Direction is already materialized on every aggregate row. Read the
+		// additive total rows and group their business_direction column instead
+		// of issuing one total query per direction.
+		storageDimension = DimensionTotal
+		legacyDimensionExpression = "business_direction"
+		archiveDimensionExpression = "source.business_direction"
+	}
 	parameters := []proto.Parameter{
 		stringParameter("from", from.Format("2006-01-02 15:04:05")),
 		stringParameter("to", to.Format("2006-01-02 15:04:05")),
-		stringParameter("dimension", string(request.Dimension)),
+		stringParameter("dimension", string(storageDimension)),
 		uintParameter("top_n", uint64(request.TopN)),
 		uintParameter("include_other", boolUint(request.IncludeOther)),
 		uintParameter("bucket_seconds", uint64(interval/time.Second)),
@@ -425,7 +441,11 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	if err != nil {
 		return Compiled{}, err
 	}
-	conditions, filterParameters, err := compileFilters(request.Filters)
+	filterColumns := defaultAggregateFilterColumns
+	if request.Dimension == DimensionDirection {
+		filterColumns.dimensionValue = "business_direction"
+	}
+	conditions, filterParameters, err := compileFiltersWithColumns(request.Filters, filterColumns)
 	if err != nil {
 		return Compiled{}, err
 	}
@@ -467,7 +487,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		denominator := "greatest(toUInt32(1), least({bucket_seconds:UInt32}, toUInt32(dateDiff('second', output_bucket, {to:DateTime('UTC')}))))"
 		valueExpression = fmt.Sprintf("toFloat64(sum(%s)) * %d / %s", metric.column, multiplier, denominator)
 	}
-	body := fmt.Sprintf(querySQL, table, table, strings.Join(conditions, "\n    "), metric.column, valueExpression)
+	body := fmt.Sprintf(querySQL, table, table, strings.Join(conditions, "\n    "), legacyDimensionExpression, metric.column, valueExpression)
 	usesRawFacts := false
 	archiveThrough := time.Time{}
 	endpointCandidateQuery := false
@@ -480,12 +500,10 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		if archiveThrough.Before(from) || archiveThrough.After(to) || archiveThrough.Truncate(sourceDuration) != archiveThrough {
 			return Compiled{}, requestError("archive_through", ErrorInvalid, "archive boundary must be within the range and source-aligned")
 		}
-		if request.Bucket == BucketOneMinute && archiveThrough.After(from) {
-			return Compiled{}, requestError("archive_through", ErrorUnsupported, "Storage V2 has no one-minute archive; minute queries must use raw facts")
-		}
-		if archiveThrough.After(from) && archiveThrough.Before(to) && archiveThrough.Truncate(24*time.Hour) != archiveThrough {
-			return Compiled{}, requestError("archive_through", ErrorInvalid, "a Storage V2 archive/raw split must be a UTC day boundary")
-		}
+		// ArchiveThrough is coverage-derived, not policy-derived: a reconciled
+		// cold day and a generation-marked hot hour have the same atomic row
+		// contract. Source-bucket alignment above is therefore the only safe
+		// split requirement.
 		dimensionExpression, expressionErr := rawAggregateDimensionExpression(request.Dimension)
 		if expressionErr != nil {
 			return Compiled{}, expressionErr
@@ -555,7 +573,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 				storageValueExpression = fmt.Sprintf("toFloat64(sum(metric_value)) * %d / %s", multiplier, denominator)
 			}
 			body = fmt.Sprintf(storageV2QuerySQL,
-				table, metric.column, table, strings.Join(archiveFilters, "\n      "),
+				table, archiveDimensionExpression, metric.column, table, strings.Join(archiveFilters, "\n      "),
 				dimensionExpression, metricInput, strings.Join(rawFilters, "\n      "),
 				strings.Join(residualFilters, "\n    "), storageValueExpression)
 		}
@@ -565,27 +583,22 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 	if endpointCandidateQuery {
 		maxRowsToRead, maxBytesToRead = endpointCandidateScanBudgets()
 	}
+	settings := executionTimeSetting(request.ExecutionTimeout)
+	settings = append(settings, []ch.Setting{
+		{Key: "do_not_merge_across_partitions_select_final", Value: "1", Important: true},
+		{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
+		{Key: "result_overflow_mode", Value: "throw", Important: true},
+		{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
+		{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
+		{Key: "read_overflow_mode", Value: "throw", Important: true},
+		{Key: "max_memory_usage", Value: "4294967296", Important: true},
+		{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
+		{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
+	}...)
 	query := ch.Query{
 		Body:       body,
 		Parameters: parameters,
-		Settings: []ch.Setting{
-			{Key: "max_execution_time", Value: rawExecutionTime(identityScopedRawQuery), Important: true},
-			{Key: "max_result_rows", Value: strconv.Itoa(maxResultRows), Important: true},
-			{Key: "result_overflow_mode", Value: "throw", Important: true},
-			{Key: "max_rows_to_read", Value: maxRowsToRead, Important: true},
-			{Key: "max_bytes_to_read", Value: maxBytesToRead, Important: true},
-			{Key: "read_overflow_mode", Value: "throw", Important: true},
-			// Keep a hard memory guard. Ordinary ranking uses one grouped scan;
-			// endpoint candidate ranking uses two raw reads but keeps the
-			// high-cardinality endpoint set out of the final aggregation state.
-			{Key: "max_memory_usage", Value: "4294967296", Important: true},
-			// High-cardinality endpoint dimensions can exceed the in-memory
-			// aggregation/sort budget before the final Top N is selected. Spill
-			// intermediate states instead of turning a bounded 24h query into a
-			// user-visible MEMORY_LIMIT_EXCEEDED response.
-			{Key: "max_bytes_before_external_group_by", Value: "1073741824", Important: true},
-			{Key: "max_bytes_before_external_sort", Value: "1073741824", Important: true},
-		},
+		Settings:   settings,
 	}
 	return Compiled{
 		Query: query, View: request.View, From: from, To: to, Bucket: request.Bucket,
@@ -593,7 +606,9 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		Metric: metric.definition, Dimension: dimension, Timezone: timezone,
 		EstimatedRows: uint64(estimatedRows), MaxResultRows: maxResultRows,
 		UsesRawFacts: usesRawFacts, ArchiveThrough: archiveThrough,
-		Approximate: endpointCandidateQuery,
+		Approximate: endpointCandidateQuery ||
+			((request.Dimension == DimensionSourceIP || request.Dimension == DimensionDestinationIP || request.Dimension == DimensionRemotePort) &&
+				(!request.StorageV2 || archiveThrough.After(from))),
 	}, nil
 }
 
@@ -614,8 +629,10 @@ func bucketSpec(bucket Bucket) (time.Duration, string, int, error) {
 		return time.Minute, "flow_aggregate_1m", 10_080, nil
 	case BucketOneHour:
 		return time.Hour, "flow_aggregate_1h", 9_600, nil
+	case BucketOneDay:
+		return 24 * time.Hour, "flow_aggregate_1d", 400, nil
 	default:
-		return 0, "", 0, requestError("bucket", ErrorUnsupported, "bucket must be 1m or 1h")
+		return 0, "", 0, requestError("bucket", ErrorUnsupported, "bucket must be 1m, 1h or 1d")
 	}
 }
 
@@ -847,34 +864,57 @@ func IsRequestError(err error, field string, code ErrorCode) bool {
 const querySQL = `WITH
   latest AS (
     SELECT bucket, max(generation) AS generation
-    FROM %s FINAL
+    FROM %s
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
   ),
   filtered AS (
-    SELECT source.*
+    SELECT source.*,
+      toUInt8(source.dimension_kind IN ('src_ip', 'dst_ip', 'remote_port') AND source.dimension_value = '_other') AS materialized_other
     FROM %s AS source FINAL
     INNER JOIN latest USING (bucket, generation)
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = {dimension:String}
     %s
   ),
-  top_series AS (
-    SELECT
-      dimension_value, dimension_snapshot_id, geo_version, classification_version,
-      sum(%s) AS rank_value
+  projected AS (
+    SELECT *, CAST(%s AS String) AS query_dimension_value
     FROM filtered
-    GROUP BY dimension_value, dimension_snapshot_id, geo_version, classification_version
-    ORDER BY rank_value DESC, dimension_value ASC, dimension_snapshot_id ASC, geo_version ASC, classification_version ASC
-    LIMIT {top_n:UInt16}
+  ),
+  rankable AS (
+    SELECT * FROM projected WHERE materialized_other = 0
+  ),
+  scored AS (
+    SELECT *,
+      sum(%s) OVER (
+        PARTITION BY query_dimension_value, dimension_snapshot_id, geo_version, classification_version
+      ) AS rank_value
+    FROM rankable
+  ),
+  ranked AS (
+    SELECT *,
+      dense_rank() OVER (
+        ORDER BY rank_value DESC, query_dimension_value ASC, dimension_snapshot_id ASC,
+          geo_version ASC, classification_version ASC
+      ) AS series_rank
+    FROM scored
   ),
   tagged AS (
-    SELECT *,
-      tuple(dimension_value, dimension_snapshot_id, geo_version, classification_version) IN (
-        SELECT tuple(dimension_value, dimension_snapshot_id, geo_version, classification_version) FROM top_series
-      ) AS is_top
-    FROM filtered
+    SELECT
+      bucket, query_dimension_value, dimension_snapshot_id, geo_version, classification_version,
+      raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+      received_records, unknown_sampling_records, quality_records, generated_at,
+      toUInt8(series_rank <= {top_n:UInt16}) AS is_top
+    FROM ranked
+    UNION ALL
+    SELECT
+      bucket, query_dimension_value, dimension_snapshot_id, geo_version, classification_version,
+      raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+      received_records, unknown_sampling_records, quality_records, generated_at,
+      toUInt8(0) AS is_top
+    FROM projected
+    WHERE materialized_other = 1
   ),
   series_rows AS (
     SELECT
@@ -883,7 +923,7 @@ const querySQL = `WITH
 	    intDiv(toUnixTimestamp(bucket) - toUnixTimestamp({from:DateTime('UTC')}), {bucket_seconds:UInt32}) * {bucket_seconds:UInt32},
 	    'UTC'
 	  ) AS output_bucket,
-      if(is_top, dimension_value, '_other') AS grouped_dimension_value,
+	  if(is_top, query_dimension_value, '_other') AS grouped_dimension_value,
       if(is_top, toUInt8(0), toUInt8(1)) AS is_other,
       dimension_snapshot_id,
       geo_version,
@@ -922,7 +962,7 @@ ORDER BY
 const storageV2QuerySQL = `WITH
   archive_latest AS (
     SELECT bucket, max(generation) AS generation
-    FROM %s FINAL
+    FROM %s
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
@@ -931,10 +971,11 @@ const storageV2QuerySQL = `WITH
     SELECT
       source.bucket, source.target_id, source.device_id, source.exporter_id,
       source.business_direction, source.category, source.business,
-      source.dimension_value, source.dimension_snapshot_id, source.geo_version,
+      CAST(%s AS String) AS dimension_value, source.dimension_snapshot_id, source.geo_version,
 	  source.classification_version, source.%s AS metric_value,
 	  source.received_records,
-      source.unknown_sampling_records, source.quality_records, source.generated_at
+      source.unknown_sampling_records, source.quality_records, source.generated_at,
+      toUInt8(source.dimension_kind IN ('src_ip', 'dst_ip', 'remote_port') AND source.dimension_value = '_other') AS materialized_other
     FROM %s AS source FINAL
     INNER JOIN archive_latest USING (bucket, generation)
     WHERE source.bucket >= {from:DateTime('UTC')} AND source.bucket < {archive_through:DateTime('UTC')}
@@ -956,7 +997,8 @@ const storageV2QuerySQL = `WITH
       count() AS received_records,
       countIf(NOT estimated_valid) AS unknown_sampling_records,
       countIf(quality_flags != 0) AS quality_records,
-      max(received_time) AS generated_at
+      max(received_time) AS generated_at,
+      toUInt8(0) AS materialized_other
     FROM flow_records FINAL
     WHERE event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}
       AND disposition = 'count'
@@ -975,12 +1017,15 @@ const storageV2QuerySQL = `WITH
     WHERE 1 = 1
     %s
   ),
+  rankable AS (
+    SELECT * FROM filtered WHERE materialized_other = 0
+  ),
   scored AS (
     SELECT *,
 	  sum(metric_value) OVER (
         PARTITION BY dimension_value, dimension_snapshot_id, geo_version, classification_version
       ) AS rank_value
-    FROM filtered
+    FROM rankable
   ),
   ranked AS (
     SELECT *,
@@ -991,8 +1036,20 @@ const storageV2QuerySQL = `WITH
     FROM scored
   ),
   tagged AS (
-    SELECT *, toUInt8(series_rank <= {top_n:UInt16}) AS is_top
+    SELECT
+      bucket, target_id, device_id, exporter_id, business_direction, category, business,
+      dimension_value, dimension_snapshot_id, geo_version, classification_version,
+      metric_value, received_records, unknown_sampling_records, quality_records, generated_at,
+      toUInt8(series_rank <= {top_n:UInt16}) AS is_top
     FROM ranked
+    UNION ALL
+    SELECT
+      bucket, target_id, device_id, exporter_id, business_direction, category, business,
+      dimension_value, dimension_snapshot_id, geo_version, classification_version,
+      metric_value, received_records, unknown_sampling_records, quality_records, generated_at,
+      toUInt8(0) AS is_top
+    FROM filtered
+    WHERE materialized_other = 1
   ),
   series_rows AS (
     SELECT
