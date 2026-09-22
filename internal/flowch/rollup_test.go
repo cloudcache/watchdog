@@ -104,7 +104,7 @@ func (e *rollupGenerationExecutor) Do(ctx context.Context, query ch.Query) error
 	return query.OnResult(ctx, proto.Block{Columns: 1, Rows: 1})
 }
 
-func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
+func TestBuildRollupQueryIsParameterizedAndDeterministic(t *testing.T) {
 	request := RollupRequest{
 		Resolution: RollupOneMinute,
 		Bucket:     time.Date(2026, 9, 5, 1, 2, 0, 0, time.UTC), Generation: 17,
@@ -124,7 +124,7 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	}
 	for _, required := range []string{
 		"INSERT INTO flow_aggregate_1m", "FROM flow_records FINAL", "ARRAY JOIN", "arrayDistinct",
-		"AND disposition = 'count'", "UNION ALL", "'_generation'", "{generation:UInt64}",
+		"AND disposition = 'count'", "{generation:UInt64}",
 		"'geo.continent'", "'geo.region'", "'geo.country'", "'geo.province'", "'geo.city'", "'_unassigned'",
 		"tuple('asn', if(remote_asn = 0, '_unassigned'", "tuple('business', if(empty(business), '_unassigned'",
 		"tuple('local_prefix', if(empty(local_prefix_id), '_unassigned'", "tuple('remote_port', if(remote_port = 0, '_unassigned'",
@@ -139,8 +139,8 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 			t.Fatalf("rollup query retained obsolete Geo dimension %q", obsolete)
 		}
 	}
-	if strings.Count(first.Body, "INSERT INTO") != 1 {
-		t.Fatal("one bucket generation must be one atomic INSERT SELECT")
+	if strings.Contains(first.Body, "'_generation'") || strings.Contains(first.Body, "UNION ALL") {
+		t.Fatal("data INSERT must not publish its completion marker")
 	}
 	if setting(first, "async_insert") != "0" || setting(first, "insert_deduplication_token") == "" {
 		t.Fatal("rollup insert is not synchronous and replay-stable")
@@ -153,6 +153,14 @@ func TestBuildRollupQueryIsAtomicParameterizedAndDeterministic(t *testing.T) {
 	if setting(first, "max_threads") != "4" || setting(first, "priority") != "10" ||
 		setting(first, "max_memory_usage") != "6442450944" || setting(first, "max_bytes_before_external_group_by") != "3221225472" {
 		t.Fatalf("rollup did not apply request-owned resource guards: %+v", first.Settings)
+	}
+	marker, err := buildRollupMarkerQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(marker.Body, "'_generation'") || strings.Contains(marker.Body, "flow_records") ||
+		setting(marker, "insert_deduplication_token") == setting(first, "insert_deduplication_token") {
+		t.Fatalf("marker query is not an independent commit record: %+v", marker)
 	}
 }
 
@@ -169,7 +177,7 @@ func TestBuildDailyRollupReadsOnlyCompleteHourlyGenerations(t *testing.T) {
 	for _, required := range []string{
 		"INSERT INTO flow_aggregate_1d", "FROM flow_aggregate_1h AS source FINAL",
 		"max(generation)", "dimension_kind = '_generation'", "INNER JOIN latest USING (bucket, generation)",
-		"dimension_value != '_other'", "UNION ALL", "'_generation'",
+		"dimension_value != '_other'",
 	} {
 		if !strings.Contains(query.Body, required) {
 			t.Fatalf("daily rollup query missing %q", required)
@@ -177,6 +185,9 @@ func TestBuildDailyRollupReadsOnlyCompleteHourlyGenerations(t *testing.T) {
 	}
 	if strings.Contains(query.Body, "FROM flow_records") {
 		t.Fatal("daily rollup unexpectedly re-read raw facts")
+	}
+	if strings.Contains(query.Body, "UNION ALL") {
+		t.Fatal("daily data INSERT published its marker before completion")
 	}
 }
 
@@ -193,7 +204,7 @@ func TestBuildHourlyRollupCanMergeCompleteMinuteGenerations(t *testing.T) {
 	for _, required := range []string{
 		"INSERT INTO flow_aggregate_1h", "FROM flow_aggregate_1m AS source FINAL",
 		"FROM flow_aggregate_1m", "INNER JOIN latest USING (bucket, generation)",
-		"dimension_kind = '_generation'", "'_generation'",
+		"dimension_kind = '_generation'",
 	} {
 		if !strings.Contains(query.Body, required) {
 			t.Fatalf("hourly derived rollup query missing %q", required)
@@ -217,16 +228,23 @@ func TestBuildMinuteRollupBatchScansHourOnceAndPublishesEveryMarker(t *testing.T
 	}
 	for _, required := range []string{
 		"toStartOfMinute(event_time) AS bucket", "PARTITION BY bucket,",
-		"FROM numbers(", "rollup_bucket_seconds", "GROUP BY\n      bucket,",
+		"GROUP BY\n      bucket,",
 	} {
 		if !strings.Contains(query.Body, required) {
 			t.Fatalf("minute batch query missing %q", required)
 		}
 	}
 	if parameter(query, "bucket_start") != "'2026-09-22 01:00:00'" ||
-		parameter(query, "bucket_end") != "'2026-09-22 02:00:00'" ||
-		parameter(query, "bucket_seconds") != "'60'" {
+		parameter(query, "bucket_end") != "'2026-09-22 02:00:00'" {
 		t.Fatalf("minute batch parameters=%+v", query.Parameters)
+	}
+	marker, err := buildRollupMarkerQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(marker.Body, "FROM numbers(") || !strings.Contains(marker.Body, "rollup_bucket_seconds") ||
+		parameter(marker, "bucket_seconds") != "'60'" {
+		t.Fatalf("minute batch marker query=%+v", marker)
 	}
 }
 
@@ -243,6 +261,43 @@ func TestBuildMarkerOnlyRollupDoesNotReadRaw(t *testing.T) {
 	if !strings.Contains(query.Body, "INSERT INTO flow_aggregate_1h") ||
 		!strings.Contains(query.Body, "'_generation'") || strings.Contains(query.Body, "flow_records") {
 		t.Fatalf("marker-only query=%s", query.Body)
+	}
+}
+
+func TestRollupRunnerPublishesMarkerOnlyAfterDataSucceeds(t *testing.T) {
+	request := RollupRequest{
+		Resolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC),
+		BucketEnd:  time.Date(2026, 9, 22, 2, 0, 0, 0, time.UTC),
+		Generation: 21, GeneratedAt: time.Date(2026, 9, 22, 2, 5, 0, 0, time.UTC),
+	}
+
+	dataFailure := &queryRecorder{errors: map[int]error{1: errors.New("data insert failed")}}
+	if err := (&RollupRunner{executor: dataFailure}).Run(context.Background(), request); err == nil || len(dataFailure.queries) != 1 {
+		t.Fatalf("data failure published marker: err=%v queries=%d", err, len(dataFailure.queries))
+	}
+
+	markerFailure := &queryRecorder{errors: map[int]error{2: errors.New("marker insert failed")}}
+	runner := &RollupRunner{executor: markerFailure}
+	if err := runner.Run(context.Background(), request); err == nil || !strings.Contains(err.Error(), "marker phase") {
+		t.Fatalf("marker failure was not reported: %v", err)
+	}
+	if len(markerFailure.queries) != 2 || strings.Contains(markerFailure.queries[0].Body, "'_generation'") ||
+		!strings.Contains(markerFailure.queries[1].Body, "'_generation'") {
+		t.Fatalf("unexpected two-phase queries: %+v", markerFailure.queries)
+	}
+	stats := runner.Stats().OneMinute
+	if stats.Attempts != 1 || stats.Successes != 0 || stats.RetryableErrors != 1 || stats.LatestCompletedBucketUnix != 0 {
+		t.Fatalf("marker failure incorrectly completed rollup: %+v", stats)
+	}
+
+	success := &queryRecorder{}
+	if err := (&RollupRunner{executor: success}).Run(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(success.queries) != 2 ||
+		setting(success.queries[0], "insert_deduplication_token") == setting(success.queries[1], "insert_deduplication_token") {
+		t.Fatalf("data and marker phases are not independently replay-safe: %+v", success.queries)
 	}
 }
 
@@ -560,8 +615,8 @@ func TestRollupRunnerReadsAuthoritativeGenerationMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generation != 19 || !strings.Contains(executor.query.Body, "FROM flow_aggregate_1h FINAL") ||
-		!strings.Contains(executor.query.Body, "dimension_kind = '_generation'") {
+	if generation != 19 || !strings.Contains(executor.query.Body, "FROM flow_aggregate_1h") ||
+		strings.Contains(executor.query.Body, "FINAL") || !strings.Contains(executor.query.Body, "dimension_kind = '_generation'") {
 		t.Fatalf("generation=%d query=%q", generation, executor.query.Body)
 	}
 	if _, err := (&RollupRunner{executor: &rollupGenerationExecutor{}}).LatestGeneration(context.Background(), RollupOneHour, bucket); err == nil {

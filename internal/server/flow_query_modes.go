@@ -138,37 +138,6 @@ func labelFlowDirectionJointResult(result *flowquery.JointResult) {
 	}
 }
 
-// mergeFlowDirectionResults folds the per-direction total results (aligned with
-// labels) into one result under a synthetic "direction" dimension: each direction's
-// points are relabeled, and completeness is reduced conservatively — widest expected
-// buckets, narrowest covered, minimum ratio, AND of complete. A faithful extract of
-// the hub's per-direction accumulation, kept pure so the fold is unit-testable.
-func mergeFlowDirectionResults(plan *flowquery.AggregatePlan, labels []string, results []flowquery.Result) flowquery.Result {
-	combined := flowquery.Result{
-		Dimension: flowquery.DimensionDefinition{Kind: flowquery.Dimension("direction"), Additive: true},
-		Plan:      plan,
-	}
-	for i, result := range results {
-		if i == 0 {
-			combined.View = result.View
-			combined.Metric = result.Metric
-			combined.RollupCompleteness = result.RollupCompleteness
-		} else {
-			combined.RollupCompleteness.ExpectedBuckets = max(combined.RollupCompleteness.ExpectedBuckets, result.RollupCompleteness.ExpectedBuckets)
-			combined.RollupCompleteness.CoveredBuckets = min(combined.RollupCompleteness.CoveredBuckets, result.RollupCompleteness.CoveredBuckets)
-			combined.RollupCompleteness.Ratio = min(combined.RollupCompleteness.Ratio, result.RollupCompleteness.Ratio)
-			combined.RollupCompleteness.Complete = combined.RollupCompleteness.Complete && result.RollupCompleteness.Complete
-		}
-		for _, point := range result.Points {
-			if i < len(labels) {
-				point.DimensionValue = labels[i]
-			}
-			combined.Points = append(combined.Points, point)
-		}
-	}
-	return combined
-}
-
 // queryFlowDirectionSplitJoint is the flow_records fallback used when the typed
 // filter is not rollup-supported.
 func (s *Server) queryFlowDirectionSplitJoint(c *gin.Context, envelope flowQueryEnvelope, input flowQueryParameters, view flowquery.View, now time.Time, tableReq *flowTableRequest) {

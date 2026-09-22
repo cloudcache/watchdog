@@ -519,7 +519,7 @@ func overseasVPNShareNumerator(findings []vpnFindingDTO) (vpnIn, vpnOut, unknown
 // overseasDirectionTotalBytes sums the overseas total estimated_bytes for one
 // direction across the window — one leg of the vpn_share denominator.
 func (s *Server) overseasDirectionTotalBytes(ctx context.Context, scope flowquery.Scope, view flowquery.View, req flowReportRequest, direction string, now time.Time) (float64, error) {
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
+	plan, err := s.planFlowReportAggregate(req, req.TargetPoints, now)
 	if err != nil {
 		return 0, err
 	}

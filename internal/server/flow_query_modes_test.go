@@ -35,43 +35,6 @@ func TestDirectionSplitAllowed(t *testing.T) {
 	}
 }
 
-// TestMergeFlowDirectionResults proves the per-direction fold: relabeled points
-// under a synthetic additive "direction" dimension, with completeness reduced
-// conservatively (widest expected, narrowest covered, min ratio, AND complete).
-func TestMergeFlowDirectionResults(t *testing.T) {
-	bucket := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
-	metric := flowquery.MetricDefinition{Name: flowquery.Metric("estimated_bps"), Unit: "bps"}
-	plan := &flowquery.AggregatePlan{Source: flowquery.BucketOneMinute, StepSeconds: 60}
-	inbound := flowquery.Result{
-		Metric:             metric,
-		Points:             []flowquery.Point{{Bucket: bucket, DimensionValue: "total", Value: 10}},
-		RollupCompleteness: flowquery.RollupCompleteness{ExpectedBuckets: 10, CoveredBuckets: 10, Ratio: 1, Complete: true},
-	}
-	outbound := flowquery.Result{
-		Metric:             metric,
-		Points:             []flowquery.Point{{Bucket: bucket, DimensionValue: "total", Value: 20}},
-		RollupCompleteness: flowquery.RollupCompleteness{ExpectedBuckets: 12, CoveredBuckets: 8, Ratio: 0.5, Complete: false},
-	}
-	combined := mergeFlowDirectionResults(plan, []string{"Inbound", "Outbound"}, []flowquery.Result{inbound, outbound})
-
-	if combined.Dimension.Kind != flowquery.Dimension("direction") || !combined.Dimension.Additive {
-		t.Fatalf("synthetic dimension = %+v", combined.Dimension)
-	}
-	if len(combined.Points) != 2 || combined.Points[0].DimensionValue != "Inbound" || combined.Points[1].DimensionValue != "Outbound" {
-		t.Fatalf("relabeled points = %+v", combined.Points)
-	}
-	if combined.Points[0].Value != 10 || combined.Points[1].Value != 20 {
-		t.Fatalf("values not preserved: %+v", combined.Points)
-	}
-	rc := combined.RollupCompleteness
-	if rc.ExpectedBuckets != 12 || rc.CoveredBuckets != 8 || rc.Ratio != 0.5 || rc.Complete {
-		t.Fatalf("reduced completeness = %+v", rc)
-	}
-	if combined.Metric != metric || combined.Plan != plan {
-		t.Fatalf("metric/plan not carried through: %+v", combined)
-	}
-}
-
 // TestFlowAddressSetLabel: a lone included set names the series; anything else is a
 // generic combination label.
 func TestFlowAddressSetLabel(t *testing.T) {

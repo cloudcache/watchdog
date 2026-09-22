@@ -164,7 +164,7 @@ func (s *Server) runEndpointAggregate(ctx context.Context, scope flowquery.Scope
 		}
 		return raw, plan, nil
 	}
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, targetPoints, now)
+	plan, err := s.planFlowReportAggregate(req, targetPoints, now)
 	if err != nil {
 		return nil, flowquery.AggregatePlan{}, err
 	}

@@ -420,7 +420,7 @@ func (s *Server) buildFlowReportResponse(ctx context.Context, scope flowquery.Sc
 	}
 	// A report-level plan gives the response its requested/effective range and the
 	// source→display step, mirroring the per-panel aggregate planning.
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
+	plan, err := s.planFlowReportAggregate(req, req.TargetPoints, now)
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +461,31 @@ func (s *Server) buildFlowReportResponse(ctx context.Context, scope flowquery.Sc
 		// separate completeness-level warnings, so meta.warnings stays absent.
 		"meta": meta,
 	}, nil
+}
+
+// planFlowReportAggregate keeps automatic reports on a physically covered
+// tier. The generic planner chooses display density without knowing the hot 1m
+// horizon; a range that starts before that horizon would otherwise select 1m,
+// find a marker gap at its first bucket, and fall back to raw for the whole
+// window. Explicit /flow/query step requests retain their requested resolution.
+func (s *Server) planFlowReportAggregate(req flowReportRequest, targetPoints uint16, now time.Time) (flowquery.AggregatePlan, error) {
+	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, targetPoints, now)
+	if err != nil || plan.Source != flowquery.BucketOneMinute {
+		return plan, err
+	}
+	minuteHorizon := s.cfg.Flow.HotRollup.MinuteLookback
+	if minuteHorizon <= 0 {
+		return plan, nil
+	}
+	// Match the scheduler's physical 1m coverage boundary. Minute rollups are
+	// published only after the containing hour seals, so duration alone is not
+	// sufficient: a short historical window can still be outside the hot tier.
+	minuteCoverageFrom := now.UTC().Add(-s.cfg.Flow.HotRollup.SealDelay).
+		Truncate(time.Hour).Add(-minuteHorizon).Truncate(time.Minute)
+	if !plan.EffectiveFrom.Before(minuteCoverageFrom) {
+		return plan, nil
+	}
+	return flowquery.PlanAggregate(req.From, req.To, time.Hour, targetPoints, now)
 }
 
 // flowReportCompleteness derives the report-level completeness from its panels: the
@@ -660,7 +685,7 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 		}
 		return raw, gin.H{"step_seconds": compiled.Plan.StepSeconds, "source": compiled.Plan.Source, "unit": result.Metric.Unit}, nil
 	}
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
+	plan, err := s.planFlowReportAggregate(req, req.TargetPoints, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -724,7 +749,7 @@ func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Sc
 			"unit":         combined.Metric.Unit,
 		}, nil
 	}
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
+	plan, err := s.planFlowReportAggregate(req, req.TargetPoints, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -785,7 +810,7 @@ func (s *Server) runOverseasObservedPanel(ctx context.Context, view flowquery.Vi
 	if req.Filter != nil {
 		return flowReportPanel{ID: "observed", Status: "unavailable", Reason: "overseas observed cardinality is unavailable with typed Geo/operator filters"}, nil
 	}
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, req.TargetPoints, now)
+	plan, err := s.planFlowReportAggregate(req, req.TargetPoints, now)
 	if err != nil {
 		return flowReportPanel{}, err
 	}

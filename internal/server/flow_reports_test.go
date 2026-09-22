@@ -115,6 +115,52 @@ func TestFlowReportQueryAsyncThresholdAndArtifact(t *testing.T) {
 	}
 }
 
+func TestPlanFlowReportAggregateUsesConfiguredMinuteCoverageHorizon(t *testing.T) {
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	cfg := defaultConfig()
+	cfg.Flow.HotRollup.MinuteLookback = 6 * time.Hour
+	cfg.Flow.HotRollup.SealDelay = 20 * time.Minute
+	s := &Server{cfg: cfg}
+
+	// At 08:00 with a 20m seal delay the minute scheduler's through boundary is
+	// 07:00, so its six-hour physical coverage begins at 01:00.
+	within, err := s.planFlowReportAggregate(flowReportRequest{From: now.Add(-7 * time.Hour), To: now}, 300, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if within.Source != flowquery.BucketOneMinute {
+		t.Fatalf("range within minute coverage selected %s", within.Source)
+	}
+
+	beyond, err := s.planFlowReportAggregate(flowReportRequest{From: now.Add(-7*time.Hour - time.Minute), To: now}, 300, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beyond.Source != flowquery.BucketOneHour || beyond.StepSeconds != 3600 {
+		t.Fatalf("range beyond minute coverage selected %+v", beyond)
+	}
+	historicalShort, err := s.planFlowReportAggregate(flowReportRequest{
+		From: now.Add(-25 * time.Hour), To: now.Add(-23 * time.Hour),
+	}, 300, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historicalShort.Source != flowquery.BucketOneHour {
+		t.Fatalf("short historical range selected %s", historicalShort.Source)
+	}
+
+	// The threshold is deployment-owned, not a second hard-coded query limit.
+	cfg.Flow.HotRollup.MinuteLookback = 12 * time.Hour
+	s.cfg = cfg
+	expanded, err := s.planFlowReportAggregate(flowReportRequest{From: now.Add(-12 * time.Hour), To: now}, 300, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expanded.Source != flowquery.BucketOneMinute {
+		t.Fatalf("expanded minute coverage selected %s", expanded.Source)
+	}
+}
+
 func reportWindow() (time.Time, time.Time) {
 	from := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	return from, from.Add(time.Hour)

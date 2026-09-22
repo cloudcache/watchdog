@@ -34,8 +34,9 @@ type RollupRequest struct {
 	Resolution       RollupResolution
 	SourceResolution RollupResolution
 	Bucket           time.Time
-	// BucketEnd enables one atomic, hour-local batch of one-minute buckets.
-	// Zero preserves the single-bucket contract used by lifecycle jobs.
+	// BucketEnd enables one hour-local batch of one-minute buckets. Data is
+	// scanned once; completion markers are published only after that insert
+	// succeeds. Zero preserves the single-bucket contract used by lifecycle jobs.
 	BucketEnd   time.Time
 	Generation  uint64
 	GeneratedAt time.Time
@@ -49,8 +50,9 @@ type RollupRequest struct {
 	MaxMemoryBytes uint64
 }
 
-// RollupMarker is the latest atomically published generation for one aggregate
-// bucket. Generations below 2^32 are reserved for the recent-query cache;
+// RollupMarker is the latest completion record for one aggregate bucket. It is
+// published only after that generation's data INSERT succeeds. Generations
+// below 2^32 are reserved for the recent-query cache;
 // lifecycle archive generations use the policy-version namespace above it.
 type RollupMarker struct {
 	Bucket      time.Time
@@ -171,7 +173,7 @@ func (r *RollupRunner) LatestGeneration(ctx context.Context, resolution RollupRe
 	found := false
 	query := ch.Query{
 		Body: fmt.Sprintf(`SELECT max(generation) AS generation
-FROM %s FINAL
+FROM %s
 WHERE bucket = {bucket:DateTime('UTC')}
   AND dimension_kind = '_generation'`, table),
 		Parameters: ch.Parameters(map[string]any{
@@ -200,9 +202,9 @@ WHERE bucket = {bucket:DateTime('UTC')}
 }
 
 // GenerationMarkers returns the latest complete generation for every covered
-// bucket in [from,to). The _generation row is written in the same INSERT SELECT
-// as the aggregate rows, so its presence is the coverage authority for both
-// the hot cache and the reconciled archive.
+// bucket in [from,to). The _generation row is published only after the data
+// INSERT succeeds, so its presence is the coverage authority for both the hot
+// cache and the reconciled archive.
 func (r *RollupRunner) GenerationMarkers(ctx context.Context, resolution RollupResolution, from, to time.Time) ([]RollupMarker, error) {
 	duration, table, err := rollupTarget(resolution)
 	if err != nil {
@@ -337,8 +339,8 @@ FROM (
 // for the bucket differs from the received_records its aggregate recorded. Base
 // records that arrived after the rollup ran are the common cause (F2). The
 // reaper calls it only for buckets that already have a successful generation, so
-// the aggregate side is populated. Both sides read FINAL and filter
-// disposition/dimension exactly as the rollup did, so the counts are comparable.
+// the aggregate side is populated. Public data rows and raw facts read FINAL;
+// marker-only max(generation) subqueries do not need merge-time deduplication.
 func (r *RollupRunner) BucketNeedsRepair(ctx context.Context, resolution RollupResolution, bucket time.Time) (bool, error) {
 	duration, table, err := rollupTarget(resolution)
 	if err != nil {
@@ -359,7 +361,7 @@ FROM %s FINAL
 WHERE bucket = {bucket:DateTime('UTC')}
   AND dimension_kind = 'total'
   AND generation = (
-    SELECT max(generation) FROM %s FINAL
+    SELECT max(generation) FROM %s
     WHERE bucket = {bucket:DateTime('UTC')} AND dimension_kind = '_generation'
   )`, table, table),
 		Parameters: ch.Parameters(map[string]any{"bucket": bucketParam}),
@@ -412,7 +414,7 @@ WHERE bucket >= {start:DateTime('UTC')} AND bucket < {end:DateTime('UTC')}
      AND source.dimension_kind = '_generation')
   >
   (SELECT argMax(generated_at, generation)
-   FROM flow_aggregate_1d FINAL
+   FROM flow_aggregate_1d
    WHERE bucket = {start:DateTime('UTC')} AND dimension_kind = '_generation')
 ) AS value`,
 		Parameters: baseQuery.Parameters,
@@ -502,7 +504,7 @@ WHERE event_time >= {start:DateTime('UTC')}
 FROM flow_aggregate_1h FINAL
 INNER JOIN (
   SELECT bucket, max(generation) AS generation
-  FROM flow_aggregate_1h FINAL
+  FROM flow_aggregate_1h
   WHERE bucket >= {start:DateTime('UTC')}
     AND bucket < {end:DateTime('UTC')}
     AND dimension_kind = '_generation'
@@ -565,7 +567,7 @@ func (r *RollupRunner) ArchiveMonthStorageCounters(ctx context.Context, monthSta
 FROM flow_aggregate_1h FINAL
 INNER JOIN (
   SELECT bucket, max(generation) AS generation
-  FROM flow_aggregate_1h FINAL
+  FROM flow_aggregate_1h
   WHERE bucket >= {start:DateTime('UTC')}
     AND bucket < {end:DateTime('UTC')}
     AND dimension_kind = '_generation'
@@ -645,29 +647,45 @@ func (r *RollupRunner) storageCounters(ctx context.Context, query ch.Query) (Sto
 	return result, nil
 }
 
-// Run rebuilds one closed bucket in one INSERT SELECT. Every public
-// dimension and an internal generation marker are inserted atomically. A
-// repair reuses the same request, or supplies a greater generation after late
-// base records arrive.
+// Run rebuilds one closed bucket (or one hour-local minute range) and publishes
+// its completion marker only after the data INSERT succeeds. ClickHouse INSERT
+// SELECT can expose parts before a failed statement returns, so the marker is a
+// separate commit record: readers can never authorize a partially written
+// generation. A retry reuses the deterministic data/marker tokens and the same
+// generation, or supplies a greater generation after late base records arrive.
 func (r *RollupRunner) Run(ctx context.Context, request RollupRequest) error {
-	query, err := buildRollupQuery(request)
+	dataQuery, err := buildRollupQuery(request)
 	if err != nil {
 		return Permanent(err)
+	}
+	queries := []ch.Query{dataQuery}
+	if !request.MarkerOnly {
+		markerQuery, markerErr := buildRollupMarkerQuery(request)
+		if markerErr != nil {
+			return Permanent(markerErr)
+		}
+		queries = append(queries, markerQuery)
 	}
 	if r == nil || r.executor == nil {
 		return Permanent(errors.New("ClickHouse rollup runner is not initialized"))
 	}
 	index, duration := rollupStatsTarget(request.Resolution)
 	r.stats[index].attempts.Add(1)
-	if err := r.executor.Do(ctx, query); err != nil {
-		classified := classifyClickHouseError(fmt.Errorf("rebuild ClickHouse %s bucket: %w", request.Resolution, err))
-		var permanent *PermanentError
-		if errors.As(classified, &permanent) {
-			r.stats[index].permanentErrors.Add(1)
-		} else {
-			r.stats[index].retryableErrors.Add(1)
+	for queryIndex, query := range queries {
+		if err := r.executor.Do(ctx, query); err != nil {
+			phase := "data"
+			if request.MarkerOnly || queryIndex == 1 {
+				phase = "marker"
+			}
+			classified := classifyClickHouseError(fmt.Errorf("rebuild ClickHouse %s bucket %s phase: %w", request.Resolution, phase, err))
+			var permanent *PermanentError
+			if errors.As(classified, &permanent) {
+				r.stats[index].permanentErrors.Add(1)
+			} else {
+				r.stats[index].retryableErrors.Add(1)
+			}
+			return classified
 		}
-		return classified
 	}
 	r.stats[index].successes.Add(1)
 	if request.Generation == 1 {
@@ -847,22 +865,21 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 	if err := ValidateRollupRequest(request); err != nil {
 		return ch.Query{}, err
 	}
+	if request.MarkerOnly {
+		return buildRollupMarkerQuery(request)
+	}
 	bucket := request.Bucket.UTC()
 	generatedAt := request.GeneratedAt.UTC()
 	end := bucket.Add(duration)
 	if !request.BucketEnd.IsZero() {
 		end = request.BucketEnd.UTC()
 	}
-	tokenInput := fmt.Sprintf("watchdog-flow-rollup-v2\x00%s\x00%d\x00%d\x00%d\x00%t", request.Resolution, bucket.Unix(), end.Unix(), request.Generation, request.MarkerOnly)
-	token := sha256.Sum256([]byte(tokenInput))
 	bucketExpression := "toStartOfMinute(event_time)"
 	if request.Resolution == RollupOneHour {
 		bucketExpression = "toStartOfHour(event_time)"
 	}
 	body := fmt.Sprintf(rollupSQL, table, bucketExpression)
-	if request.MarkerOnly {
-		body = fmt.Sprintf(markerOnlyRollupSQL, table)
-	} else if request.Resolution == RollupOneDay {
+	if request.Resolution == RollupOneDay {
 		body = fmt.Sprintf(derivedRollupSQL, table, "flow_aggregate_1h", "flow_aggregate_1h")
 	} else if request.Resolution == RollupOneHour && request.SourceResolution == RollupOneMinute {
 		body = fmt.Sprintf(derivedRollupSQL, table, "flow_aggregate_1m", "flow_aggregate_1m")
@@ -872,33 +889,68 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 		Parameters: ch.Parameters(map[string]any{
 			"bucket_start": bucket.Format("2006-01-02 15:04:05"),
 			"bucket_end":   end.Format("2006-01-02 15:04:05"), "generation": request.Generation,
-			"generated_at":   generatedAt.Format("2006-01-02 15:04:05.000"),
-			"bucket_seconds": uint32(duration / time.Second),
-			"top_n":          rollupIPTopN, "port_top_n": rollupPortTopN,
+			"generated_at": generatedAt.Format("2006-01-02 15:04:05.000"),
+			"top_n":        rollupIPTopN, "port_top_n": rollupPortTopN,
 		}),
-		Settings: []ch.Setting{
-			{Key: "async_insert", Value: "0", Important: true},
-			{Key: "wait_for_async_insert", Value: "1", Important: true},
-			{Key: "insert_deduplication_token", Value: hex.EncodeToString(token[:]), Important: true},
-			// A heavy bucket GROUP BY must spill to disk rather than OOM:
-			// MEMORY_LIMIT_EXCEEDED is classified retryable, so an unguarded
-			// rollup fails deterministically and the bucket is never aggregated.
-			{Key: "max_bytes_before_external_group_by", Value: "4294967296", Important: true},
-			{Key: "max_memory_usage", Value: "10737418240", Important: true},
-		},
-	}
-	if request.MaxMemoryBytes > 0 {
-		groupBySpill := min(request.MaxMemoryBytes/2, uint64(4<<30))
-		query.Settings[3].Value = strconv.FormatUint(groupBySpill, 10)
-		query.Settings[4].Value = strconv.FormatUint(request.MaxMemoryBytes, 10)
-	}
-	if request.MaxThreads > 0 {
-		query.Settings = append(query.Settings, ch.Setting{Key: "max_threads", Value: strconv.FormatUint(request.MaxThreads, 10), Important: true})
-	}
-	if request.Priority > 0 {
-		query.Settings = append(query.Settings, ch.Setting{Key: "priority", Value: strconv.FormatUint(request.Priority, 10), Important: true})
+		Settings: rollupInsertSettings(request, end, "data", true),
 	}
 	return query, nil
+}
+
+func buildRollupMarkerQuery(request RollupRequest) (ch.Query, error) {
+	duration, table, err := rollupTarget(request.Resolution)
+	if err != nil {
+		return ch.Query{}, err
+	}
+	if err := ValidateRollupRequest(request); err != nil {
+		return ch.Query{}, err
+	}
+	bucket := request.Bucket.UTC()
+	end := bucket.Add(duration)
+	if !request.BucketEnd.IsZero() {
+		end = request.BucketEnd.UTC()
+	}
+	return ch.Query{
+		Body: fmt.Sprintf(generationMarkerRollupSQL, table),
+		Parameters: ch.Parameters(map[string]any{
+			"bucket_start":   bucket.Format("2006-01-02 15:04:05"),
+			"bucket_end":     end.Format("2006-01-02 15:04:05"),
+			"bucket_seconds": uint32(duration / time.Second),
+			"generation":     request.Generation,
+			"generated_at":   request.GeneratedAt.UTC().Format("2006-01-02 15:04:05.000"),
+		}),
+		Settings: rollupInsertSettings(request, end, "marker", false),
+	}, nil
+}
+
+func rollupInsertSettings(request RollupRequest, end time.Time, phase string, heavy bool) []ch.Setting {
+	tokenInput := fmt.Sprintf("watchdog-flow-rollup-v3\x00%s\x00%s\x00%d\x00%d\x00%d", phase, request.Resolution,
+		request.Bucket.UTC().Unix(), end.UTC().Unix(), request.Generation)
+	token := sha256.Sum256([]byte(tokenInput))
+	settings := []ch.Setting{
+		{Key: "async_insert", Value: "0", Important: true},
+		{Key: "wait_for_async_insert", Value: "1", Important: true},
+		{Key: "insert_deduplication_token", Value: hex.EncodeToString(token[:]), Important: true},
+	}
+	if heavy {
+		// A heavy bucket GROUP BY must spill to disk rather than OOM.
+		spill, memory := uint64(4<<30), uint64(10<<30)
+		if request.MaxMemoryBytes > 0 {
+			memory = request.MaxMemoryBytes
+			spill = min(memory/2, uint64(4<<30))
+		}
+		settings = append(settings,
+			ch.Setting{Key: "max_bytes_before_external_group_by", Value: strconv.FormatUint(spill, 10), Important: true},
+			ch.Setting{Key: "max_memory_usage", Value: strconv.FormatUint(memory, 10), Important: true},
+		)
+	}
+	if request.MaxThreads > 0 {
+		settings = append(settings, ch.Setting{Key: "max_threads", Value: strconv.FormatUint(request.MaxThreads, 10), Important: true})
+	}
+	if request.Priority > 0 {
+		settings = append(settings, ch.Setting{Key: "priority", Value: strconv.FormatUint(request.Priority, 10), Important: true})
+	}
+	return settings
 }
 
 func rollupTarget(resolution RollupResolution) (time.Duration, string, error) {
@@ -914,10 +966,8 @@ func rollupTarget(resolution RollupResolution) (time.Duration, string, error) {
 	}
 }
 
-// The marker row makes an empty repair visible as the latest complete
-// generation, so dimensions that disappeared do not leak from an older run.
-// Public queries must filter dimension_kind and select max(generation) per
-// bucket; _generation is internal and never exposed by the registry.
+// rollupSQL writes data rows only. Run publishes _generation markers in a
+// second synchronous INSERT after this statement succeeds.
 const rollupSQL = `INSERT INTO %s (
   bucket, target_id, device_id, exporter_id,
   business_direction, category, business, dimension_kind, dimension_value,
@@ -930,7 +980,6 @@ WITH
   {bucket_end:DateTime('UTC')} AS rollup_end,
   {generation:UInt64} AS rollup_generation,
   {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at,
-  {bucket_seconds:UInt32} AS rollup_bucket_seconds,
   {top_n:UInt32} AS rollup_top_n,
   {port_top_n:UInt32} AS rollup_port_top_n
 SELECT
@@ -1023,29 +1072,31 @@ FROM (
 GROUP BY
   bucket, target_id, device_id, exporter_id, business_direction, category,
   business, dimension_kind, dimension_value, dimension_snapshot_id,
-  geo_version, classification_version, generation, generated_at
-UNION ALL
-SELECT
-  toDateTime(rollup_start + toIntervalSecond(toUInt32(number) * rollup_bucket_seconds)),
-  '', '', '', 'ambiguous', 'unknown', '',
-  '_generation', '', '', '', 0,
-  0, 0, 0, 0, 0, 0, 0, rollup_generation, rollup_generated_at
-FROM numbers(toUInt64(intDiv(dateDiff('second', rollup_start, rollup_end), rollup_bucket_seconds)))`
+  geo_version, classification_version, generation, generated_at`
 
-const markerOnlyRollupSQL = `INSERT INTO %s (
+// generationMarkerRollupSQL is the commit-record phase. A minute range emits
+// one marker per bucket; every other request emits exactly one. Readers ignore
+// data generations that have no corresponding marker.
+const generationMarkerRollupSQL = `INSERT INTO %s (
   bucket, target_id, device_id, exporter_id,
   business_direction, category, business, dimension_kind, dimension_value,
   dimension_snapshot_id, geo_version, classification_version,
   raw_bytes, raw_packets, estimated_bytes, estimated_packets,
   received_records, unknown_sampling_records, quality_records,
   generation, generated_at)
+WITH
+  {bucket_start:DateTime('UTC')} AS rollup_start,
+  {bucket_end:DateTime('UTC')} AS rollup_end,
+  {bucket_seconds:UInt32} AS rollup_bucket_seconds
 SELECT
-  {bucket_start:DateTime('UTC')}, '', '', '', 'ambiguous', 'unknown', '',
+  toDateTime(rollup_start + toIntervalSecond(toUInt32(number) * rollup_bucket_seconds)),
+  '', '', '', 'ambiguous', 'unknown', '',
   '_generation', '', '', '', 0,
-  0, 0, 0, 0, 0, 0, 0, {generation:UInt64}, {generated_at:DateTime64(3, 'UTC')}`
+  0, 0, 0, 0, 0, 0, 0, {generation:UInt64}, {generated_at:DateTime64(3, 'UTC')}
+FROM numbers(toUInt64(intDiv(dateDiff('second', rollup_start, rollup_end), rollup_bucket_seconds)))`
 
-// derivedRollupSQL compacts a finer, atomically published aggregate tier into
-// a coarser one. The hot scheduler uses it for 1m -> 1h only after verifying
+// derivedRollupSQL compacts a finer, marker-published aggregate tier into a
+// coarser one. The hot scheduler uses it for 1m -> 1h only after verifying
 // all 60 source markers; lifecycle uses it for 1h -> 1d after reconciliation.
 // It avoids expanding the raw EAV dimensions a second time for every hour.
 const derivedRollupSQL = `INSERT INTO %s (
@@ -1118,9 +1169,4 @@ FROM (
 GROUP BY
   bucket, target_id, device_id, exporter_id, business_direction, category,
   business, dimension_kind, dimension_value, dimension_snapshot_id,
-  geo_version, classification_version, generation, generated_at
-UNION ALL
-SELECT
-  rollup_start, '', '', '', 'ambiguous', 'unknown', '',
-  '_generation', '', '', '', 0,
-  0, 0, 0, 0, 0, 0, 0, rollup_generation, rollup_generated_at`
+  geo_version, classification_version, generation, generated_at`
