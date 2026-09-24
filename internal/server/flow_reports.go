@@ -631,12 +631,19 @@ func (s *Server) runFlowReportPanelSpec(ctx context.Context, scope flowquery.Sco
 				return flowReportPanelRun{err: err}
 			}
 			return flowReportPanelRun{
-				panel:    flowReportPanel{ID: spec.ID, Status: "unavailable", Reason: "panel query failed"},
-				warnings: []string{spec.ID + ": unavailable"},
+				panel: flowReportPanel{ID: spec.ID, Status: "unavailable", Reason: flowReportPanelFailureReason(err)},
 			}
 		}
 		return flowReportPanelRun{panel: flowReportPanel{ID: spec.ID, Status: "ready", Data: raw, Meta: meta}}
 	}
+}
+
+func flowReportPanelFailureReason(err error) string {
+	var requestErr *flowquery.RequestError
+	if errors.As(err, &requestErr) && strings.TrimSpace(requestErr.Message) != "" {
+		return requestErr.Message
+	}
+	return "panel query failed"
 }
 
 // uniqueSortedStrings returns the distinct values in sorted order (nil-safe).
@@ -664,6 +671,15 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 	baseFacts, err := flowReportNeedsBaseFacts(req.Filter)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !baseFacts && flowReportBusinessCategoryRollup(spec.Dimensions) {
+		raw, meta, used, err := s.runBusinessCategoryRollupPanel(ctx, scope, view, req, spec, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		if used {
+			return raw, meta, nil
+		}
 	}
 	if len(spec.Dimensions) > 1 || baseFacts {
 		compiled, err := flowquery.CompileJoint(scope, flowquery.JointRequest{
@@ -711,6 +727,54 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 		return nil, nil, err
 	}
 	return raw, gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source, "unit": result.Metric.Unit}, nil
+}
+
+func flowReportBusinessCategoryRollup(dimensions []flowquery.Dimension) bool {
+	return len(dimensions) == 2 && dimensions[0] == flowquery.DimensionBusiness && dimensions[1] == flowquery.DimensionCategory
+}
+
+// runBusinessCategoryRollupPanel uses the exact correlation retained on
+// dimension_kind=total rows. A sub-hour report has no complete hourly source
+// bucket and stays on the bounded raw path. For a partially covered longer
+// range, the compiler unions the aggregate prefix with only the raw suffix
+// before global Top-N/Other ranking.
+func (s *Server) runBusinessCategoryRollupPanel(ctx context.Context, scope flowquery.Scope, view flowquery.View,
+	req flowReportRequest, spec reportPanelSpec, now time.Time) (json.RawMessage, gin.H, bool, error) {
+	if req.To.Sub(req.From) < time.Hour {
+		return nil, nil, false, nil
+	}
+	plan, coveredThrough, err := s.endpointCorrelationRollupPlan(ctx, req, req.TargetPoints, now)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !coveredThrough.After(plan.EffectiveFrom) {
+		return nil, nil, false, nil
+	}
+	request := flowquery.JointRequest{
+		From: plan.EffectiveFrom, To: plan.EffectiveTo, Interval: plan.Interval,
+		TargetPoints: req.TargetPoints, Metric: req.Metric, Dimensions: spec.Dimensions,
+		Filters: spec.Filters, Filter: req.Filter, View: view, TopN: spec.TopN,
+		IncludeOther: spec.IncludeOther, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
+	}
+	var compiled flowquery.CompiledJoint
+	if coveredThrough.Equal(plan.EffectiveTo) {
+		compiled, err = flowquery.CompileBusinessCategoryRollupJoint(scope, request, now)
+	} else {
+		compiled, err = flowquery.CompileBusinessCategoryHybridJoint(scope, request, coveredThrough, now)
+	}
+	if err != nil {
+		return nil, nil, false, err
+	}
+	result, err := s.flowQuery.joint.Run(ctx, compiled)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	raw, err := marshalFlowJointResult(result, nil, s.flowGeo)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return raw, gin.H{"step_seconds": compiled.Plan.StepSeconds, "source": compiled.Plan.Source, "unit": result.Metric.Unit}, true, nil
 }
 
 // runReportDirectionPanel returns the report headline as two faithful directional
