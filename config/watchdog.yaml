@@ -42,6 +42,7 @@ flow:                               # runtime inputs; lifecycle policy is publis
     synchronous_max_range: "1h"     # wider reports return 202 and run through operation_jobs
     panel_concurrency: 3             # bounded ClickHouse fan-out inside one report
     async_poll_interval: "1s"        # server-advertised browser polling cadence
+    async_worker_concurrency: 1      # configurable worker pool; keep one job active until aggregate routing is verified under load
     async_worker_poll_interval: "500ms"
     async_worker_lease: "30s"
     async_worker_max_attempts: 3

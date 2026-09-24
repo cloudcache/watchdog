@@ -127,6 +127,7 @@ flow:
     synchronous_max_range: 30m
     panel_concurrency: 2
     async_poll_interval: 750ms
+    async_worker_concurrency: 4
     async_worker_poll_interval: 250ms
     async_worker_lease: 45s
     async_worker_max_attempts: 4
@@ -142,6 +143,7 @@ flow:
 	}
 	if cfg.Flow.Query.ExecutionTimeout != 3*time.Minute || cfg.Flow.Query.SynchronousTimeout != 20*time.Second ||
 		cfg.Flow.Query.SynchronousMaxRange != 30*time.Minute || cfg.Flow.Query.PanelConcurrency != 2 ||
+		cfg.Flow.Query.AsyncWorkerConcurrency != 4 ||
 		cfg.Flow.Query.AsyncPollInterval != 750*time.Millisecond || cfg.Flow.Query.AsyncWorkerLease != 45*time.Second ||
 		cfg.Flow.Query.AsyncWorkerMaxAttempts != 4 || cfg.Flow.Query.AsyncResultRetention != 48*time.Hour {
 		t.Fatalf("unexpected flow query config: %+v", cfg.Flow.Query)
@@ -152,6 +154,7 @@ func TestLoadConfigRejectsInvalidFlowQueryRuntimeLimits(t *testing.T) {
 	for name, body := range map[string]string{
 		"zero timeout":       "flow:\n  query:\n    execution_timeout: 0s\n",
 		"zero concurrency":   "flow:\n  query:\n    panel_concurrency: 0\n",
+		"zero async workers": "flow:\n  query:\n    async_worker_concurrency: 0\n",
 		"short worker lease": "flow:\n  query:\n    async_worker_lease: 2s\n",
 		"empty result dir":   "flow:\n  query:\n    async_result_dir: '   '\n",
 	} {

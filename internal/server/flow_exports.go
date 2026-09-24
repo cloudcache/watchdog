@@ -133,14 +133,17 @@ func (s *Server) startFlowExports() error {
 		Repo: s.jobs, JobType: flowExportJobType, Owner: "watchdog-server/flow-export",
 		Handler: s.runFlowExport(dir),
 	}
-	queryWorker := &opjob.Worker{
-		Repo: s.jobs, JobType: flowReportQueryJobType, Owner: "watchdog-server/flow-report-query",
-		Handler: s.runFlowReportQuery(queryDir), PollInterval: s.cfg.Flow.Query.AsyncWorkerPoll,
-		LeaseFor: s.cfg.Flow.Query.AsyncWorkerLease, MaxAttempts: s.cfg.Flow.Query.AsyncWorkerMaxAttempts,
-		RetryBase: s.cfg.Flow.Query.AsyncWorkerRetryBase,
-	}
 	go exportWorker.Run(ctx)
-	go queryWorker.Run(ctx)
+	for index := 0; index < s.cfg.Flow.Query.AsyncWorkerConcurrency; index++ {
+		queryWorker := &opjob.Worker{
+			Repo: s.jobs, JobType: flowReportQueryJobType,
+			Owner:   fmt.Sprintf("watchdog-server/flow-report-query-%d", index+1),
+			Handler: s.runFlowReportQuery(queryDir), PollInterval: s.cfg.Flow.Query.AsyncWorkerPoll,
+			LeaseFor: s.cfg.Flow.Query.AsyncWorkerLease, MaxAttempts: s.cfg.Flow.Query.AsyncWorkerMaxAttempts,
+			RetryBase: s.cfg.Flow.Query.AsyncWorkerRetryBase,
+		}
+		go queryWorker.Run(ctx)
+	}
 	return nil
 }
 

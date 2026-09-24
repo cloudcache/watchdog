@@ -99,6 +99,7 @@ type FlowQueryConfig struct {
 	SynchronousMaxRange    time.Duration `yaml:"synchronous_max_range"`
 	PanelConcurrency       int           `yaml:"panel_concurrency"`
 	AsyncPollInterval      time.Duration `yaml:"async_poll_interval"`
+	AsyncWorkerConcurrency int           `yaml:"async_worker_concurrency"`
 	AsyncWorkerPoll        time.Duration `yaml:"async_worker_poll_interval"`
 	AsyncWorkerLease       time.Duration `yaml:"async_worker_lease"`
 	AsyncWorkerMaxAttempts uint32        `yaml:"async_worker_max_attempts"`
@@ -242,7 +243,8 @@ func defaultConfig() Config {
 			Query: FlowQueryConfig{
 				ExecutionTimeout: 2 * time.Minute, SynchronousTimeout: 25 * time.Second,
 				SynchronousMaxRange: time.Hour, PanelConcurrency: 3, AsyncPollInterval: time.Second,
-				AsyncWorkerPoll: 500 * time.Millisecond, AsyncWorkerLease: 30 * time.Second,
+					AsyncWorkerConcurrency: 1,
+				AsyncWorkerPoll:        500 * time.Millisecond, AsyncWorkerLease: 30 * time.Second,
 				AsyncWorkerMaxAttempts: 3, AsyncWorkerRetryBase: 5 * time.Second,
 				AsyncResultDir: "data/flow-query-results", AsyncResultRetention: 24 * time.Hour,
 			},
@@ -337,6 +339,9 @@ func validateFlowQueryConfig(cfg FlowQueryConfig) error {
 	}
 	if cfg.PanelConcurrency < 1 || cfg.PanelConcurrency > 32 {
 		return errors.New("panel concurrency must be between 1 and 32")
+	}
+	if cfg.AsyncWorkerConcurrency < 1 || cfg.AsyncWorkerConcurrency > 8 {
+		return errors.New("async worker concurrency must be between 1 and 8")
 	}
 	if cfg.AsyncPollInterval < 100*time.Millisecond || cfg.AsyncWorkerPoll <= 0 || cfg.AsyncWorkerLease < 3*time.Second ||
 		cfg.AsyncWorkerMaxAttempts == 0 || cfg.AsyncWorkerRetryBase <= 0 || cfg.AsyncResultRetention <= 0 {
