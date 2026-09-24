@@ -1,16 +1,14 @@
 import { Trans } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { DatabaseIcon, MapPinnedIcon } from "lucide-react"
-import { memo, type ReactNode, useState } from "react"
+import { memo, type ReactNode } from "react"
 import { $router, Link } from "@/components/router"
 import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import FlowCustomerBoundaries from "./flow-customer-boundaries"
-import FlowActivationGuide from "./flow-activation-guide"
-import FlowEnrichmentPublications from "./flow-enrichment-publications"
+import FlowWorkerDeployments from "./flow-worker-deployments"
 
 export default memo(function FlowAttribution() {
-	const [publicationRevision, setPublicationRevision] = useState(0)
 	return (
 		<div className="my-4 grid gap-4">
 			<div>
@@ -49,12 +47,8 @@ export default memo(function FlowAttribution() {
 					linkLabel={<Trans>Manage address versions</Trans>}
 				/>
 			</div>
-			<FlowActivationGuide
-				key={`guide-${publicationRevision}`}
-				onChanged={() => setPublicationRevision((value) => value + 1)}
-			/>
-			<FlowCustomerBoundaries onChanged={() => setPublicationRevision((value) => value + 1)} />
-			<FlowEnrichmentPublications key={`publications-${publicationRevision}`} />
+			<FlowCustomerBoundaries />
+			<FlowWorkerDeployments />
 		</div>
 	)
 })

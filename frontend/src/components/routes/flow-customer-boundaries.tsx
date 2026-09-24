@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { PencilIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon, XIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -25,8 +25,6 @@ type NetworkDevice = {
 }
 
 type Customer = { id: string; name: string; ref?: string }
-type FlowWorker = { id: string; name: string; kind: string; status: string; health: string }
-type FlowWorkerBinding = { device_id: string; worker_id: string; worker_name: string }
 type SourceRange = { id: string; cidr: string; family: number; prefix_length: number }
 type CustomerBoundary = {
 	id: string
@@ -36,8 +34,6 @@ type CustomerBoundary = {
 	customer_id: string
 	customer_name: string
 	customer_ref?: string
-	worker_id: string
-	worker_name: string
 	source_ranges: SourceRange[]
 	row_version: number
 }
@@ -45,29 +41,29 @@ type Page<T> = { items?: T[]; total?: number }
 
 const newCustomerValue = "__new_customer__"
 
-export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?: () => void }) {
+export default memo(function FlowCustomerBoundaries() {
 	const { t } = useLingui()
 	const [devices, setDevices] = useState<NetworkDevice[]>([])
 	const [exportersByDevice, setExportersByDevice] = useState<Map<string, FlowExporter>>(new Map())
 	const [customers, setCustomers] = useState<Customer[]>([])
-	const [workers, setWorkers] = useState<FlowWorker[]>([])
-	const [workerByDevice, setWorkerByDevice] = useState<Map<string, FlowWorkerBinding>>(new Map())
 	const [boundaries, setBoundaries] = useState<CustomerBoundary[]>([])
 	const [selectedDeviceID, setSelectedDeviceID] = useState("")
-	const [selectedWorkerID, setSelectedWorkerID] = useState("")
 	const [editingID, setEditingID] = useState("")
 	const [customerID, setCustomerID] = useState("")
 	const [newCustomerName, setNewCustomerName] = useState("")
 	const [sourceRanges, setSourceRanges] = useState("")
 	const [confirmDeleteID, setConfirmDeleteID] = useState("")
 	const [loading, setLoading] = useState(true)
+	const [boundariesLoading, setBoundariesLoading] = useState(false)
+	const [boundaryRevision, setBoundaryRevision] = useState(0)
 	const [working, setWorking] = useState(false)
 	const [error, setError] = useState("")
 	const [notice, setNotice] = useState("")
+	const boundaryRequest = useRef(0)
 	const canManage = can("address.manage")
 
 	const loadReferences = useCallback(async () => {
-		const [devicePage, exporters, customerPage, workerPage, bindingPage] = await Promise.all([
+		const [devicePage, exporters, customerPage] = await Promise.all([
 			api.send<Page<NetworkDevice>>("/api/v1/devices", {
 				query: { kind: "network", limit: 500, sort: "name", order: "asc" },
 			}),
@@ -76,12 +72,6 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 			}),
 			api.send<Page<Customer>>("/api/v1/flow/customers", {
 				query: { limit: 500, sort: "name", order: "asc" },
-			}),
-			api.send<Page<FlowWorker>>("/api/v1/agents", {
-				query: { kind: "flow_worker", status: "active", limit: 500, sort: "name", order: "asc" },
-			}),
-			api.send<Page<FlowWorkerBinding>>("/api/v1/flow/worker-device-bindings", {
-				query: { limit: 500, sort: "device", order: "asc" },
 			}),
 		])
 		const unique = new Map<string, FlowExporter>()
@@ -92,29 +82,22 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 		setDevices(nextDevices)
 		setExportersByDevice(unique)
 		setCustomers(customerPage.items ?? [])
-		const nextWorkers = workerPage.items ?? []
-		const nextBindings = new Map((bindingPage.items ?? []).map((binding) => [binding.device_id, binding]))
-		setWorkers(nextWorkers)
-		setWorkerByDevice(nextBindings)
-		setSelectedDeviceID((current) => {
-			const deviceID = current || nextDevices[0]?.id || ""
-			setSelectedWorkerID(
-				(selected) =>
-					selected || nextBindings.get(deviceID)?.worker_id || (nextWorkers.length === 1 ? nextWorkers[0].id : "")
-			)
-			return deviceID
-		})
+		setSelectedDeviceID((current) =>
+			current && nextDevices.some((device) => device.id === current) ? current : nextDevices[0]?.id || ""
+		)
 	}, [])
 
-	const loadBoundaries = useCallback(async (deviceID: string) => {
+	const loadBoundaries = useCallback(async (deviceID: string, signal?: AbortSignal) => {
 		if (!deviceID) {
 			setBoundaries([])
 			return
 		}
+		const request = ++boundaryRequest.current
 		const page = await api.send<Page<CustomerBoundary>>("/api/v1/flow/customer-bindings", {
 			query: { device_id: deviceID, limit: 500, sort: "customer", order: "asc" },
+			signal,
 		})
-		setBoundaries(page.items ?? [])
+		if (request === boundaryRequest.current) setBoundaries(page.items ?? [])
 	}, [])
 
 	const refresh = useCallback(async () => {
@@ -122,6 +105,7 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 		setError("")
 		try {
 			await loadReferences()
+			setBoundaryRevision((revision) => revision + 1)
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t`Failed to load Flow customer boundaries`)
 		} finally {
@@ -134,10 +118,19 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 	}, [refresh])
 
 	useEffect(() => {
-		loadBoundaries(selectedDeviceID).catch((cause) =>
-			setError(cause instanceof Error ? cause.message : t`Failed to load Flow customer boundaries`)
-		)
-	}, [loadBoundaries, selectedDeviceID, t])
+		const controller = new AbortController()
+		setBoundariesLoading(Boolean(selectedDeviceID))
+		loadBoundaries(selectedDeviceID, controller.signal)
+			.catch((cause) => {
+				if (!controller.signal.aborted) {
+					setError(cause instanceof Error ? cause.message : t`Failed to load Flow customer boundaries`)
+				}
+			})
+			.finally(() => {
+				if (!controller.signal.aborted) setBoundariesLoading(false)
+			})
+		return () => controller.abort()
+	}, [boundaryRevision, loadBoundaries, selectedDeviceID, t])
 
 	const selectedDevice = useMemo(
 		() => devices.find((device) => device.id === selectedDeviceID),
@@ -154,7 +147,6 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 		setCustomerID("")
 		setNewCustomerName("")
 		setSourceRanges("")
-		setSelectedWorkerID(workerByDevice.get(selectedDeviceID)?.worker_id || (workers.length === 1 ? workers[0].id : ""))
 	}
 
 	const edit = (item: CustomerBoundary) => {
@@ -162,7 +154,6 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 		setCustomerID(item.customer_id)
 		setNewCustomerName("")
 		setSourceRanges(item.source_ranges.map((prefix) => prefix.cidr).join("\n"))
-		setSelectedWorkerID(item.worker_id || workerByDevice.get(item.device_id)?.worker_id || "")
 		setError("")
 		setNotice("")
 	}
@@ -185,7 +176,6 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 				.map((value) => value.trim())
 				.filter(Boolean)
 			if (!selectedDeviceID || !selectedCustomerID) throw new Error(t`Select a Flow device and customer`)
-			if (!selectedWorkerID) throw new Error(t`Select the Flow worker responsible for this device`)
 			if (ranges.length === 0) throw new Error(t`Enter at least one customer source range`)
 			const existing = boundaries.find((item) => item.id === editingID)
 			await api.send(editingID ? `/api/v1/flow/customer-bindings/${editingID}` : "/api/v1/flow/customer-bindings", {
@@ -194,14 +184,12 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 				body: {
 					device_id: selectedDeviceID,
 					customer_id: selectedCustomerID,
-					worker_id: selectedWorkerID,
 					source_ranges: ranges,
 				},
 			})
 			resetForm()
 			await Promise.all([loadReferences(), loadBoundaries(selectedDeviceID)])
-			setNotice(t`Customer source ranges saved`)
-			onChanged?.()
+			setNotice(t`Customer source ranges saved.`)
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t`Failed to save customer source ranges`)
 		} finally {
@@ -223,7 +211,6 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 			})
 			setConfirmDeleteID("")
 			await loadBoundaries(selectedDeviceID)
-			onChanged?.()
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t`Failed to delete customer source ranges`)
 		} finally {
@@ -258,11 +245,11 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 					value={selectedDeviceID || undefined}
 					onValueChange={(value) => {
 						setSelectedDeviceID(value)
+						setBoundaries([])
 						setEditingID("")
 						setCustomerID("")
 						setNewCustomerName("")
 						setSourceRanges("")
-						setSelectedWorkerID(workerByDevice.get(value)?.worker_id || (workers.length === 1 ? workers[0].id : ""))
 					}}
 					disabled={loading}
 				>
@@ -296,32 +283,12 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 					</Trans>
 				</p>
 			) : null}
-			<div className="grid gap-2">
-				<Label htmlFor="flow-customer-worker">
-					<Trans>Flow processing worker</Trans>
-				</Label>
-				<Select value={selectedWorkerID || undefined} onValueChange={setSelectedWorkerID} disabled={working || loading}>
-					<SelectTrigger id="flow-customer-worker">
-						<SelectValue placeholder={t`Select the worker responsible for this device`} />
-					</SelectTrigger>
-					<SelectContent>
-						{workers.map((worker) => (
-							<SelectItem key={worker.id} value={worker.id}>
-								{worker.name} · {worker.health}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-				<p className="text-xs text-muted-foreground">
-					<Trans>Only this worker can pull and acknowledge publications for the selected device.</Trans>
-				</p>
-			</div>
-			{workers.length === 0 && !loading ? (
-				<p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800">
-					<Trans>No active Flow processing worker is registered.</Trans>
-				</p>
-			) : null}
 			<div className="grid gap-3">
+				{boundariesLoading ? (
+					<p className="text-sm text-muted-foreground">
+						<Trans>Loading customer source ranges...</Trans>
+					</p>
+				) : null}
 				{boundaries.map((item) => (
 					<div
 						key={item.id}
@@ -339,9 +306,6 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 									</code>
 								))}
 							</div>
-						</div>
-						<div className="text-xs text-muted-foreground">
-							<Trans>Worker</Trans>: {item.worker_name || item.worker_id || "—"}
 						</div>
 						{canManage ? (
 							<div className="flex gap-2">
@@ -365,7 +329,7 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 						) : null}
 					</div>
 				))}
-				{boundaries.length === 0 && selectedDeviceID && !loading ? (
+				{boundaries.length === 0 && selectedDeviceID && !loading && !boundariesLoading ? (
 					<p className="text-sm text-muted-foreground">
 						<Trans>No customers are configured for this Flow device.</Trans>
 					</p>
@@ -427,7 +391,7 @@ export default memo(function FlowCustomerBoundaries({ onChanged }: { onChanged?:
 						</p>
 					</div>
 					<div className="flex gap-2 md:col-span-2">
-						<Button type="button" onClick={save} disabled={working || !selectedExporter || !selectedWorkerID}>
+						<Button type="button" onClick={save} disabled={working || !selectedExporter}>
 							{editingID ? <SaveIcon className="me-2 h-4 w-4" /> : <PlusIcon className="me-2 h-4 w-4" />}
 							{editingID ? <Trans>Save changes</Trans> : <Trans>Add customer boundary</Trans>}
 						</Button>
