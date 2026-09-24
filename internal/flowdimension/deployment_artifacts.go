@@ -167,6 +167,12 @@ func CompileDeploymentClassification(addressSnapshotID string, generation uint64
 			return nil, errors.New("deployment device boundary IDs must be unique")
 		}
 		seen[canonical.DeviceID] = struct{}{}
+		// An empty boundary is an explicit tombstone for a device that used to
+		// have customer CIDRs. Keep it in the signed deployment, but omit it
+		// from the compiled lookup so records for that device fail closed.
+		if len(canonical.Customers) == 0 {
+			continue
+		}
 		profile := ClassificationDeviceProfile{DeviceID: canonical.DeviceID}
 		for _, customer := range canonical.Customers {
 			for _, prefix := range customer.Prefixes {
@@ -181,18 +187,18 @@ func CompileDeploymentClassification(addressSnapshotID string, generation uint64
 		Version: uint32(generation), EffectiveFrom: effectiveFrom.UTC(), DimensionSnapshotID: addressSnapshotID,
 		OverseasIncludesHMT: canonicalPolicy.OverseasIncludesHMT,
 		InternalPolicy:      RecordPolicyCount, TransitPolicy: RecordPolicyCount, DeviceProfiles: profiles,
-	}, checksum)
+	}, checksum, true)
 }
 
 func canonicalDeviceCustomerBoundary(boundary DeviceCustomerBoundary) (DeviceCustomerBoundary, error) {
 	if boundary.SchemaVersion != DeviceBoundarySchemaVersion || !validIdentifier(boundary.DeviceID, 128) || boundary.Revision == 0 || !validUTCMinuteArtifactTime(boundary.EffectiveFrom) {
 		return DeviceCustomerBoundary{}, errors.New("device boundary metadata is invalid")
 	}
-	if len(boundary.Customers) == 0 {
-		return DeviceCustomerBoundary{}, errors.New("device boundary requires at least one customer")
-	}
 	boundary.EffectiveFrom = boundary.EffectiveFrom.UTC()
 	boundary.Customers = append([]DeviceBoundaryCustomer(nil), boundary.Customers...)
+	if boundary.Customers == nil {
+		boundary.Customers = []DeviceBoundaryCustomer{}
+	}
 	type owner struct{ customerID string }
 	ranges := make([]struct {
 		prefix netip.Prefix

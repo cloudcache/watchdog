@@ -234,6 +234,27 @@ func (s *Server) enqueueFlowWorkerDeploymentTx(ctx context.Context, tx *sql.Tx, 
 	})
 }
 
+// clampFlowDeploymentEffectiveFrom moves a requested deployment effective_from
+// forward to a current-or-future UTC minute boundary. Activation effective_from
+// values are frequently already in the past when a deployment is derived from
+// them (an activation is effective immediately), and the deployment API requires
+// a valid future minute; a zero value likewise becomes the next minute.
+func clampFlowDeploymentEffectiveFrom(requested, now time.Time) time.Time {
+	nextMinute := now.UTC().Truncate(time.Minute).Add(time.Minute)
+	if requested.IsZero() {
+		return nextMinute
+	}
+	requested = requested.UTC()
+	minute := requested.Truncate(time.Minute)
+	if !requested.Equal(minute) {
+		minute = minute.Add(time.Minute)
+	}
+	if minute.Before(nextMinute) {
+		return nextMinute
+	}
+	return minute
+}
+
 // autoPublishFlowWorkerDeploymentsForActivation closes the last publish hop when
 // an address snapshot is activated: for every device already bound to a worker,
 // it enqueues a deployment publish so the worker converges without a separate
@@ -241,6 +262,11 @@ func (s *Server) enqueueFlowWorkerDeploymentTx(ctx context.Context, tx *sql.Tx, 
 // worker still holds its previous LKG. One deployment per worker carries only
 // that worker's bound devices.
 func (s *Server) autoPublishFlowWorkerDeploymentsForActivation(ctx context.Context, actor string, effectiveFrom time.Time) (int, error) {
+	// An activation takes effect immediately, so its effective_from is usually
+	// already in the past by the time we build the deployment — but a worker
+	// deployment must land on a current-or-future UTC minute boundary, or the
+	// publish is rejected. Clamp it forward so auto-publish converges.
+	effectiveFrom = clampFlowDeploymentEffectiveFrom(effectiveFrom, time.Now())
 	rows, err := s.db.QueryContext(ctx, `SELECT worker_id, device_id FROM flow_worker_device_bindings ORDER BY worker_id, device_id`)
 	if err != nil {
 		return 0, err
@@ -259,27 +285,38 @@ func (s *Server) autoPublishFlowWorkerDeploymentsForActivation(ctx context.Conte
 		return 0, err
 	}
 	rows.Close()
+	workerIDs := make([]string, 0, len(devicesByWorker))
+	for workerID := range devicesByWorker {
+		workerIDs = append(workerIDs, workerID)
+	}
+	sort.Strings(workerIDs)
 	published := 0
-	for workerID, deviceIDs := range devicesByWorker {
+	failures := make([]error, 0)
+	for _, workerID := range workerIDs {
+		deviceIDs := devicesByWorker[workerID]
 		res, err := s.resolveFlowWorkerDeploymentValues(ctx, []string{workerID}, deviceIDs, effectiveFrom)
 		if err != nil {
-			return published, err
+			failures = append(failures, fmt.Errorf("worker %s: %w", workerID, err))
+			continue
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
-			return published, err
+			failures = append(failures, fmt.Errorf("worker %s: %w", workerID, err))
+			continue
 		}
 		if _, err := s.enqueueFlowWorkerDeploymentTx(ctx, tx, actor, res); err != nil {
 			tx.Rollback()
-			return published, err
+			failures = append(failures, fmt.Errorf("worker %s: %w", workerID, err))
+			continue
 		}
 		if err := tx.Commit(); err != nil {
 			tx.Rollback()
-			return published, err
+			failures = append(failures, fmt.Errorf("worker %s: %w", workerID, err))
+			continue
 		}
 		published++
 	}
-	return published, nil
+	return published, errors.Join(failures...)
 }
 
 func (s *Server) recommendedFlowWorkers(ctx context.Context, deviceIDs []string) ([]string, error) {
@@ -495,6 +532,13 @@ func (s *Server) buildDeviceBoundaryFlowArtifact(ctx context.Context, tx *sql.Tx
 }
 
 func readDeviceBoundarySource(ctx context.Context, tx *sql.Tx, deviceID string) ([]flowdimension.DeviceBoundaryCustomer, string, error) {
+	var deviceKind string
+	if err := tx.QueryRowContext(ctx, `SELECT kind FROM devices WHERE id=?`, deviceID).Scan(&deviceKind); err != nil {
+		return nil, "", err
+	}
+	if canonicalDeviceKind(deviceKind) != "network" {
+		return nil, "", fmt.Errorf("device %s is not a network device", deviceID)
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT b.customer_id,c.name,p.id,p.cidr FROM flow_device_customers b
 		JOIN parties c ON c.id=b.customer_id JOIN flow_customer_source_prefixes p ON p.device_customer_id=b.id
 		WHERE b.device_id=? AND c.kind='customer' AND c.status='active' ORDER BY b.customer_id,p.cidr,p.id`, deviceID)
@@ -519,9 +563,6 @@ func readDeviceBoundarySource(ctx context.Context, tx *sql.Tx, deviceID string) 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, "", err
-	}
-	if len(customers) == 0 {
-		return nil, "", fmt.Errorf("device %s has no customer source boundary", deviceID)
 	}
 	_, digest, err := flowdimension.EncodeDeviceCustomerBoundary(flowdimension.DeviceCustomerBoundary{
 		SchemaVersion: flowdimension.DeviceBoundarySchemaVersion, DeviceID: deviceID, Revision: 1,

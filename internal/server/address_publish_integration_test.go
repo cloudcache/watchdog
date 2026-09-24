@@ -66,7 +66,16 @@ func TestAddressPublishWADSIntegration(t *testing.T) {
 	if err := store.BeginAddressImport(ctx, imp.ID); err != nil {
 		t.Fatalf("begin import: %v", err)
 	}
-	fixture := filepath.Join("..", "..", "akvorado", "orchestrator", "geoip", "testdata", "GeoLite2-City-Test.mmdb")
+	fixture := strings.TrimSpace(os.Getenv("WATCHDOG_TEST_MMDB"))
+	if fixture == "" {
+		fixture = filepath.Join("..", "..", "akvorado", "orchestrator", "geoip", "testdata", "GeoLite2-City-Test.mmdb")
+	}
+	if _, err := os.Stat(fixture); err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("address MMDB fixture is unavailable; set WATCHDOG_TEST_MMDB to run this integration test")
+		}
+		t.Fatalf("stat MMDB fixture: %v", err)
+	}
 	batch := make([]address.AddressImportRecord, 0, 512)
 	flush := func() error {
 		if len(batch) == 0 {

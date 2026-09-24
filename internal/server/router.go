@@ -36,6 +36,10 @@ func (s *Server) newRouter() *gin.Engine {
 	flowWorkers.GET("/enrichment-publications", s.fetchFlowWorkerPublications)
 	flowWorkers.GET("/enrichment-publications/:publication_id/objects/:kind", s.fetchFlowWorkerObject)
 	flowWorkers.POST("/enrichment-publications/:publication_id/ack", s.acknowledgeFlowWorkerPublication)
+	flowWorkers.GET("/deployments/desired", s.fetchFlowWorkerDeployments)
+	flowWorkers.GET("/deployments/:deployment_id", s.fetchFlowWorkerDeployment)
+	flowWorkers.GET("/deployments/:deployment_id/objects/:artifact_id", s.fetchFlowWorkerDeploymentArtifact)
+	flowWorkers.POST("/deployments/:deployment_id/acks", s.acknowledgeFlowWorkerDeployment)
 	flowWorkers.GET("/vpn-rule-set", s.fetchFlowWorkerVPNRuleSet)
 	flowWorkers.GET("/vpn-rule-sets/:snapshot_id/object", s.fetchFlowWorkerVPNRuleSetObject)
 	flowWorkers.POST("/vpn-rule-sets/:snapshot_id/ack", s.acknowledgeFlowWorkerVPNRuleSet)
@@ -247,6 +251,9 @@ func (s *Server) newRouter() *gin.Engine {
 	flowEnrichment.GET("/enrichment-publications/:publication_id", s.requirePermission("address.view"), s.getFlowEnrichmentPublication)
 	flowEnrichment.GET("/enrichment-publications/:publication_id/acks", s.requirePermission("address.view"), s.listFlowEnrichmentACKs)
 	flowEnrichment.GET("/enrichment-publications/:publication_id/acks/facets", s.requirePermission("address.view"), s.listFlowEnrichmentACKFacets)
+	flowEnrichment.GET("/deployments", s.requirePermission("address.view"), s.listFlowWorkerDeployments)
+	flowEnrichment.POST("/deployments/validate", s.requirePermission("address.publish"), s.validateFlowWorkerDeployment)
+	flowEnrichment.POST("/deployments", s.requirePermission("address.publish"), s.publishFlowWorkerDeployment)
 
 	// Per-user resource-grant management (device/port/billing access rights).
 	s.registerAccessRoutes(auth)

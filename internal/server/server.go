@@ -291,6 +291,11 @@ func (s *Server) startAddressLibrary() error {
 		Handler: s.flowEnrichmentPublishHandler(),
 	}
 	go enrichmentWorker.Run(workerCtx)
+	deploymentWorker := &opjob.Worker{
+		Repo: s.jobs, JobType: flowWorkerDeploymentJobType, Owner: "watchdog-server/flow-deployment",
+		Handler: s.flowWorkerDeploymentHandler(),
+	}
+	go deploymentWorker.Run(workerCtx)
 	vpnPublisher, err := address.NewScopedPublisher(s.addressStore, s.addressObjects, address.VPNRuleSetPublicationScope)
 	if err != nil {
 		return err

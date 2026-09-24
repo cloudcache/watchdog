@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -24,8 +23,6 @@ type flowCustomerBoundary struct {
 	CustomerID   string                     `json:"customer_id"`
 	CustomerName string                     `json:"customer_name"`
 	CustomerRef  string                     `json:"customer_ref"`
-	WorkerID     string                     `json:"worker_id"`
-	WorkerName   string                     `json:"worker_name"`
 	SourceRanges []flowCustomerSourcePrefix `json:"source_ranges"`
 	RowVersion   uint64                     `json:"row_version"`
 	CreatedAt    time.Time                  `json:"created_at"`
@@ -42,7 +39,6 @@ type flowCustomerSourcePrefix struct {
 type flowCustomerBoundaryMutation struct {
 	DeviceID     *string  `json:"device_id"`
 	CustomerID   *string  `json:"customer_id"`
-	WorkerID     *string  `json:"worker_id"`
 	SourceRanges []string `json:"source_ranges"`
 }
 
@@ -83,7 +79,7 @@ func (s *Server) createFlowCustomer(c *gin.Context) {
 
 func (s *Server) listFlowCustomerBoundaries(c *gin.Context) {
 	page, ok := parseInventoryPage(c,
-		[]string{"device_id", "customer_id", "worker_id"},
+		[]string{"device_id", "customer_id"},
 		map[string]string{
 			"device":      "COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host)",
 			"device_host": "d.host", "customer": "p.name", "created_at": "b.created_at", "updated_at": "b.updated_at",
@@ -99,7 +95,7 @@ func (s *Server) listFlowCustomerBoundaries(c *gin.Context) {
 			OR EXISTS (SELECT 1 FROM user_device_group_permissions udgp JOIN device_group_members dgm ON dgm.device_group_id=udgp.device_group_id WHERE udgp.user_id=? AND dgm.device_id=b.device_id))`)
 		args = append(args, principal.UserID, principal.UserID)
 	}
-	for _, filter := range []struct{ param, column string }{{"device_id", "b.device_id"}, {"customer_id", "b.customer_id"}, {"worker_id", "wb.worker_id"}} {
+	for _, filter := range []struct{ param, column string }{{"device_id", "b.device_id"}, {"customer_id", "b.customer_id"}} {
 		if value := strings.TrimSpace(c.Query(filter.param)); value != "" {
 			if len(value) > 26 {
 				fail(c, http.StatusBadRequest, "invalid_filter", filter.param+" must not exceed 26 characters")
@@ -110,19 +106,18 @@ func (s *Server) listFlowCustomerBoundaries(c *gin.Context) {
 	}
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		like := "%" + escapeLike(q) + "%"
-		where = append(where, "(p.name LIKE ? OR p.ref LIKE ? OR d.host LIKE ? OR d.display_name LIKE ? OR d.sys_name LIKE ? OR COALESCE(a.name,'') LIKE ?)")
-		args = append(args, like, like, like, like, like, like)
+		where = append(where, "(p.name LIKE ? OR p.ref LIKE ? OR d.host LIKE ? OR d.display_name LIKE ? OR d.sys_name LIKE ?)")
+		args = append(args, like, like, like, like, like)
 	}
 	clause := " WHERE " + strings.Join(where, " AND ")
-	join := ` FROM flow_device_customers b JOIN devices d ON d.id=b.device_id JOIN parties p ON p.id=b.customer_id
-		LEFT JOIN flow_worker_device_bindings wb ON wb.device_id=b.device_id LEFT JOIN agents a ON a.id=wb.worker_id`
+	join := ` FROM flow_device_customers b JOIN devices d ON d.id=b.device_id JOIN parties p ON p.id=b.customer_id`
 	var total int
 	if err := s.db.QueryRowContext(c, "SELECT COUNT(*)"+join+clause, args...).Scan(&total); err != nil {
 		writeSQLError(c, err)
 		return
 	}
 	query := `SELECT b.id,b.device_id,COALESCE(NULLIF(d.display_name,''),NULLIF(d.sys_name,''),d.host),d.host,
-		b.customer_id,p.name,p.ref,COALESCE(wb.worker_id,''),COALESCE(a.name,''),b.row_version,b.created_at,b.updated_at` + join + clause +
+		b.customer_id,p.name,p.ref,b.row_version,b.created_at,b.updated_at` + join + clause +
 		fmt.Sprintf(" ORDER BY %s %s,b.id %s LIMIT ? OFFSET ?", page.Sort, page.Order, page.Order)
 	rows, err := s.db.QueryContext(c, query, append(append([]any{}, args...), page.Limit, page.Offset)...)
 	if err != nil {
@@ -134,7 +129,7 @@ func (s *Server) listFlowCustomerBoundaries(c *gin.Context) {
 	for rows.Next() {
 		var item flowCustomerBoundary
 		if err := rows.Scan(&item.ID, &item.DeviceID, &item.DeviceName, &item.DeviceHost, &item.CustomerID,
-			&item.CustomerName, &item.CustomerRef, &item.WorkerID, &item.WorkerName, &item.RowVersion, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.CustomerName, &item.CustomerRef, &item.RowVersion, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			writeSQLError(c, err)
 			return
 		}
@@ -204,14 +199,6 @@ func (s *Server) createFlowCustomerBoundary(c *gin.Context) {
 	if err := s.validateFlowCustomerBoundary(c, tx, deviceID, customerID, "", prefixes); err != nil {
 		return
 	}
-	workerID := ""
-	if input.WorkerID != nil {
-		workerID = *input.WorkerID
-	}
-	if _, err := ensureFlowWorkerDeviceBinding(c, tx, deviceID, workerID, actor); err != nil {
-		writeFlowWorkerBindingError(c, err)
-		return
-	}
 	id := newID()
 	if _, err := tx.ExecContext(c, `INSERT INTO flow_device_customers (id,device_id,customer_id,created_by,updated_by)
 		VALUES (?,?,?,NULLIF(?,''),NULLIF(?,''))`, id, deviceID, customerID, actor, actor); err != nil {
@@ -222,17 +209,17 @@ func (s *Server) createFlowCustomerBoundary(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	if err := s.syncFlowClassificationProfile(c, tx, actor); err != nil {
+	if err := ensureDefaultFlowClassificationPolicy(c, tx, actor); err != nil {
 		writeFlowEnrichmentError(c, err)
 		return
 	}
-	job, err := enqueueFlowEnrichmentPublishTx(c, tx, actor, time.Time{})
+	_, sourceRevision, err := readDeviceBoundarySource(c, tx, deviceID)
 	if err != nil {
 		writeFlowEnrichmentError(c, err)
 		return
 	}
 	if err := insertFlowEnrichmentAudit(c, tx, actor, "flow.customer_boundary.created", "flow_customer_boundary", id,
-		map[string]any{"device_id": deviceID, "customer_id": customerID, "source_range_count": len(prefixes)}); err != nil {
+		map[string]any{"device_id": deviceID, "customer_id": customerID, "source_range_count": len(prefixes), "source_revision": sourceRevision}); err != nil {
 		writeSQLError(c, err)
 		return
 	}
@@ -241,7 +228,7 @@ func (s *Server) createFlowCustomerBoundary(c *gin.Context) {
 		return
 	}
 	c.Header("Location", "/api/v1/flow/customer-bindings/"+id)
-	c.JSON(http.StatusAccepted, gin.H{"id": id, "publication_job": job})
+	c.JSON(http.StatusCreated, gin.H{"id": id, "source_revision": sourceRevision, "runtime_state": "draft", "publication_required": true})
 }
 
 func (s *Server) updateFlowCustomerBoundary(c *gin.Context) {
@@ -285,14 +272,6 @@ func (s *Server) updateFlowCustomerBoundary(c *gin.Context) {
 	if err := s.validateFlowCustomerBoundary(c, tx, deviceID, customerID, c.Param("id"), prefixes); err != nil {
 		return
 	}
-	workerID := ""
-	if input.WorkerID != nil {
-		workerID = *input.WorkerID
-	}
-	if _, err := ensureFlowWorkerDeviceBinding(c, tx, deviceID, workerID, actor); err != nil {
-		writeFlowWorkerBindingError(c, err)
-		return
-	}
 	if _, err := tx.ExecContext(c, `UPDATE flow_device_customers SET device_id=?,customer_id=?,updated_by=NULLIF(?,''),row_version=row_version+1
 		WHERE id=? AND row_version=?`, deviceID, customerID, actor, c.Param("id"), expected); err != nil {
 		writeSQLError(c, err)
@@ -302,17 +281,13 @@ func (s *Server) updateFlowCustomerBoundary(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	if err := s.syncFlowClassificationProfile(c, tx, actor); err != nil {
-		writeFlowEnrichmentError(c, err)
-		return
-	}
-	job, err := enqueueFlowEnrichmentPublishTx(c, tx, actor, time.Time{})
+	_, sourceRevision, err := readDeviceBoundarySource(c, tx, deviceID)
 	if err != nil {
 		writeFlowEnrichmentError(c, err)
 		return
 	}
 	if err := insertFlowEnrichmentAudit(c, tx, actor, "flow.customer_boundary.updated", "flow_customer_boundary", c.Param("id"),
-		map[string]any{"device_id": deviceID, "customer_id": customerID, "source_range_count": len(prefixes)}); err != nil {
+		map[string]any{"device_id": deviceID, "customer_id": customerID, "source_range_count": len(prefixes), "source_revision": sourceRevision}); err != nil {
 		writeSQLError(c, err)
 		return
 	}
@@ -320,7 +295,7 @@ func (s *Server) updateFlowCustomerBoundary(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"id": c.Param("id"), "publication_job": job})
+	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "source_revision": sourceRevision, "runtime_state": "draft", "publication_required": true})
 }
 
 func (s *Server) deleteFlowCustomerBoundary(c *gin.Context) {
@@ -368,18 +343,14 @@ func (s *Server) deleteFlowCustomerBoundary(c *gin.Context) {
 		writeSQLError(c, errVersionConflict)
 		return
 	}
-	if err := s.syncFlowClassificationProfile(c, tx, actor); err != nil {
+	var sourceRevision string
+	_, sourceRevision, err = readDeviceBoundarySource(c, tx, deviceID)
+	if err != nil {
 		writeFlowEnrichmentError(c, err)
 		return
 	}
-	var job any
-	if queued, err := enqueueFlowEnrichmentPublishTx(c, tx, actor, time.Time{}); err == nil {
-		job = queued
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		writeFlowEnrichmentError(c, err)
-		return
-	}
-	if err := insertFlowEnrichmentAudit(c, tx, actor, "flow.customer_boundary.deleted", "flow_customer_boundary", c.Param("id"), nil); err != nil {
+	if err := insertFlowEnrichmentAudit(c, tx, actor, "flow.customer_boundary.deleted", "flow_customer_boundary", c.Param("id"),
+		map[string]any{"device_id": deviceID, "source_revision": sourceRevision}); err != nil {
 		writeSQLError(c, err)
 		return
 	}
@@ -387,7 +358,7 @@ func (s *Server) deleteFlowCustomerBoundary(c *gin.Context) {
 		writeSQLError(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"id": c.Param("id"), "publication_job": job})
+	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "source_revision": sourceRevision, "runtime_state": "draft", "publication_required": true})
 }
 
 func normalizeFlowCustomerRanges(values []string) ([]netip.Prefix, error) {
@@ -489,46 +460,10 @@ func replaceFlowCustomerPrefixes(ctx context.Context, tx *sql.Tx, bindingID stri
 	return nil
 }
 
-func (s *Server) syncFlowClassificationProfile(ctx context.Context, tx *sql.Tx, actor string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT b.device_id,p.id FROM flow_device_customers b
-		JOIN flow_customer_source_prefixes p ON p.device_customer_id=b.id ORDER BY b.device_id,p.id`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	byDevice := map[string][]string{}
-	for rows.Next() {
-		var deviceID, prefixID string
-		if err := rows.Scan(&deviceID, &prefixID); err != nil {
-			return err
-		}
-		byDevice[deviceID] = append(byDevice[deviceID], prefixID)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(byDevice) == 0 {
-		_, err := tx.ExecContext(ctx, `DELETE FROM flow_classification_profiles WHERE id=1`)
-		return err
-	}
-	deviceIDs := make([]string, 0, len(byDevice))
-	for deviceID := range byDevice {
-		deviceIDs = append(deviceIDs, deviceID)
-	}
-	sort.Strings(deviceIDs)
-	draft := flowClassificationProfileDraft{DeviceProfiles: make([]flowClassificationDeviceProfileDraft, 0, len(deviceIDs))}
-	for _, deviceID := range deviceIDs {
-		draft.DeviceProfiles = append(draft.DeviceProfiles, flowClassificationDeviceProfileDraft{DeviceID: deviceID, SourcePrefixIDs: byDevice[deviceID]})
-	}
-	draft, digest, err := normalizeFlowClassificationProfile(draft)
-	if err != nil {
-		return err
-	}
-	profilesJSON, _ := json.Marshal(draft.DeviceProfiles)
-	_, err = tx.ExecContext(ctx, `INSERT INTO flow_classification_profiles
+func ensureDefaultFlowClassificationPolicy(ctx context.Context, tx *sql.Tx, actor string) error {
+	digest := sha256hex(`{"algorithm":"six-category-v2","overseas_includes_hmt":false,"unmatched_endpoint_policy":"unknown"}`)
+	_, err := tx.ExecContext(ctx, `INSERT IGNORE INTO flow_classification_profiles
 		(id,home_province,home_city,home_isp_ids,home_asns,device_profiles,overseas_includes_hmt,internal_policy,transit_policy,definition_digest,created_by,updated_by)
-		VALUES (1,'','',JSON_ARRAY(),JSON_ARRAY(),CAST(? AS JSON),0,'count','count',?,NULLIF(?,''),NULLIF(?,''))
-		ON DUPLICATE KEY UPDATE device_profiles=VALUES(device_profiles),definition_digest=VALUES(definition_digest),
-		updated_by=VALUES(updated_by),row_version=row_version+1`, profilesJSON, digest, actor, actor)
+		VALUES (1,'','',JSON_ARRAY(),JSON_ARRAY(),JSON_ARRAY(),0,'count','count',?,NULLIF(?,''),NULLIF(?,''))`, digest, actor, actor)
 	return err
 }

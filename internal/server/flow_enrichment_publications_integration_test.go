@@ -4,21 +4,20 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowdimension"
 	"github.com/cloudcache/watchdog/internal/flowplan"
 	"github.com/cloudcache/watchdog/internal/flowworker"
-	"github.com/cloudcache/watchdog/internal/opjob"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
@@ -140,87 +139,28 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		"device_id": "flow-device-it", "customer_id": customer.ID,
 		"source_ranges": []string{"198.51.100.0/24", "2001:db8:100::/48"},
 	}, adminHeaders, cookies...)
-	if createdBoundary.Code != http.StatusAccepted {
+	if createdBoundary.Code != http.StatusCreated {
 		t.Fatalf("create Flow customer boundary: status=%d body=%s", createdBoundary.Code, createdBoundary.Body.String())
 	}
-	var boundaryAccepted struct {
-		ID             string    `json:"id"`
-		PublicationJob opjob.Job `json:"publication_job"`
+	var savedBoundary struct {
+		ID                  string `json:"id"`
+		SourceRevision      string `json:"source_revision"`
+		RuntimeState        string `json:"runtime_state"`
+		PublicationRequired bool   `json:"publication_required"`
 	}
-	decodeJSON(t, createdBoundary, &boundaryAccepted)
-	var queuedPayload flowEnrichmentPublishPayload
-	if err := opjob.DecodePayload(boundaryAccepted.PublicationJob.CheckpointJSON, flowEnrichmentPublishPayloadSchema, &queuedPayload); err != nil {
-		t.Fatalf("decode queued publication payload: %v", err)
+	decodeJSON(t, createdBoundary, &savedBoundary)
+	if savedBoundary.ID == "" || !flowSHA256(savedBoundary.SourceRevision) || savedBoundary.RuntimeState != "draft" || !savedBoundary.PublicationRequired {
+		t.Fatalf("saved customer boundary did not expose draft publication state: %+v", savedBoundary)
 	}
-	if len(queuedPayload.WorkerIDs) != 1 || queuedPayload.WorkerIDs[0] != workerID {
-		t.Fatalf("queued immutable worker targets=%v want=[%s]", queuedPayload.WorkerIDs, workerID)
-	}
-	boundaryJob := waitFlowEnrichmentPublishJob(t, s, boundaryAccepted.PublicationJob.ID)
-	publicationID := strings.TrimPrefix(boundaryJob.ResultRef, "flow-enrichment:")
-	boundaryPublication, err := s.readFlowEnrichmentPublication(t.Context(), publicationID, false)
-	if err != nil || boundaryPublication.ClassificationVersion != 1 {
-		t.Fatalf("automatic customer boundary publication: publication=%+v err=%v job=%+v", boundaryPublication, err, boundaryJob)
-	}
-	var automaticallyBoundWorker string
-	if err := s.db.QueryRow(`SELECT worker_id FROM flow_worker_device_bindings WHERE device_id='flow-device-it'`).Scan(&automaticallyBoundWorker); err != nil {
-		t.Fatalf("read automatically selected worker: %v", err)
-	}
-	if automaticallyBoundWorker != workerID {
-		t.Fatalf("automatically selected worker=%q want=%q", automaticallyBoundWorker, workerID)
-	}
-	// A worker may register after the schema migration or an old binding may be
-	// absent. Publication must repair that unambiguous single-worker placement
-	// instead of leaving the only worker unable to pull a version.
-	if _, err := s.db.Exec(`DELETE FROM flow_worker_device_bindings WHERE device_id='flow-device-it'`); err != nil {
+	var automaticBindings, automaticPublications int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM flow_worker_device_bindings WHERE device_id='flow-device-it'`).Scan(&automaticBindings); err != nil {
 		t.Fatal(err)
 	}
-	repairTx, err := s.db.BeginTx(t.Context(), nil)
-	if err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM flow_enrichment_publications`).Scan(&automaticPublications); err != nil {
 		t.Fatal(err)
 	}
-	targets, err := flowEnrichmentTargets(t.Context(), repairTx, []flowClassificationDeviceProfileDraft{{DeviceID: "flow-device-it"}}, false)
-	if err != nil {
-		repairTx.Rollback()
-		t.Fatalf("repair sole-worker placement: %v", err)
-	}
-	if err := repairTx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if len(targets) != 1 || targets[0] != workerID {
-		t.Fatalf("repaired targets=%v want=[%s]", targets, workerID)
-	}
-	const unassignedWorkerID = "flow_worker_unassigned_it"
-	const unassignedWorkerToken = "flow-worker-unassigned-it-secret"
-	unassignedWorker := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
-		"id": unassignedWorkerID, "name": "Unassigned Flow worker", "kind": "flow_worker", "mode": "push",
-		"status": "active", "token": unassignedWorkerToken, "api_version": "v1", "capabilities": []string{"flow.write.clickhouse/v1"},
-	}, adminHeaders, cookies...)
-	if unassignedWorker.Code != http.StatusCreated {
-		t.Fatalf("create unassigned worker: status=%d body=%s", unassignedWorker.Code, unassignedWorker.Body.String())
-	}
-	ambiguousTx, err := s.db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ambiguousTx.Exec(`DELETE FROM flow_worker_device_bindings WHERE device_id='flow-device-it'`); err != nil {
-		ambiguousTx.Rollback()
-		t.Fatal(err)
-	}
-	_, err = flowEnrichmentTargets(t.Context(), ambiguousTx, []flowClassificationDeviceProfileDraft{{DeviceID: "flow-device-it"}}, false)
-	ambiguousTx.Rollback()
-	if !errors.Is(err, errFlowEnrichmentNoTargets) {
-		t.Fatalf("multi-worker publication without selection error=%v", err)
-	}
-	unassignedList := machineRequest(t, s, http.MethodGet,
-		"/api/v1/flow-workers/"+unassignedWorkerID+"/enrichment-publications?after_version=0&limit=20", unassignedWorkerToken, nil)
-	if unassignedList.Code != http.StatusOK || !bytes.Contains(unassignedList.Body.Bytes(), []byte(`"items":[]`)) {
-		t.Fatalf("unassigned worker received targeted publication: status=%d body=%s", unassignedList.Code, unassignedList.Body.String())
-	}
-	unassignedObject := machineRequest(t, s, http.MethodGet,
-		"/api/v1/flow-workers/"+unassignedWorkerID+"/enrichment-publications/"+boundaryPublication.ID+"/objects/classification",
-		unassignedWorkerToken, nil)
-	if unassignedObject.Code != http.StatusNotFound {
-		t.Fatalf("unassigned worker downloaded targeted object: status=%d body=%s", unassignedObject.Code, unassignedObject.Body.String())
+	if automaticBindings != 0 || automaticPublications != 0 {
+		t.Fatalf("boundary draft mutated deployment state: bindings=%d publications=%d", automaticBindings, automaticPublications)
 	}
 	listedBoundaries := requestJSON(t, s, http.MethodGet,
 		"/api/v1/flow/customer-bindings?device_id=flow-device-it&limit=25&offset=0", nil, nil, cookies...)
@@ -233,40 +173,6 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		len(boundaryPage.Items[0].SourceRanges) != 2 || boundaryPage.Items[0].CustomerName != "Integration customer" {
 		t.Fatalf("list Flow customer boundaries: status=%d page=%+v body=%s", listedBoundaries.Code, boundaryPage, listedBoundaries.Body.String())
 	}
-	boundaryClassificationPath, err := s.addressObjects.ResolveDimensionObject(boundaryPublication.ClassificationObjectRef)
-	if err != nil {
-		t.Fatal(err)
-	}
-	classificationObject, err := os.ReadFile(boundaryClassificationPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(classificationObject, []byte(`"customer_name":"Integration customer"`)) ||
-		!bytes.Contains(classificationObject, []byte(`"cidr":"198.51.100.0/24"`)) ||
-		!bytes.Contains(classificationObject, []byte(`"cidr":"2001:db8:100::/48"`)) {
-		t.Fatalf("compiled customer boundary object = %s", classificationObject)
-	}
-	if _, err := s.db.Exec(`DELETE FROM flow_enrichment_publications WHERE id=?`, boundaryPublication.ID); err != nil {
-		t.Fatal(err)
-	}
-	deletedBoundary := requestJSON(t, s, http.MethodDelete,
-		"/api/v1/flow/customer-bindings/"+boundaryPage.Items[0].ID, nil,
-		map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": `"1"`}, cookies...)
-	if deletedBoundary.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("delete Flow customer boundary: status=%d body=%s", deletedBoundary.Code, deletedBoundary.Body.String())
-	}
-	if _, err := s.db.Exec(`UPDATE flow_exporter_bindings SET enabled=0 WHERE device_id='flow-device-it'`); err != nil {
-		t.Fatal(err)
-	}
-	deletedBoundary = requestJSON(t, s, http.MethodDelete,
-		"/api/v1/flow/customer-bindings/"+boundaryPage.Items[0].ID, nil,
-		map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": `"1"`}, cookies...)
-	if deletedBoundary.Code != http.StatusAccepted {
-		t.Fatalf("delete disabled Flow customer boundary: status=%d body=%s", deletedBoundary.Code, deletedBoundary.Body.String())
-	}
-	if _, err := s.db.Exec(`UPDATE flow_exporter_bindings SET enabled=1 WHERE device_id='flow-device-it'`); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := s.db.Exec(`INSERT INTO address_prefixes
 		(id,cidr,family,prefix_length,ip_start,ip_end,labels,source)
 		VALUES
@@ -276,7 +182,7 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	}
 
 	profile := requestJSON(t, s, http.MethodGet, "/api/v1/flow/classification-profile", nil, nil, cookies...)
-	if profile.Code != http.StatusOK || profile.Header().Get("ETag") != `"0"` {
+	if profile.Code != http.StatusOK || profile.Header().Get("ETag") != `"1"` {
 		t.Fatalf("initial profile: status=%d etag=%q body=%s", profile.Code, profile.Header().Get("ETag"), profile.Body.String())
 	}
 	profileHeaders := map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": profile.Header().Get("ETag")}
@@ -289,8 +195,183 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	savedProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
 		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"customer-prefix-it"}}},
 	}, profileHeaders, cookies...)
-	if savedProfile.Code != http.StatusOK || savedProfile.Header().Get("ETag") != `"1"` {
+	if savedProfile.Code != http.StatusOK || savedProfile.Header().Get("ETag") != `"2"` {
 		t.Fatalf("save profile: status=%d etag=%q body=%s", savedProfile.Code, savedProfile.Header().Get("ETag"), savedProfile.Body.String())
+	}
+	if operationID := savedProfile.Header().Get("X-Watchdog-Operation-ID"); operationID != "" {
+		waitForVPNPublishJob(t, s, operationID)
+	}
+
+	// A customer boundary is draft management data only. An administrator must
+	// explicitly compose it with WADS and policy artifacts for selected workers.
+	// The requested worker list is explicit. A placement recommendation may be
+	// present, but it never replaces the deployment's authorization target.
+	deploymentEffective := time.Now().UTC().Truncate(time.Minute).Add(time.Minute)
+	deploymentRequest := map[string]any{
+		"worker_ids": []string{workerID}, "device_ids": []string{"flow-device-it"}, "effective_from": deploymentEffective,
+	}
+	missingDevice := requestJSON(t, s, http.MethodPost, "/api/v1/flow/deployments/validate", map[string]any{
+		"worker_ids": []string{workerID}, "device_ids": []string{"missing-device"}, "effective_from": deploymentEffective,
+	}, adminHeaders, cookies...)
+	if missingDevice.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing deployment device was accepted: status=%d body=%s", missingDevice.Code, missingDevice.Body.String())
+	}
+	validatedDeployment := requestJSON(t, s, http.MethodPost, "/api/v1/flow/deployments/validate", deploymentRequest, adminHeaders, cookies...)
+	if validatedDeployment.Code != http.StatusOK || !bytes.Contains(validatedDeployment.Body.Bytes(), []byte(`"valid":true`)) {
+		t.Fatalf("validate explicit worker deployment: status=%d body=%s", validatedDeployment.Code, validatedDeployment.Body.String())
+	}
+	queuedDeployment := requestJSON(t, s, http.MethodPost, "/api/v1/flow/deployments", deploymentRequest, adminHeaders, cookies...)
+	var queued struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	decodeJSON(t, queuedDeployment, &queued)
+	if queuedDeployment.Code != http.StatusAccepted || queued.Job.ID == "" {
+		t.Fatalf("queue explicit Flow deployment: status=%d body=%s", queuedDeployment.Code, queuedDeployment.Body.String())
+	}
+	waitForVPNPublishJob(t, s, queued.Job.ID)
+
+	var deploymentID, deploymentChecksum string
+	var deploymentGeneration uint64
+	if err := s.db.QueryRow(`SELECT id,generation,manifest_checksum FROM flow_worker_deployments WHERE worker_id=? AND state='desired'`, workerID).
+		Scan(&deploymentID, &deploymentGeneration, &deploymentChecksum); err != nil {
+		t.Fatalf("read desired Flow deployment: %v", err)
+	}
+	var artifactKinds int
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT kind) FROM flow_worker_deployment_artifacts WHERE deployment_id=?`, deploymentID).Scan(&artifactKinds); err != nil || artifactKinds != 3 {
+		t.Fatalf("deployment did not compose three independent artifact kinds: count=%d err=%v", artifactKinds, err)
+	}
+
+	identity := flowworker.VersionWorkerIdentity{WorkerID: workerID, BootID: "boot-it", SoftwareVersion: "1.0.0"}
+	httpClient := &http.Client{Transport: ginRoundTripper{handler: s.engine}}
+	client, err := flowworker.NewVersionHTTPClient(flowworker.VersionHTTPClientConfig{
+		BaseURL: "http://watchdog.test", AgentToken: workerToken, Identity: identity, Client: httpClient,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentLKG, err := flowworker.NewDiskVersionLKG(filepath.Join(root, "deployment-lkg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentCatalog, err := flowworker.NewEnrichmentVersionCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentSync, err := flowworker.NewRemoteDeploymentSync(client, deploymentLKG, &flowplan.TrustStore{}, deploymentCatalog, flowworker.DeploymentLoaderLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentResult, err := deploymentSync.SyncOnce(context.Background(), 0)
+	if err != nil || deploymentResult.Installed != 1 || deploymentResult.HighestGeneration != deploymentGeneration {
+		t.Fatalf("worker deployment sync: result=%+v err=%v", deploymentResult, err)
+	}
+	installedDeployment, ok := deploymentCatalog.ClassificationVersion(uint32(deploymentGeneration))
+	if !ok {
+		t.Fatalf("deployment generation %d was not activated", deploymentGeneration)
+	}
+	if direction, customerName, matched := installedDeployment.Classification.DeviceDirectionAttribution(
+		"flow-device-it", netip.MustParseAddr("198.51.100.8"), netip.MustParseAddr("203.0.113.8"),
+	); !matched || direction != flowdimension.DirectionOut || customerName != "Integration customer" {
+		t.Fatalf("IPv4 customer boundary was not installed: direction=%v customer=%q matched=%v", direction, customerName, matched)
+	}
+	if direction, customerName, matched := installedDeployment.Classification.DeviceDirectionAttribution(
+		"flow-device-it", netip.MustParseAddr("2001:db8:100::8"), netip.MustParseAddr("2001:db8:ffff::8"),
+	); !matched || direction != flowdimension.DirectionOut || customerName != "Integration customer" {
+		t.Fatalf("IPv6 customer boundary was not installed: direction=%v customer=%q matched=%v", direction, customerName, matched)
+	}
+	var deploymentACKState string
+	var deploymentInstalledAt time.Time
+	if err := s.db.QueryRow(`SELECT state,installed_at FROM flow_worker_deployment_acks WHERE deployment_id=? AND worker_id=?`, deploymentID, workerID).
+		Scan(&deploymentACKState, &deploymentInstalledAt); err != nil || deploymentACKState != "installed" || deploymentInstalledAt.IsZero() {
+		t.Fatalf("deployment ACK did not converge: state=%q installed=%v err=%v", deploymentACKState, deploymentInstalledAt, err)
+	}
+	listedDeployments := requestJSON(t, s, http.MethodGet,
+		"/api/v1/flow/deployments?limit=25&offset=0&sort=created_at&order=desc", nil, nil, cookies...)
+	if listedDeployments.Code != http.StatusOK ||
+		!bytes.Contains(listedDeployments.Body.Bytes(), []byte(`"device_names":"192.0.2.10"`)) ||
+		!bytes.Contains(listedDeployments.Body.Bytes(), []byte(`"ack_state":"installed"`)) {
+		t.Fatalf("deployment list did not expose device and installed ACK: status=%d body=%s",
+			listedDeployments.Code, listedDeployments.Body.String())
+	}
+	lateFailure := machineRequest(t, s, http.MethodPost, "/api/v1/flow-workers/"+workerID+"/deployments/"+deploymentID+"/acks", workerToken, map[string]any{
+		"generation": deploymentGeneration, "manifest_checksum": deploymentChecksum, "boot_id": "boot-it",
+		"software_version": "1.0.0", "state": "failed", "failure_stage": "ack", "failure_code": "LATE_ACK", "failure_message": "late failure",
+	})
+	if lateFailure.Code != http.StatusAccepted {
+		t.Fatalf("late deployment ACK: status=%d body=%s", lateFailure.Code, lateFailure.Body.String())
+	}
+	var lateState string
+	var lateStage, lateCode sql.NullString
+	if err := s.db.QueryRow(`SELECT state,failure_stage,error_code FROM flow_worker_deployment_acks WHERE deployment_id=? AND worker_id=?`, deploymentID, workerID).
+		Scan(&lateState, &lateStage, &lateCode); err != nil || lateState != "installed" || lateStage.Valid || lateCode.Valid {
+		t.Fatalf("late failure regressed installed ACK: state=%q stage=%+v code=%+v err=%v", lateState, lateStage, lateCode, err)
+	}
+
+	deletedBoundary := requestJSON(t, s, http.MethodDelete,
+		"/api/v1/flow/customer-bindings/"+boundaryPage.Items[0].ID, nil,
+		map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": `"1"`}, cookies...)
+	if deletedBoundary.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("delete Flow customer boundary: status=%d body=%s", deletedBoundary.Code, deletedBoundary.Body.String())
+	}
+	if _, err := s.db.Exec(`UPDATE flow_exporter_bindings SET enabled=0 WHERE device_id='flow-device-it'`); err != nil {
+		t.Fatal(err)
+	}
+	deletedBoundary = requestJSON(t, s, http.MethodDelete,
+		"/api/v1/flow/customer-bindings/"+boundaryPage.Items[0].ID, nil,
+		map[string]string{"X-CSRF-Token": adminHeaders["X-CSRF-Token"], "If-Match": `"1"`}, cookies...)
+	if deletedBoundary.Code != http.StatusOK {
+		t.Fatalf("delete disabled Flow customer boundary: status=%d body=%s", deletedBoundary.Code, deletedBoundary.Body.String())
+	}
+	var clearedBoundary struct {
+		SourceRevision      string `json:"source_revision"`
+		RuntimeState        string `json:"runtime_state"`
+		PublicationRequired bool   `json:"publication_required"`
+	}
+	decodeJSON(t, deletedBoundary, &clearedBoundary)
+	if !flowSHA256(clearedBoundary.SourceRevision) || clearedBoundary.RuntimeState != "draft" || !clearedBoundary.PublicationRequired {
+		t.Fatalf("deleted boundary did not expose a publishable tombstone: %+v", clearedBoundary)
+	}
+
+	// Deleting the last boundary must publish an explicit empty device artifact.
+	// Otherwise the worker would retain the old CIDRs in its LKG indefinitely.
+	clearRequest := map[string]any{
+		"worker_ids": []string{workerID}, "device_ids": []string{"flow-device-it"},
+		"effective_from": time.Now().UTC().Truncate(time.Minute).Add(2 * time.Minute),
+	}
+	clearDeployment := requestJSON(t, s, http.MethodPost, "/api/v1/flow/deployments", clearRequest, adminHeaders, cookies...)
+	var clearQueued struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	decodeJSON(t, clearDeployment, &clearQueued)
+	if clearDeployment.Code != http.StatusAccepted || clearQueued.Job.ID == "" {
+		t.Fatalf("queue empty-boundary deployment: status=%d body=%s", clearDeployment.Code, clearDeployment.Body.String())
+	}
+	waitForVPNPublishJob(t, s, clearQueued.Job.ID)
+	var clearDeploymentID string
+	var clearGeneration uint64
+	if err := s.db.QueryRow(`SELECT id,generation FROM flow_worker_deployments WHERE worker_id=? AND state='desired'`, workerID).
+		Scan(&clearDeploymentID, &clearGeneration); err != nil || clearGeneration <= deploymentGeneration {
+		t.Fatalf("read empty-boundary deployment: id=%q generation=%d err=%v", clearDeploymentID, clearGeneration, err)
+	}
+	clearResult, err := deploymentSync.SyncOnce(context.Background(), deploymentGeneration)
+	if err != nil || clearResult.Installed != 1 || clearResult.HighestGeneration != clearGeneration {
+		t.Fatalf("install empty-boundary deployment: result=%+v err=%v", clearResult, err)
+	}
+	clearedDeployment, ok := deploymentCatalog.ClassificationVersion(uint32(clearGeneration))
+	if !ok {
+		t.Fatalf("empty-boundary deployment generation %d was not activated", clearGeneration)
+	}
+	if direction, customerName, matched := clearedDeployment.Classification.DeviceDirectionAttribution(
+		"flow-device-it", netip.MustParseAddr("198.51.100.8"), netip.MustParseAddr("203.0.113.8"),
+	); matched || customerName != "" || direction != flowdimension.DirectionAmbiguous {
+		t.Fatalf("deleted customer boundary remained active: direction=%v customer=%q matched=%v", direction, customerName, matched)
+	}
+	if _, err := s.db.Exec(`UPDATE flow_exporter_bindings SET enabled=1 WHERE device_id='flow-device-it'`); err != nil {
+		t.Fatal(err)
 	}
 	staleProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
 		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"customer-prefix-it"}}},
@@ -299,6 +380,12 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		t.Fatalf("stale profile update was accepted: status=%d body=%s", staleProfile.Code, staleProfile.Body.String())
 	}
 
+	// The profile update also exercises the legacy v1 auto-publish job. Remove
+	// its fixture before independently testing the v1 manual publication path;
+	// the v2 deployment above is stored in separate tables and remains intact.
+	if _, err := s.db.Exec(`DELETE FROM flow_enrichment_publications`); err != nil {
+		t.Fatalf("reset v1 publication fixture: %v", err)
+	}
 	published := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
 		"effective_from": effectiveFrom,
 	}, adminHeaders, cookies...)
@@ -320,14 +407,6 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 		t.Fatalf("publication facets: status=%d body=%s", facets.Code, facets.Body.String())
 	}
 
-	identity := flowworker.VersionWorkerIdentity{WorkerID: workerID, BootID: "boot-it", SoftwareVersion: "1.0.0"}
-	httpClient := &http.Client{Transport: ginRoundTripper{handler: s.engine}}
-	client, err := flowworker.NewVersionHTTPClient(flowworker.VersionHTTPClientConfig{
-		BaseURL: "http://watchdog.test", AgentToken: workerToken, Identity: identity, Client: httpClient,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	lkgDir := filepath.Join(root, "lkg")
 	lkg, err := flowworker.NewDiskVersionLKG(lkgDir)
 	if err != nil {
@@ -372,7 +451,7 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	secondProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
 		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"draft-only-prefix-it"}}},
 	}, secondProfileHeaders, cookies...)
-	if secondProfile.Code != http.StatusOK || secondProfile.Header().Get("ETag") != `"2"` {
+	if secondProfile.Code != http.StatusOK || secondProfile.Header().Get("ETag") != `"3"` {
 		t.Fatalf("save second profile: status=%d etag=%q body=%s", secondProfile.Code, secondProfile.Header().Get("ETag"), secondProfile.Body.String())
 	}
 	draftOnlyPublished := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
@@ -385,7 +464,7 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	thirdProfile := requestJSON(t, s, http.MethodPut, "/api/v1/flow/classification-profile", map[string]any{
 		"device_profiles": []map[string]any{{"device_id": "flow-device-it", "source_prefix_ids": []string{"customer-prefix-it"}}},
 	}, thirdProfileHeaders, cookies...)
-	if thirdProfile.Code != http.StatusOK || thirdProfile.Header().Get("ETag") != `"3"` {
+	if thirdProfile.Code != http.StatusOK || thirdProfile.Header().Get("ETag") != `"4"` {
 		t.Fatalf("restore published profile: status=%d etag=%q body=%s", thirdProfile.Code, thirdProfile.Header().Get("ETag"), thirdProfile.Body.String())
 	}
 	secondPublished := requestJSON(t, s, http.MethodPost, "/api/v1/flow/enrichment-publications", map[string]any{
@@ -450,24 +529,6 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	if err := restarted.db.QueryRow(`SELECT row_version FROM settings WHERE `+"`key`"+`=?`, flowTrustSettingKey).Scan(&restartedTrustRowVersion); err != nil || restartedTrustRowVersion != trustRowVersion {
 		t.Fatalf("restart rewrote unchanged trust bundle: before=%d after=%d err=%v", trustRowVersion, restartedTrustRowVersion, err)
 	}
-}
-
-func waitFlowEnrichmentPublishJob(t *testing.T, s *Server, id string) opjob.Job {
-	t.Helper()
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		job, err := s.jobs.Get(t.Context(), id)
-		if err == nil && job.Status == opjob.StatusSucceeded {
-			return job
-		}
-		if err == nil && job.Status == opjob.StatusFailed {
-			t.Fatalf("Flow enrichment publish job failed: %s", job.LastErrorDetail)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	job, err := s.jobs.Get(t.Context(), id)
-	t.Fatalf("Flow enrichment publish job did not finish: job=%+v err=%v", job, err)
-	return opjob.Job{}
 }
 
 func prepareFlowEnrichmentAddressSnapshot(t *testing.T, s *Server, effectiveFrom time.Time) {

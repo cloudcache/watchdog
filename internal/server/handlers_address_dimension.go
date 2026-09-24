@@ -223,15 +223,21 @@ func (s *Server) activateAddressDimension(c *gin.Context) {
 		return
 	}
 	job, err := s.enqueueFlowEnrichmentForActivation(ctx, currentPrincipal(c).UserID, activation.EffectiveFrom)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errFlowEnrichmentNoTargets) {
-		writeFlowEnrichmentError(c, err)
-		return
-	}
-	if errors.Is(err, errFlowEnrichmentNoTargets) {
+	switch {
+	case err == nil:
+		if job.ID != "" {
+			c.Header("X-Watchdog-Operation-ID", job.ID)
+		}
+	case errors.Is(err, errFlowEnrichmentNoTargets):
 		c.Header("X-Watchdog-Flow-Publication-Warning", "flow worker binding is required")
-	}
-	if job.ID != "" {
-		c.Header("X-Watchdog-Operation-ID", job.ID)
+	case errors.Is(err, sql.ErrNoRows):
+		c.Header("X-Watchdog-Flow-Publication-Warning", "automatic Flow publication skipped; prerequisites are incomplete")
+	default:
+		// The address activation is already committed and cannot be rolled back
+		// here. Report publication failure as an explicit warning instead of
+		// returning an error that falsely implies activation failed.
+		log.Printf("watchdog-server: automatic legacy Flow publication after activation failed: %v", err)
+		c.Header("X-Watchdog-Flow-Publication-Warning", "automatic Flow publication failed; publish manually")
 	}
 	// Close the last publish hop: auto-publish a worker deployment for every
 	// bound device so the workers converge on this snapshot without a separate

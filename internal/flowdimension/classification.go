@@ -160,7 +160,7 @@ type classificationSourceAttribution struct {
 }
 
 func CompileClassification(definition ClassificationDefinition) (*ClassificationSnapshot, error) {
-	return compileClassification(definition, "")
+	return compileClassification(definition, "", len(definition.DeviceProfiles) != 0)
 }
 
 func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, limits ClassificationCompileLimits) (*ClassificationSnapshot, error) {
@@ -204,10 +204,10 @@ func DecodeAndCompileClassificationBundle(data []byte, expectedChecksum string, 
 		OverseasIncludesHMT: bundle.OverseasIncludesHMT,
 		InternalPolicy:      bundle.InternalPolicy, TransitPolicy: bundle.TransitPolicy,
 		DeviceProfiles: bundle.DeviceProfiles,
-	}, "sha256:"+hex.EncodeToString(got[:]))
+	}, "sha256:"+hex.EncodeToString(got[:]), bundle.SchemaVersion == ClassificationSchemaVersion)
 }
 
-func compileClassification(definition ClassificationDefinition, checksum string) (*ClassificationSnapshot, error) {
+func compileClassification(definition ClassificationDefinition, checksum string, deviceScoped bool) (*ClassificationSnapshot, error) {
 	if definition.Version == 0 || !validIdentifier(definition.DimensionSnapshotID, 64) {
 		return nil, errors.New("classification version and dimension snapshot are required")
 	}
@@ -219,7 +219,7 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 	if !validRecordPolicy(definition.InternalPolicy) || !validRecordPolicy(definition.TransitPolicy) {
 		return nil, errors.New("classification internal and transit policies must be count or drop")
 	}
-	if len(definition.DeviceProfiles) > 0 && (definition.HomeProvince != "" || definition.HomeCity != "" || len(definition.HomeISPIDs) > 0 || len(definition.HomeASNs) > 0) {
+	if deviceScoped && (definition.HomeProvince != "" || definition.HomeCity != "" || len(definition.HomeISPIDs) > 0 || len(definition.HomeASNs) > 0) {
 		return nil, errors.New("classification global home and device profiles cannot be combined")
 	}
 	legacyHome, err := compileHomeProfile(definition.HomeProvince, definition.HomeCity, definition.HomeISPIDs, definition.HomeASNs, definition.OverseasIncludesHMT, definition.Version)
@@ -274,7 +274,7 @@ func compileClassification(definition ClassificationDefinition, checksum string)
 			InternalPolicy:      definition.InternalPolicy, TransitPolicy: definition.TransitPolicy,
 			Checksum: checksum,
 		},
-		home: legacyHome, deviceSources: deviceSources, deviceProfiles: profiles, legacyGlobal: len(definition.DeviceProfiles) == 0,
+		home: legacyHome, deviceSources: deviceSources, deviceProfiles: profiles, legacyGlobal: !deviceScoped,
 	}, nil
 }
 

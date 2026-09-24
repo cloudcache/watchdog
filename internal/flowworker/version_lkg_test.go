@@ -70,6 +70,29 @@ func (s testVersionSigner) sign(t testing.TB, publication EnrichmentVersionPubli
 	return verified, data
 }
 
+func (s testVersionSigner) signDeployment(t testing.TB, manifest WorkerDeploymentManifest) (SignedWorkerDeploymentManifest, []byte) {
+	t.Helper()
+	envelope := SignedWorkerDeploymentManifest{
+		SchemaVersion: WorkerDeploymentEnvelopeSchemaVersion, Manifest: manifest,
+		SignatureAlgorithm: WorkerDeploymentSignatureAlgorithm, SigningKeyID: s.keyID,
+		SignedAtUnixMilli: s.now.Add(-time.Minute).UnixMilli(),
+	}
+	payload, err := WorkerDeploymentSigningPayload(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Signature = ed25519.Sign(s.private, payload)
+	data, err := MarshalSignedWorkerDeploymentManifest(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := VerifySignedWorkerDeploymentManifest(data, s.trust, s.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verified, data
+}
+
 type failingVersionPersistence struct{}
 
 func (failingVersionPersistence) PersistVersion(context.Context, EnrichmentVersionPublication) error {
@@ -221,6 +244,53 @@ func TestDiskVersionLKGTrustBundleIsMonotonic(t *testing.T) {
 	}
 	if err := lkg.SaveTrustBundle(context.Background(), signer.trustData); !errors.Is(err, flowplan.ErrTrustBundleRollback) {
 		t.Fatalf("rollback error = %v", err)
+	}
+}
+
+func TestDiskVersionLKGRestoresWorkerDeploymentAtomically(t *testing.T) {
+	signer := newTestVersionSigner(t)
+	directory := t.TempDir()
+	lkg, err := NewDiskVersionLKG(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lkg.SaveTrustBundle(context.Background(), signer.trustData); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, _, source := testWorkerDeployment(t, 1, testMinute(12, 0), nil)
+	envelope, data := signer.signDeployment(t, manifest)
+	if err := lkg.RegisterVerifiedDeployment(envelope, data); err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range manifest.Artifacts {
+		object := source.objects[artifact.ArtifactID]
+		if err := lkg.StoreObject(context.Background(), artifact.ArtifactID, artifact.Checksum, len(object), bytes.NewReader(object)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lkg.PersistDeployment(context.Background(), manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedLKG, err := NewDiskVersionLKG(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedCatalog, err := NewEnrichmentVersionCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := restartedLKG.RestoreDeployments(context.Background(), signer.trust, restartedCatalog, DeploymentLoaderLimits{}, signer.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DeploymentCount != 1 || result.HighestGeneration != 1 {
+		t.Fatalf("restore result = %+v", result)
+	}
+	installed, ok := restartedCatalog.ClassificationVersion(1)
+	if !ok || installed.Dimension.Metadata().Version != 1 || installed.Classification.Metadata().Version != 1 {
+		t.Fatalf("restored deployment = %+v, exists=%t", installed, ok)
 	}
 }
 
