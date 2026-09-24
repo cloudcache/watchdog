@@ -54,3 +54,98 @@ func TestCompileEndpointRollupJointRejectsUnsupportedCorrelation(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestCompileBusinessCategoryRollupJointUsesTotalRows(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	compiled, err := CompileBusinessCategoryRollupJoint(Scope{}, JointRequest{
+		From: now.Add(-24 * time.Hour), To: now, Interval: time.Hour,
+		TargetPoints: 300, Metric: MetricEstimatedBytes,
+		Dimensions: []Dimension{DimensionBusiness, DimensionCategory},
+		Filters:    Filters{Directions: []string{"in"}},
+		View:       ViewCustomer, TopN: 20, IncludeOther: true, Timezone: "Asia/Singapore",
+		ExecutionTimeout: 2 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"FROM flow_aggregate_1h AS source FINAL",
+		"if(empty(source.business), '_unassigned', source.business), CAST(source.category AS String)",
+		"source.business_direction IN ({direction_0:String})",
+	} {
+		if !strings.Contains(compiled.Query.Body, fragment) {
+			t.Fatalf("business-category query missing %q:\n%s", fragment, compiled.Query.Body)
+		}
+	}
+	if strings.Contains(compiled.Query.Body, "FROM flow_records") ||
+		queryParameter(compiled.Query, "dimension") != "'total'" ||
+		compiled.Plan.Source != "flow_aggregate_1h" {
+		t.Fatalf("compiled=%+v parameters=%+v", compiled, compiled.Query.Parameters)
+	}
+}
+
+func TestCompileBusinessCategoryRollupJointRejectsDimensionValues(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	_, err := CompileBusinessCategoryRollupJoint(Scope{}, JointRequest{
+		From: now.Add(-time.Hour), To: now, Metric: MetricEstimatedBytes,
+		Dimensions: []Dimension{DimensionBusiness, DimensionCategory},
+		Filters:    Filters{DimensionValues: []string{"web"}},
+		View:       ViewCustomer, TopN: 20,
+	}, now)
+	if !IsRequestError(err, "filters.dimension_values", ErrorUnsupported) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestCompileBusinessCategoryHybridJointRanksAggregatePrefixAndRawTailTogether(t *testing.T) {
+	now := time.Date(2026, 9, 23, 1, 3, 0, 0, time.UTC)
+	from := time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 9, 23, 1, 0, 0, 0, time.UTC)
+	archiveThrough := to.Add(-time.Hour)
+	compiled, err := CompileBusinessCategoryHybridJoint(Scope{}, JointRequest{
+		From: from, To: to, Interval: time.Hour,
+		TargetPoints: 300, Metric: MetricEstimatedBPS,
+		Dimensions: []Dimension{DimensionBusiness, DimensionCategory},
+		Filters:    Filters{DeviceIDs: []string{"device-a"}, Directions: []string{"in"}},
+		View:       ViewCustomer, TopN: 20, IncludeOther: true, Timezone: "Asia/Singapore",
+		TimeWindows: []LocalTimeWindow{{Days: []uint8{1, 2, 3, 4, 5}, StartLocal: "20:00", EndLocal: "23:00"}},
+	}, archiveThrough, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"source.bucket < {archive_through:DateTime('UTC')}",
+		"FROM flow_aggregate_1h AS source FINAL",
+		"event_time >= {archive_through:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}",
+		"FROM flow_records FINAL",
+		"source.device_id IN ({device_0:String})",
+		"device_id IN ({device_0:String})",
+		"toTimeZone(toDateTime(source.bucket), {time_window_timezone:String})",
+		"toTimeZone(toDateTime(event_time), {time_window_timezone:String})",
+		"FROM source_rows",
+		"sum(metric_value) OVER",
+		"toFloat64(sum(metric_value)) * 8",
+	} {
+		if !strings.Contains(compiled.Query.Body, fragment) {
+			t.Fatalf("hybrid business-category query missing %q:\n%s", fragment, compiled.Query.Body)
+		}
+	}
+	if queryParameter(compiled.Query, "archive_through") != "'2026-09-23 00:00:00'" ||
+		compiled.Plan.Source != "flow_aggregate_1h+flow_records" ||
+		setting(compiled.Query, "max_rows_to_read") != "250000000" {
+		t.Fatalf("compiled=%+v parameters=%+v", compiled, compiled.Query.Parameters)
+	}
+}
+
+func TestCompileBusinessCategoryHybridJointRejectsNonHourlyBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 23, 1, 3, 0, 0, time.UTC)
+	from := now.Add(-24 * time.Hour).Truncate(time.Hour)
+	_, err := CompileBusinessCategoryHybridJoint(Scope{}, JointRequest{
+		From: from, To: now.Truncate(time.Hour), Metric: MetricEstimatedBytes,
+		Dimensions: []Dimension{DimensionBusiness, DimensionCategory},
+		View:       ViewCustomer, TopN: 20,
+	}, now.Add(-90*time.Minute), now)
+	if !IsRequestError(err, "archive_through", ErrorInvalid) {
+		t.Fatalf("error=%v", err)
+	}
+}

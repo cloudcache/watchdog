@@ -4,7 +4,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -112,6 +114,50 @@ func TestFlowReportQueryAsyncThresholdAndArtifact(t *testing.T) {
 	}
 	if checksum != sha256hex(string(data)) {
 		t.Fatalf("artifact checksum=%q data=%q", checksum, data)
+	}
+}
+
+func TestFlowReportBusinessCategoryRollupMatchesOnlyMaterializedCorrelation(t *testing.T) {
+	if !flowReportBusinessCategoryRollup([]flowquery.Dimension{flowquery.DimensionBusiness, flowquery.DimensionCategory}) {
+		t.Fatal("business-category correlation should use the aggregate path")
+	}
+	for _, dimensions := range [][]flowquery.Dimension{
+		{flowquery.DimensionCategory},
+		{flowquery.DimensionCategory, flowquery.DimensionBusiness},
+		{flowquery.DimensionBusiness, flowquery.DimensionGeoCountry},
+	} {
+		if flowReportBusinessCategoryRollup(dimensions) {
+			t.Fatalf("dimensions %v unexpectedly matched business-category rollup", dimensions)
+		}
+	}
+}
+
+func TestBusinessCategoryFiveMinuteReportSkipsHourlyRollupPlanning(t *testing.T) {
+	now := time.Date(2026, 9, 23, 1, 15, 0, 0, time.UTC)
+	req := flowReportRequest{
+		From: now.Add(-5 * time.Minute), To: now, Metric: flowquery.MetricEstimatedBPS,
+		TargetPoints: 300, Timezone: "UTC",
+	}
+	spec := reportPanelSpec{
+		ID:         "business_category_in",
+		Dimensions: []flowquery.Dimension{flowquery.DimensionBusiness, flowquery.DimensionCategory},
+		Filters:    flowquery.Filters{Directions: []string{"in"}}, TopN: 20, IncludeOther: true,
+	}
+	_, _, used, err := (&Server{}).runBusinessCategoryRollupPanel(
+		context.Background(), flowquery.Scope{}, flowquery.ViewCustomer, req, spec, now,
+	)
+	if err != nil || used {
+		t.Fatalf("five-minute report used hourly rollup: used=%v err=%v", used, err)
+	}
+}
+
+func TestFlowReportPanelFailureReasonExposesOnlyTypedQueryErrors(t *testing.T) {
+	typed := &flowquery.RequestError{Field: "from/to", Code: flowquery.ErrorLimitExceeded, Message: "query exceeded its bounded scan budget"}
+	if got := flowReportPanelFailureReason(typed); got != typed.Message {
+		t.Fatalf("typed reason=%q", got)
+	}
+	if got := flowReportPanelFailureReason(errors.New("database password leaked")); got != "panel query failed" {
+		t.Fatalf("untyped reason=%q", got)
 	}
 }
 
