@@ -1,5 +1,0 @@
-Template: watchdog-agent/key
-Type: string
-Description: SSH public key provided by watchdog hub:
- If you leave this blank, you will need to configure it in 
- /etc/watchdog-agent.conf before starting Watchdog.
