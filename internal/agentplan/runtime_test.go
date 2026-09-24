@@ -117,6 +117,39 @@ func TestRunHeartbeatsStopsOnRevocation(t *testing.T) {
 	}
 }
 
+func TestRunHeartbeatsSendsImmediately(t *testing.T) {
+	called := make(chan struct{}, 1)
+	runtime := RuntimeConfig{
+		BaseURL: "http://control-plane.test",
+		AgentID: "agent-test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) *http.Response {
+			called <- struct{}{}
+			return &http.Response{
+				StatusCode: http.StatusAccepted,
+				Header:     make(http.Header), Body: http.NoBody, Request: request,
+			}
+		})},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runtime.RunHeartbeats(ctx, "secret", time.Hour, 0, nil)
+		close(done)
+	}()
+	select {
+	case <-called:
+		cancel()
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("first heartbeat waited for the periodic interval")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat loop did not stop after cancellation")
+	}
+}
+
 func TestHeartbeatReadsPlanVersionsAndAcceptsLegacyEmptyResponse(t *testing.T) {
 	responseBody := `{"desired_plan_version":4,"acked_plan_version":3}`
 	runtime := RuntimeConfig{

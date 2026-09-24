@@ -107,19 +107,24 @@ func (r RuntimeConfig) RunHeartbeats(ctx context.Context, token string, interval
 		select {
 		case <-ctx.Done():
 			return
+		default:
+		}
+		state, err := r.heartbeat(ctx, token)
+		if err == nil && state.DesiredPlanVersion > appliedPlanVersion {
+			err = ErrPlanChanged
+		}
+		if err != nil {
+			if report != nil {
+				report(err)
+			}
+			if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrPlanChanged) {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
-			state, err := r.heartbeat(ctx, token)
-			if err == nil && state.DesiredPlanVersion > appliedPlanVersion {
-				err = ErrPlanChanged
-			}
-			if err != nil {
-				if report != nil {
-					report(err)
-				}
-				if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrPlanChanged) {
-					return
-				}
-			}
 		}
 	}
 }
