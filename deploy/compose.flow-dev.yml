@@ -37,17 +37,15 @@ services:
       kafka:
         condition: service_healthy
     command:
-      - /opt/kafka/bin/kafka-topics.sh
-      - --bootstrap-server
-      - kafka:19092
-      - --create
-      - --if-not-exists
-      - --topic
-      - watchdog.flow.raw-v1
-      - --partitions
-      - "12"
-      - --replication-factor
-      - "1"
+      - /bin/sh
+      - -ec
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 \
+          --create --if-not-exists --topic watchdog.flow.raw-v1 \
+          --partitions 12 --replication-factor 1
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:19092 \
+          --entity-type topics --entity-name watchdog.flow.raw-v1 --alter \
+          --add-config retention.ms=21600000,retention.bytes=6442450944
     restart: "no"
 
   clickhouse:
