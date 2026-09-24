@@ -58,7 +58,8 @@ func openSNMPCollectorRuntime(ctx context.Context, cfg Config, agentID string, q
 	native, err := flowch.NewNativeInserter(ctx, flowch.NativeConfig{
 		Address: cfg.ClickHouse.Address, Database: cfg.ClickHouse.Database,
 		User: cfg.ClickHouse.Username, Password: password,
-		ClientName: "watchdog-snmp-collector", MaxConns: 8, MinConns: 1,
+		ClientName: "watchdog-snmp-collector", OperationTimeout: cfg.ClickHouse.OperationTimeout,
+		MaxConns: 8, MinConns: 1,
 	})
 	if err != nil {
 		_ = db.Close()
