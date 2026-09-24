@@ -25,11 +25,15 @@ dockerfile_agent_dev
 # watchdog: ad-hoc build outputs at repo root (cmd/ sources stay tracked)
 /watchdog-snmp-collector
 /watchdog-librenms-extract
+/watchdog-flow-collect
+/watchdog-flow-worker
 # watchdog: runtime artifacts and local caches
 .watchdog*.lock
 exports/
 .gocache/
+/.gocache-*/
 .gomodcache/
+/.codex-deploy-*/
 .DS_Store
 # reference clone of akvorado (own git repo, not a dependency)
 akvorado/
