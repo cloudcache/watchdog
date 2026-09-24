@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -80,7 +82,7 @@ func (s *Server) startSession(c *gin.Context, userID string) error {
 }
 
 func (s *Server) setAuthCookies(c *gin.Context, token, csrf string) {
-	secure := c.Request.TLS != nil
+	secure := requestIsSecure(c.Request)
 	maxAge := int(sessionTTL.Seconds())
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(sessionCookie, token, maxAge, "/", "", secure, true) // HttpOnly
@@ -89,8 +91,28 @@ func (s *Server) setAuthCookies(c *gin.Context, token, csrf string) {
 
 func (s *Server) clearAuthCookies(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(sessionCookie, "", -1, "/", "", c.Request.TLS != nil, true)
-	c.SetCookie(csrfCookie, "", -1, "/", "", c.Request.TLS != nil, false)
+	secure := requestIsSecure(c.Request)
+	c.SetCookie(sessionCookie, "", -1, "/", "", secure, true)
+	c.SetCookie(csrfCookie, "", -1, "/", "", secure, false)
+}
+
+// requestIsSecure accepts the forwarded scheme only from a loopback peer. This
+// supports host-local TLS termination without letting a direct remote client
+// forge X-Forwarded-Proto and influence cookie attributes.
+func requestIsSecure(request *http.Request) bool {
+	if request.TLS != nil {
+		return true
+	}
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		host = request.RemoteAddr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	forwardedProto, _, _ := strings.Cut(request.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(forwardedProto), "https")
 }
 
 func (s *Server) revokeSessionCookie(c *gin.Context) {
