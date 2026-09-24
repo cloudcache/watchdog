@@ -25,8 +25,9 @@ const (
 )
 
 var (
-	ErrVersionRemoteInvalid     = errors.New("flow enrichment control-plane response is invalid")
-	ErrVersionRemoteUnavailable = errors.New("flow enrichment control-plane request failed")
+	ErrVersionRemoteInvalid        = errors.New("flow enrichment control-plane response is invalid")
+	ErrVersionRemoteUnavailable    = errors.New("flow enrichment control-plane request failed")
+	ErrDeploymentRemoteUnsupported = errors.New("flow deployment v2 endpoint is unavailable")
 )
 
 type VersionHTTPClientConfig struct {
@@ -48,6 +49,24 @@ type VersionPublicationHTTPPage struct {
 	Items       []json.RawMessage
 	NextVersion uint32
 	HasMore     bool
+}
+
+type DeploymentHTTPPage struct {
+	Items          []json.RawMessage
+	NextGeneration uint64
+	HasMore        bool
+}
+
+type deploymentHTTPAckRequest struct {
+	Generation         uint64                                 `json:"generation"`
+	ManifestChecksum   string                                 `json:"manifest_checksum"`
+	BootID             string                                 `json:"boot_id"`
+	SoftwareVersion    string                                 `json:"software_version"`
+	State              string                                 `json:"state"`
+	FailureStage       string                                 `json:"failure_stage,omitempty"`
+	FailureCode        string                                 `json:"failure_code,omitempty"`
+	FailureMessage     string                                 `json:"failure_message,omitempty"`
+	InstalledArtifacts map[string]DeploymentInstalledArtifact `json:"installed_artifacts,omitempty"`
 }
 
 type versionHTTPAckRequest struct {
@@ -206,6 +225,44 @@ func (c *VersionHTTPClient) FetchDesired(ctx context.Context, afterVersion uint3
 	return VersionPublicationHTTPPage{Items: wire.Items, NextVersion: wire.NextVersion, HasMore: wire.HasMore}, nil
 }
 
+func (c *VersionHTTPClient) FetchDesiredDeployments(ctx context.Context, afterGeneration uint64, limit int) (DeploymentHTTPPage, error) {
+	if limit < 1 || limit > 100 {
+		return DeploymentHTTPPage{}, errors.New("flow deployment page limit must be 1..100")
+	}
+	query := make(url.Values)
+	query.Set("after_generation", strconv.FormatUint(afterGeneration, 10))
+	query.Set("limit", strconv.Itoa(limit))
+	request, err := c.newRequest(ctx, http.MethodGet, query, nil, "api", "v1", "flow-workers", c.identity.WorkerID, "deployments", "desired")
+	if err != nil {
+		return DeploymentHTTPPage{}, err
+	}
+	response, err := c.client.Do(request)
+	if err != nil {
+		return DeploymentHTTPPage{}, fmt.Errorf("%w: fetch desired deployments: %v", ErrVersionRemoteUnavailable, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return DeploymentHTTPPage{}, ErrDeploymentRemoteUnsupported
+	}
+	if response.StatusCode != http.StatusOK {
+		return DeploymentHTTPPage{}, versionHTTPStatusError("fetch desired deployments", response)
+	}
+	data, err := readVersionHTTPBody(response.Body, versionHTTPMaxDesiredBytes)
+	if err != nil {
+		return DeploymentHTTPPage{}, fmt.Errorf("%w: desired deployment body: %v", ErrVersionRemoteInvalid, err)
+	}
+	var wire struct {
+		Items          []json.RawMessage `json:"items"`
+		NextGeneration uint64            `json:"next_generation"`
+		HasMore        bool              `json:"has_more"`
+	}
+	if err := decodeVersionHTTPJSON(data, &wire); err != nil || len(wire.Items) > limit ||
+		(len(wire.Items) == 0 && (wire.HasMore || wire.NextGeneration != afterGeneration)) {
+		return DeploymentHTTPPage{}, fmt.Errorf("%w: desired deployment page", ErrVersionRemoteInvalid)
+	}
+	return DeploymentHTTPPage{Items: wire.Items, NextGeneration: wire.NextGeneration, HasMore: wire.HasMore}, nil
+}
+
 func (c *VersionHTTPClient) OpenObject(ctx context.Context, publicationID, kind, checksum string, maxBytes int) (io.ReadCloser, error) {
 	if !validIdentifier(publicationID, 128) || (kind != "dimension" && kind != "classification") || !validSHA256(checksum) || maxBytes < 1 {
 		return nil, errors.New("flow enrichment object request is invalid")
@@ -231,6 +288,68 @@ func (c *VersionHTTPClient) OpenObject(ctx context.Context, publicationID, kind,
 		return nil, fmt.Errorf("%w: %s object headers", ErrVersionRemoteInvalid, kind)
 	}
 	return response.Body, nil
+}
+
+func (c *VersionHTTPClient) OpenDeploymentArtifact(ctx context.Context, deploymentID string, artifact DeploymentArtifactReference, maxBytes int) (io.ReadCloser, error) {
+	if !validIdentifier(deploymentID, 128) || !validIdentifier(artifact.ArtifactID, 128) || !validSHA256(artifact.Checksum) ||
+		artifact.SizeBytes == 0 || artifact.SizeBytes > uint64(maxBytes) || maxBytes < 1 {
+		return nil, errors.New("flow deployment artifact request is invalid")
+	}
+	request, err := c.newRequest(ctx, http.MethodGet, nil, nil, "api", "v1", "flow-workers", c.identity.WorkerID,
+		"deployments", deploymentID, "objects", artifact.ArtifactID)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/octet-stream, application/json")
+	response, err := c.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("%w: fetch deployment artifact: %v", ErrVersionRemoteUnavailable, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		defer response.Body.Close()
+		return nil, versionHTTPStatusError("fetch deployment artifact", response)
+	}
+	if response.Header.Get("Content-Encoding") != "" || response.Header.Get("X-Watchdog-Object-Checksum") != artifact.Checksum ||
+		response.ContentLength != int64(artifact.SizeBytes) {
+		response.Body.Close()
+		return nil, fmt.Errorf("%w: deployment artifact headers", ErrVersionRemoteInvalid)
+	}
+	return response.Body, nil
+}
+
+func (c *VersionHTTPClient) AcknowledgeDeployment(ctx context.Context, manifest WorkerDeploymentManifest, manifestChecksum, state string, installed map[string]DeploymentInstalledArtifact, failureStage, failureCode string, cause error) error {
+	if manifest.WorkerID != c.identity.WorkerID || !validSHA256(manifestChecksum) {
+		return errors.New("flow deployment acknowledgement identity is invalid")
+	}
+	payload := deploymentHTTPAckRequest{
+		Generation: manifest.Generation, ManifestChecksum: manifestChecksum,
+		BootID: c.identity.BootID, SoftwareVersion: c.identity.SoftwareVersion,
+		State: state, InstalledArtifacts: installed,
+		FailureStage: failureStage, FailureCode: failureCode,
+	}
+	if cause != nil {
+		payload.FailureMessage = printableVersionFailure(cause.Error())
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	request, err := c.newRequest(ctx, http.MethodPost, nil, bytes.NewReader(data), "api", "v1", "flow-workers", c.identity.WorkerID,
+		"deployments", manifest.DeploymentID, "acks")
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("%w: acknowledge deployment: %v", ErrVersionRemoteUnavailable, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		return versionHTTPStatusError("acknowledge deployment", response)
+	}
+	_, err = io.Copy(io.Discard, io.LimitReader(response.Body, versionHTTPMaxErrorBytes+1))
+	return err
 }
 
 func (c *VersionHTTPClient) Acknowledge(ctx context.Context, acknowledgement EnrichmentVersionAcknowledgement) error {
@@ -577,4 +696,161 @@ func versionInstallFailure(err error) (string, string) {
 	}
 }
 
+type RemoteDeploymentSync struct {
+	mu       sync.Mutex
+	client   *VersionHTTPClient
+	lkg      *DiskVersionLKG
+	trust    *flowplan.TrustStore
+	loader   *DeploymentLoader
+	limits   DeploymentLoaderLimits
+	now      func() time.Time
+	pageSize int
+}
+
+type RemoteDeploymentSyncResult struct {
+	PreviousGeneration uint64
+	HighestGeneration  uint64
+	Installed          uint64
+}
+
+func NewRemoteDeploymentSync(client *VersionHTTPClient, lkg *DiskVersionLKG, trust *flowplan.TrustStore, catalog *EnrichmentVersionCatalog, limits DeploymentLoaderLimits) (*RemoteDeploymentSync, error) {
+	if client == nil || lkg == nil || trust == nil || catalog == nil {
+		return nil, errors.New("flow deployment remote sync dependencies are required")
+	}
+	loader, err := NewDeploymentLoader(lkg, client, catalog, limits, lkg)
+	if err != nil {
+		return nil, err
+	}
+	return &RemoteDeploymentSync{client: client, lkg: lkg, trust: trust, loader: loader, limits: loader.limits, now: time.Now, pageSize: versionHTTPDefaultPageSize}, nil
+}
+
+func (s *RemoteDeploymentSync) SyncOnce(ctx context.Context, afterGeneration uint64) (RemoteDeploymentSyncResult, error) {
+	if s == nil || ctx == nil {
+		return RemoteDeploymentSyncResult{}, errors.New("flow deployment remote sync is not initialized")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := RemoteDeploymentSyncResult{PreviousGeneration: afterGeneration, HighestGeneration: afterGeneration}
+	trustData, err := s.client.FetchTrustBundle(ctx)
+	if err != nil {
+		return result, err
+	}
+	if err := s.trust.Install(trustData); err != nil {
+		return result, fmt.Errorf("install flow deployment trust bundle: %w", err)
+	}
+	if err := s.lkg.SaveTrustBundle(ctx, trustData); err != nil {
+		return result, fmt.Errorf("persist flow deployment trust bundle: %w", err)
+	}
+
+	cursor := afterGeneration
+	totalItems := 0
+	for pageNumber := 0; pageNumber < versionLKGMaxPublicationCount; pageNumber++ {
+		page, err := s.client.FetchDesiredDeployments(ctx, cursor, s.pageSize)
+		if err != nil {
+			return result, err
+		}
+		totalItems += len(page.Items)
+		if totalItems > versionLKGMaxPublicationCount {
+			return result, fmt.Errorf("%w: desired deployment count exceeds limit", ErrVersionRemoteInvalid)
+		}
+		for _, raw := range page.Items {
+			envelope, err := VerifySignedWorkerDeploymentManifest(raw, s.trust, s.now().UTC())
+			if err != nil {
+				return result, fmt.Errorf("%w: verify signed worker deployment: %v", ErrVersionRemoteInvalid, err)
+			}
+			manifest := envelope.Manifest
+			manifestChecksum := WorkerDeploymentManifestChecksum(raw)
+			if manifest.WorkerID != s.client.identity.WorkerID || manifest.Generation <= cursor {
+				return result, fmt.Errorf("%w: desired deployment identity or generation is invalid", ErrVersionRemoteInvalid)
+			}
+			if err := s.lkg.RegisterVerifiedDeployment(envelope, raw); err != nil {
+				return result, s.fail(ctx, manifest, manifestChecksum, "persist", "LKG_REGISTER_FAILED", err)
+			}
+			for _, artifact := range manifest.Artifacts {
+				if err := s.ensureArtifact(ctx, manifest, artifact); err != nil {
+					stage, code, cause := deploymentFailure(err)
+					return result, s.fail(ctx, manifest, manifestChecksum, stage, code, cause)
+				}
+			}
+			downloadAckErr := s.client.AcknowledgeDeployment(ctx, manifest, manifestChecksum, "downloaded", installedDeploymentArtifacts(manifest), "", "", nil)
+			if err := s.loader.Install(ctx, manifest, manifestChecksum); err != nil {
+				stage, code := deploymentInstallFailure(err)
+				if downloadAckErr != nil {
+					err = errors.Join(err, downloadAckErr)
+				}
+				return result, s.fail(ctx, manifest, manifestChecksum, stage, code, err)
+			}
+			cursor = manifest.Generation
+			result.HighestGeneration = cursor
+			result.Installed++
+		}
+		if page.NextGeneration != cursor || (page.HasMore && len(page.Items) == 0) {
+			return result, fmt.Errorf("%w: desired deployment cursor is inconsistent", ErrVersionRemoteInvalid)
+		}
+		if !page.HasMore {
+			return result, nil
+		}
+	}
+	return result, fmt.Errorf("%w: desired deployment pagination did not terminate", ErrVersionRemoteInvalid)
+}
+
+func (s *RemoteDeploymentSync) ensureArtifact(ctx context.Context, manifest WorkerDeploymentManifest, artifact DeploymentArtifactReference) error {
+	maximum := s.limits.MaxDeviceBoundaryBytes
+	switch artifact.Kind {
+	case ArtifactKindAddressCatalog:
+		maximum = s.limits.MaxAddressCatalogBytes
+	case ArtifactKindClassificationPolicy:
+		maximum = s.limits.MaxClassificationPolicyBytes
+	}
+	available, err := s.lkg.objectAvailable(ctx, artifact.Checksum, maximum)
+	if err != nil {
+		return &versionObjectSyncError{stage: "verify", code: "ARTIFACT_CACHE_INVALID", err: err}
+	}
+	if available {
+		return nil
+	}
+	reader, err := s.client.OpenDeploymentArtifact(ctx, manifest.DeploymentID, artifact, maximum)
+	if err != nil {
+		return &versionObjectSyncError{stage: "fetch", code: "ARTIFACT_FETCH_FAILED", err: err}
+	}
+	defer reader.Close()
+	if err := s.lkg.StoreObject(ctx, artifact.ArtifactID, artifact.Checksum, maximum, reader); err != nil {
+		stage, code := "persist", "ARTIFACT_STORE_FAILED"
+		if errors.Is(err, ErrVersionObjectIntegrity) {
+			stage, code = "verify", "ARTIFACT_OBJECT_INVALID"
+		}
+		return &versionObjectSyncError{stage: stage, code: code, err: err}
+	}
+	return nil
+}
+
+func deploymentFailure(err error) (string, string, error) {
+	var failure *versionObjectSyncError
+	if errors.As(err, &failure) {
+		return failure.stage, failure.code, err
+	}
+	return "fetch", "ARTIFACT_FETCH_FAILED", err
+}
+
+func deploymentInstallFailure(err error) (string, string) {
+	switch {
+	case errors.Is(err, ErrDeploymentPersistence):
+		return "persist", "LKG_MANIFEST_FAILED"
+	case errors.Is(err, ErrInvalidWorkerDeployment):
+		return "compile", "DEPLOYMENT_COMPILE_FAILED"
+	case errors.Is(err, ErrDeploymentAcknowledgement):
+		return "ack", "DEPLOYMENT_ACK_FAILED"
+	default:
+		return "activate", "DEPLOYMENT_ACTIVATE_FAILED"
+	}
+}
+
+func (s *RemoteDeploymentSync) fail(ctx context.Context, manifest WorkerDeploymentManifest, checksum, stage, code string, cause error) error {
+	if ackErr := s.client.AcknowledgeDeployment(ctx, manifest, checksum, "failed", nil, stage, code, cause); ackErr != nil {
+		return errors.Join(cause, fmt.Errorf("failure acknowledgement: %w", ackErr))
+	}
+	return cause
+}
+
 var _ EnrichmentVersionAcknowledger = (*VersionHTTPClient)(nil)
+var _ WorkerDeploymentAcknowledger = (*VersionHTTPClient)(nil)

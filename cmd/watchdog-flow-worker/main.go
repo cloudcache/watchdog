@@ -497,7 +497,7 @@ func buildClickHouseConfig(opt options) (flowch.NativeConfig, error) {
 	}, nil
 }
 
-func loadBootstrap(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowplan.Catalog, *flowworker.EnrichmentVersionCatalog, *flowdimension.GeoCatalog, *flowworker.RemoteVersionSync, uint32, error) {
+func loadBootstrap(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowplan.Catalog, *flowworker.EnrichmentVersionCatalog, *flowdimension.GeoCatalog, flowworker.RemoteVersionSynchronizer, uint32, error) {
 	if len(opt.planFiles) == 0 || strings.TrimSpace(opt.planPublicKey) == "" {
 		return nil, nil, nil, nil, 0, errors.New("at least one bootstrap plan plus the plan public key are required")
 	}
@@ -572,7 +572,7 @@ func loadBootstrap(ctx context.Context, opt options, identity flowworker.Version
 	return plans, versions, geo, nil, 0, nil
 }
 
-func loadRemoteVersions(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowworker.EnrichmentVersionCatalog, *flowworker.RemoteVersionSync, uint32, error) {
+func loadRemoteVersions(ctx context.Context, opt options, identity flowworker.VersionWorkerIdentity) (*flowworker.EnrichmentVersionCatalog, flowworker.RemoteVersionSynchronizer, uint32, error) {
 	if strings.TrimSpace(opt.versionLKGDir) == "" || opt.versionRefreshInterval < 5*time.Second || opt.versionRefreshInterval > time.Hour {
 		return nil, nil, 0, errors.New("remote enrichment requires an LKG directory and refresh interval of 5s..1h")
 	}
@@ -590,28 +590,48 @@ func loadRemoteVersions(ctx context.Context, opt options, identity flowworker.Ve
 		return nil, nil, 0, err
 	}
 	restored := flowworker.VersionLKGRestoreResult{}
+	restoredDeployments := flowworker.DeploymentLKGRestoreResult{}
 	if _, err := lkg.LoadTrustBundle(); err == nil {
 		restored, err = lkg.Restore(ctx, trust, versions, identity, flowworker.VersionLoaderLimits{}, time.Now().UTC())
 		if err != nil && !errors.Is(err, flowworker.ErrNoVersionLKG) {
 			return nil, nil, 0, fmt.Errorf("restore enrichment LKG: %w", err)
 		}
+		restoredDeployments, err = lkg.RestoreDeployments(ctx, trust, versions, flowworker.DeploymentLoaderLimits{}, time.Now().UTC())
+		if err != nil && !errors.Is(err, flowworker.ErrNoVersionLKG) {
+			return nil, nil, 0, fmt.Errorf("restore worker deployment LKG: %w", err)
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, 0, fmt.Errorf("read enrichment LKG trust bundle: %w", err)
 	}
-	syncer, err := flowworker.NewRemoteVersionSync(client, lkg, trust, versions, flowworker.VersionLoaderLimits{})
+	legacySync, err := flowworker.NewRemoteVersionSync(client, lkg, trust, versions, flowworker.VersionLoaderLimits{})
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	if opt.check {
-		return versions, syncer, restored.HighestVersion, nil
+	deploymentSync, err := flowworker.NewRemoteDeploymentSync(client, lkg, trust, versions, flowworker.DeploymentLoaderLimits{})
+	if err != nil {
+		return nil, nil, 0, err
 	}
-	result, syncErr := syncer.SyncOnce(ctx, restored.HighestVersion)
+	syncer, err := flowworker.NewDualRemoteVersionSync(legacySync, deploymentSync, restoredDeployments.DeploymentCount != 0)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	cursor := restored.HighestVersion
+	if restoredDeployments.HighestGeneration > uint64(cursor) {
+		if restoredDeployments.HighestGeneration > uint64(^uint32(0)) {
+			return nil, nil, 0, errors.New("restored worker deployment exceeds the compatible version range")
+		}
+		cursor = uint32(restoredDeployments.HighestGeneration)
+	}
+	if opt.check {
+		return versions, syncer, cursor, nil
+	}
+	result, syncErr := syncer.SyncOnce(ctx, cursor)
 	if syncErr != nil {
-		if restored.PublicationCount == 0 {
+		if restored.PublicationCount == 0 && restoredDeployments.DeploymentCount == 0 {
 			return nil, nil, 0, fmt.Errorf("initial enrichment sync without LKG: %w", syncErr)
 		}
-		log.Printf("flow-worker enrichment sync unavailable; using LKG version %d: %v", restored.HighestVersion, syncErr)
-		return versions, syncer, restored.HighestVersion, nil
+		log.Printf("flow-worker enrichment sync unavailable; using LKG version %d: %v", cursor, syncErr)
+		return versions, syncer, cursor, nil
 	}
 	if result.HighestVersion == 0 {
 		return nil, nil, 0, errors.New("control plane returned no enrichment version and no LKG is installed")
@@ -697,7 +717,7 @@ func isLoopbackControlPlane(host string) bool {
 	return address != nil && address.IsLoopback()
 }
 
-func runVersionSyncLoop(ctx context.Context, syncer *flowworker.RemoteVersionSync, cursor uint32, barrierSync func(context.Context) error, interval time.Duration, done chan<- struct{}) {
+func runVersionSyncLoop(ctx context.Context, syncer flowworker.RemoteVersionSynchronizer, cursor uint32, barrierSync func(context.Context) error, interval time.Duration, done chan<- struct{}) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

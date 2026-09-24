@@ -37,11 +37,17 @@ type DiskVersionLKG struct {
 	mu           sync.RWMutex
 	references   map[string]string
 	publications map[string]registeredLKGPublication
+	deployments  map[string]registeredLKGDeployment
 }
 
 type registeredLKGPublication struct {
 	version  uint32
 	envelope []byte
+}
+
+type registeredLKGDeployment struct {
+	generation uint64
+	envelope   []byte
 }
 
 type VersionLKGRestoreResult struct {
@@ -60,6 +66,7 @@ func NewDiskVersionLKG(dir string) (*DiskVersionLKG, error) {
 	}
 	return &DiskVersionLKG{
 		dir: absolute, references: make(map[string]string), publications: make(map[string]registeredLKGPublication),
+		deployments: make(map[string]registeredLKGDeployment),
 	}, nil
 }
 
@@ -132,6 +139,36 @@ func (s *DiskVersionLKG) RegisterVerifiedPublication(envelope SignedEnrichmentVe
 		s.references[objectRef] = checksum
 	}
 	s.publications[publication.PublicationID] = registeredLKGPublication{version: publication.ClassificationVersion, envelope: append([]byte(nil), data...)}
+	return nil
+}
+
+// RegisterVerifiedDeployment binds an already signature-verified manifest to
+// its content-addressed artifacts. Artifact IDs are safe local lookup keys;
+// the server-side filesystem object refs never cross the machine API.
+func (s *DiskVersionLKG) RegisterVerifiedDeployment(envelope SignedWorkerDeploymentManifest, data []byte) error {
+	if s == nil {
+		return errors.New("version LKG is not initialized")
+	}
+	canonical, err := MarshalSignedWorkerDeploymentManifest(envelope)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(canonical, data) {
+		return errors.New("registered worker deployment is not canonical")
+	}
+	manifest := envelope.Manifest
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, ok := s.deployments[manifest.DeploymentID]; ok && (current.generation != manifest.Generation || !bytes.Equal(current.envelope, data)) {
+		return errors.New("worker deployment identity is immutable")
+	}
+	for _, artifact := range manifest.Artifacts {
+		if current, ok := s.references[artifact.ArtifactID]; ok && current != artifact.Checksum {
+			return errors.New("worker deployment artifact identity is immutable")
+		}
+		s.references[artifact.ArtifactID] = artifact.Checksum
+	}
+	s.deployments[manifest.DeploymentID] = registeredLKGDeployment{generation: manifest.Generation, envelope: append([]byte(nil), data...)}
 	return nil
 }
 
@@ -270,6 +307,82 @@ func (s *DiskVersionLKG) PersistVersion(ctx context.Context, publication Enrichm
 	return writeImmutableVersionFile(path, registered.envelope, maxEnrichmentVersionEnvelopeBytes)
 }
 
+func (s *DiskVersionLKG) PersistDeployment(ctx context.Context, manifest WorkerDeploymentManifest) error {
+	if s == nil || ctx == nil {
+		return errors.New("version LKG is not initialized")
+	}
+	s.mu.RLock()
+	registered, ok := s.deployments[manifest.DeploymentID]
+	s.mu.RUnlock()
+	if !ok || registered.generation != manifest.Generation {
+		return errors.New("signed worker deployment was not registered")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path := filepath.Join(s.dir, "deployments", deploymentLKGFilename(manifest.Generation))
+	return writeImmutableVersionFile(path, registered.envelope, maxWorkerDeploymentEnvelopeBytes)
+}
+
+type DeploymentLKGRestoreResult struct {
+	DeploymentCount   uint64
+	HighestGeneration uint64
+}
+
+// RestoreDeployments verifies and installs v2 manifests from oldest to newest.
+// It is called during bootstrap before the worker accepts Kafka records, so an
+// error fails startup instead of exposing a partially restored history.
+func (s *DiskVersionLKG) RestoreDeployments(ctx context.Context, trust *flowplan.TrustStore, catalog *EnrichmentVersionCatalog, limits DeploymentLoaderLimits, now time.Time) (DeploymentLKGRestoreResult, error) {
+	if s == nil || ctx == nil || trust == nil || catalog == nil || now.IsZero() {
+		return DeploymentLKGRestoreResult{}, errors.New("deployment LKG restore input is invalid")
+	}
+	paths, err := filepath.Glob(filepath.Join(s.dir, "deployments", "*.json"))
+	if err != nil {
+		return DeploymentLKGRestoreResult{}, err
+	}
+	if len(paths) == 0 {
+		return DeploymentLKGRestoreResult{}, ErrNoVersionLKG
+	}
+	if len(paths) > versionLKGMaxPublicationCount {
+		return DeploymentLKGRestoreResult{}, errors.New("deployment LKG count is invalid")
+	}
+	sort.Strings(paths)
+	loader, err := NewDeploymentLoader(s, discardDeploymentAcknowledgement{}, catalog, limits, nil)
+	if err != nil {
+		return DeploymentLKGRestoreResult{}, err
+	}
+	result := DeploymentLKGRestoreResult{}
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return DeploymentLKGRestoreResult{}, err
+		}
+		generation, err := parseDeploymentLKGFilename(filepath.Base(path))
+		if err != nil {
+			return DeploymentLKGRestoreResult{}, err
+		}
+		data, err := readVersionFile(path, maxWorkerDeploymentEnvelopeBytes)
+		if err != nil {
+			return DeploymentLKGRestoreResult{}, err
+		}
+		envelope, err := VerifySignedWorkerDeploymentManifest(data, trust, now)
+		if err != nil {
+			return DeploymentLKGRestoreResult{}, err
+		}
+		if envelope.Manifest.Generation != generation {
+			return DeploymentLKGRestoreResult{}, errors.New("deployment LKG filename and generation differ")
+		}
+		if err := s.RegisterVerifiedDeployment(envelope, data); err != nil {
+			return DeploymentLKGRestoreResult{}, err
+		}
+		if err := loader.Install(ctx, envelope.Manifest, WorkerDeploymentManifestChecksum(data)); err != nil {
+			return DeploymentLKGRestoreResult{}, err
+		}
+		result.DeploymentCount++
+		result.HighestGeneration = generation
+	}
+	return result, nil
+}
+
 func (s *DiskVersionLKG) Restore(ctx context.Context, trust *flowplan.TrustStore, catalog *EnrichmentVersionCatalog, identity VersionWorkerIdentity, limits VersionLoaderLimits, now time.Time) (VersionLKGRestoreResult, error) {
 	if s == nil || ctx == nil || trust == nil || catalog == nil || now.IsZero() {
 		return VersionLKGRestoreResult{}, errors.New("version LKG restore input is invalid")
@@ -362,6 +475,21 @@ func parseVersionLKGPublicationFilename(name string) (uint32, error) {
 		return 0, errors.New("version LKG publication filename is invalid")
 	}
 	return uint32(value), nil
+}
+
+func deploymentLKGFilename(generation uint64) string {
+	return fmt.Sprintf("%020d.json", generation)
+}
+
+func parseDeploymentLKGFilename(name string) (uint64, error) {
+	if len(name) != 25 || !strings.HasSuffix(name, ".json") {
+		return 0, errors.New("deployment LKG filename is invalid")
+	}
+	value, err := strconv.ParseUint(strings.TrimSuffix(name, ".json"), 10, 64)
+	if err != nil || value == 0 {
+		return 0, errors.New("deployment LKG filename is invalid")
+	}
+	return value, nil
 }
 
 func atomicReplaceVersionFile(path string, data []byte, maxBytes int) error {
