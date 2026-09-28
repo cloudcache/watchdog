@@ -218,3 +218,46 @@ func TestFlowHotRollupSchedulerRegeneratesPreReleaseShapeWithoutCoverageGap(t *t
 		t.Fatalf("shape regeneration did not replace the covered bucket atomically: count=%d requests=%+v checks=%d", count, runner.requests, runner.repairChecks)
 	}
 }
+
+func TestFlowHotRollupSchedulerFillsFiveMinuteFromCompleteMinute(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
+	runner := &fakeHotRollupRunner{sourceCovered: true} // 1m complete, 5m uncovered (fake returns from for 5m)
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: time.Minute, HourLookback: 4 * time.Hour,
+		MinuteLateArrivalWindow: 0, HourLateArrivalWindow: 2 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 1, MaxHourBucketsPerRun: 1,
+		MaxThreads: 4, Priority: 10, MaxMemoryBytes: 6 << 30,
+	}}
+	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed != 1 || len(runner.requests) != 1 {
+		t.Fatalf("expected one 5m run, got completed=%d requests=%d", completed, len(runner.requests))
+	}
+	req := runner.requests[0]
+	if req.Resolution != flowch.RollupFiveMinute || req.SourceResolution != flowch.RollupOneMinute {
+		t.Fatalf("wrong 5m resolution/source: %+v", req)
+	}
+	if req.BucketEnd.Sub(req.Bucket) != time.Hour || req.Bucket.Truncate(time.Hour) != req.Bucket {
+		t.Fatalf("5m batch should span one aligned hour: %+v", req)
+	}
+}
+
+func TestFlowHotRollupSchedulerSkipsFiveMinuteWhenMinuteIncomplete(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
+	runner := &fakeHotRollupRunner{sourceCovered: false} // 1m NOT complete -> no 5m derivation
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: time.Minute, HourLookback: 4 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 1, MaxHourBucketsPerRun: 1,
+	}}
+	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed != 0 || len(runner.requests) != 0 {
+		t.Fatalf("expected no 5m runs when 1m incomplete, got completed=%d requests=%d", completed, len(runner.requests))
+	}
+}

@@ -85,7 +85,59 @@ func (scheduler *flowHotRollupScheduler) ScanOnce(ctx context.Context, now time.
 	}
 	hourly, err := scheduler.scanResolution(ctx, now, flowch.RollupOneHour, time.Hour,
 		scheduler.config.HourLookback, scheduler.config.HourLateArrivalWindow, scheduler.config.MaxHourBucketsPerRun)
-	return hourly + minute, err
+	if err != nil {
+		return minute + hourly, err
+	}
+	// The five-minute query tier is derived from the same complete one-minute
+	// coverage the hourly path consumes, so it is filled last and reuses the
+	// hour lookback and per-run budget rather than introducing new config.
+	fiveMinute, err := scheduler.scanFiveMinute(ctx, now)
+	return minute + hourly + fiveMinute, err
+}
+
+// scanFiveMinute publishes flow_aggregate_5m for sealed hours whose one-minute
+// tier is fully marked. It never scans raw: an hour whose 1m has aged out (older
+// than the 1m TTL) is left to the cold lifecycle, not filled here. Each covered
+// hour becomes one range INSERT of twelve five-minute buckets plus their
+// generation markers, superseding any generation below the readable floor.
+func (scheduler *flowHotRollupScheduler) scanFiveMinute(ctx context.Context, now time.Time) (int, error) {
+	sealedThrough := now.Add(-scheduler.config.SealDelay).Truncate(time.Hour)
+	from := sealedThrough.Add(-scheduler.config.HourLookback).Truncate(time.Hour)
+	if !sealedThrough.After(from) {
+		return 0, nil
+	}
+	completed := 0
+	for hour := from; hour.Before(sealedThrough) && completed < scheduler.config.MaxHourBucketsPerRun; hour = hour.Add(time.Hour) {
+		hourEnd := hour.Add(time.Hour)
+		covered, err := scheduler.runner.CoveredThroughAtLeast(ctx, flowch.RollupFiveMinute, hour, hourEnd, scheduler.config.MinimumGeneration)
+		if err != nil {
+			return completed, err
+		}
+		if covered.Equal(hourEnd) {
+			continue
+		}
+		sourceThrough, err := scheduler.runner.CoveredThroughAtLeast(ctx, flowch.RollupOneMinute, hour, hourEnd, scheduler.config.MinimumGeneration)
+		if err != nil {
+			return completed, err
+		}
+		if !sourceThrough.Equal(hourEnd) {
+			continue
+		}
+		generation, err := nextHotRollupGeneration(now, 0)
+		if err != nil {
+			return completed, err
+		}
+		if err := scheduler.runner.Run(ctx, flowch.RollupRequest{
+			Resolution: flowch.RollupFiveMinute, SourceResolution: flowch.RollupOneMinute,
+			Bucket: hour, BucketEnd: hourEnd, Generation: generation, GeneratedAt: now,
+			MaxThreads: scheduler.config.MaxThreads, Priority: scheduler.config.Priority,
+			MaxMemoryBytes: scheduler.config.MaxMemoryBytes,
+		}); err != nil {
+			return completed, err
+		}
+		completed++
+	}
+	return completed, nil
 }
 
 func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now time.Time, resolution flowch.RollupResolution,
