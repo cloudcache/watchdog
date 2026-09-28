@@ -130,19 +130,24 @@ func (r *SNMPCollectorRuntime) RunDue(ctx context.Context, limit int) (snmpdomai
 	return result, nil
 }
 
-func (r *SNMPCollectorRuntime) RunLoop(ctx context.Context, interval time.Duration, limit int) error {
+func (r *SNMPCollectorRuntime) RunLoop(ctx context.Context, interval time.Duration, limit int, onCycle func(snmpdomain.PollRunnerResult, error)) error {
 	if interval <= 0 {
 		return errors.New("SNMP poll interval must be positive")
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if _, err := r.RunDue(ctx, limit); err != nil && !errors.Is(err, context.Canceled) {
+		result, err := r.RunDue(ctx, limit)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			// MySQL, the device, or ClickHouse may be temporarily unavailable. The
 			// standalone collector is a long-running process: preserve backpressure
 			// by finishing one pass at a time, report the failure, and retry on the
 			// next bounded scheduler tick instead of silently stopping collection.
 			log.Printf("SNMP poll pass failed; retrying on next interval: %v", err)
+		}
+		// A cancelled context is shutdown, not a poll pass worth reporting.
+		if onCycle != nil && !errors.Is(err, context.Canceled) {
+			onCycle(result, err)
 		}
 		select {
 		case <-ctx.Done():

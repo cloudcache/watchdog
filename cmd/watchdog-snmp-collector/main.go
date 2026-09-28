@@ -14,6 +14,7 @@ import (
 
 	"github.com/cloudcache/watchdog/internal/agentplan"
 	"github.com/cloudcache/watchdog/internal/server"
+	"github.com/cloudcache/watchdog/internal/snmpdomain"
 	"github.com/google/uuid"
 )
 
@@ -82,6 +83,8 @@ func main() {
 	if *limit > 0 {
 		resolvedLimit = *limit
 	}
+	var agentToken string
+	var agentPlanVersion uint64
 	agentRuntime := snmpAgentRuntime(*controlPlaneURL, *agentID, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
 	if agentRuntime.Enabled() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
@@ -103,6 +106,8 @@ func main() {
 				log.Fatal(result.AckError)
 			}
 		}
+		agentToken = token
+		agentPlanVersion = appliedPlanVersion
 		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("SNMP agent heartbeat: %v", err)
 			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
@@ -120,6 +125,37 @@ func main() {
 	}
 	defer runtime.Close()
 
+	// reportPoll records one SNMP poll pass as an agent run so the registry and
+	// UI reflect real collection workload (recipes, devices, samples, failures),
+	// not liveness alone. It is a no-op unless the agent runtime is configured.
+	reportPoll := func(res snmpdomain.PollRunnerResult, runErr error) {
+		if !agentRuntime.Enabled() || agentToken == "" {
+			return
+		}
+		report := agentplan.RunReport{
+			Summary: map[string]any{
+				"plan_version": agentPlanVersion,
+				"recipes":      res.RecipeCount,
+				"devices":      res.DeviceCount,
+				"samples":      res.SampleCount,
+				"failed":       res.FailedCount,
+			},
+		}
+		switch {
+		case runErr != nil:
+			report.Status = "failure"
+			report.Error = runErr.Error()
+		case res.FailedCount > 0:
+			report.Status = "failure"
+			report.Error = fmt.Sprintf("%d device polls failed", res.FailedCount)
+		}
+		reportCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := agentRuntime.ReportRun(reportCtx, agentToken, report); err != nil {
+			log.Printf("SNMP agent run report: %v", err)
+		}
+	}
+
 	if *discover && !*loop {
 		if err := runtime.DiscoverDevice(ctx, strings.TrimSpace(*deviceID)); err != nil {
 			log.Fatal(err)
@@ -128,6 +164,7 @@ func main() {
 	}
 	if *poll && !*loop {
 		result, err := runtime.RunDue(ctx, resolvedLimit)
+		reportPoll(result, err)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -140,7 +177,9 @@ func main() {
 			}
 		}
 		if *poll {
-			if err := runtime.RunLoop(ctx, resolvedInterval, resolvedLimit); err != nil && !errors.Is(err, context.Canceled) {
+			if err := runtime.RunLoop(ctx, resolvedInterval, resolvedLimit, func(res snmpdomain.PollRunnerResult, cycleErr error) {
+				go reportPoll(res, cycleErr)
+			}); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("poll scheduler stopped: %v", err)
 			}
 		} else {
