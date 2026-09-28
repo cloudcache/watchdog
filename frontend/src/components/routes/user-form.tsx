@@ -1,7 +1,7 @@
 import type { MessageDescriptor } from "@lingui/core"
 import { msg } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, SaveIcon, SearchIcon, UserRoundCogIcon } from "lucide-react"
 import { memo, useEffect, useMemo, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"

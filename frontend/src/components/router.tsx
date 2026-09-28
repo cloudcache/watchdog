@@ -1,125 +1,74 @@
-import { createRouter } from "@nanostores/router"
+import { basePath, getPagePath, type PageName, pagePaths, prependBasePath } from "@/lib/page-path.ts"
 
-const routes = {
-	home: "/",
-	agents: "/agents",
-	agent_new: "/agents/new",
-	agent_edit: "/agents/:id/edit",
-	agent_runs: "/agents/:id/runs",
-	agent_plans: "/agents/:id/plans",
-	aggregate_charts: "/aggregate-charts",
-	aggregate_graphs: "/aggregate-graphs",
-	aggregate_graph_new: "/aggregate-graphs/new",
-	aggregate_graph_edit: "/aggregate-graphs/:id/edit",
-	aggregate_graph: "/aggregate-graphs/:id",
-	dashboards: "/dashboards",
-	dashboard_new: "/dashboards/new",
-	dashboard_edit: "/dashboards/:id/edit",
-	billing: "/billing",
-	billing_new: "/billing/new",
-	billing_detail: "/billing/:id",
-	billing_edit: "/billing/:id/edit",
-	core: "/core",
-	exports: "/exports",
-	export_new: "/exports/new",
-	export_detail: "/exports/:id",
-	network: "/network",
-	network_discover: "/network/discover",
-	network_device_new: "/network/devices/new",
-	network_device_edit: "/network/devices/:id/edit",
-	network_device: "/network/devices/:id",
-	network_device_snmp: "/network/devices/:id/snmp",
-	network_port: "/network/ports/:id",
-	network_port_edit: "/network/ports/:id/edit",
-	network_port_policy: "/network/ports/:id/policy",
-	permissions: "/permissions",
-	users_admin: "/users",
-	user_new: "/users/new",
-	user_edit: "/users/:id/edit",
-	role_new: "/roles/new",
-	role_edit: "/roles/:id/edit",
-	audit_logs: "/audit-logs",
-	operation_jobs: "/jobs",
-	retention: "/retention",
-	watchdog_overview: "/watchdog",
-	snmp_profiles: "/snmp/profiles",
-	snmp_profile_new: "/snmp/profiles/new",
-	snmp_profile_edit: "/snmp/profiles/:id/edit",
-	snmp_mib_modules: "/snmp/mib-modules",
-	snmp_mib_module_new: "/snmp/mib-modules/new",
-	snmp_mib_module_edit: "/snmp/mib-modules/:id/edit",
-	system: `/system/:id`,
-	targets: "/targets",
-	target_new: "/targets/new",
-	target_edit: "/targets/:id/edit",
-	target_detail: "/targets/:id",
-	traffic_defaults: "/network/traffic-defaults",
-	address_library_root: "/address-library",
-	address_library: "/address-library/:section",
-	address_prefixes: "/address-prefixes",
-	address_sets: "/address-sets",
-	flow_overview: "/flow",
-	flow_attribution: "/flow/attribution",
-	flow_dimensions: "/flow/dimensions",
-	flow_source: "/flow/source",
-	flow_destination: "/flow/destination",
-	flow_overseas: "/flow/overseas",
-	flow_vpn: "/flow/vpn",
-	flow_vpn_rules: "/flow/vpn/rules",
-	flow_filters: "/flow/filters",
-	traffic_matrix: "/traffic-matrix",
-	settings: `/settings/:name?`,
-	forgot_password: `/forgot-password`,
-	install: `/install`,
-} as const
+export { basePath, getPagePath, prependBasePath }
+
+/** Compatibility value for existing typed URL builders; it contains no store. */
+export const $router = { routes: pagePaths } as const
+
+/** A document page is immutable until the browser loads another document. */
+export type Page = {
+	[Name in PageName]: { params: Record<string, string>; path: string; route: Name }
+}[PageName]
 
 /**
- * The base path of the application.
- * This is used to prepend the base path to all routes.
+ * Resolve the page represented by this HTML document once. Production pages
+ * carry their route name on `<html data-watchdog-page="…">`; the pathname
+ * fallback keeps directly served documents useful. This deliberately has no
+ * client route subscription and does not mutate browser history.
  */
-export const basePath = globalThis.WATCHDOG?.BASE_PATH || ""
+export function resolveDocumentPage(): Page | undefined {
+	const declaredRoute = document.documentElement.dataset.watchdogPage
+	const pathname = window.location.pathname.replace(/\/$/, "") || "/"
+	const candidates =
+		declaredRoute && declaredRoute in pagePaths
+			? [[declaredRoute as PageName, pagePaths[declaredRoute as PageName]] as const]
+			: (Object.entries(pagePaths) as [PageName, string][])
 
-/**
- * Prepends the base path to the given path.
- * @param path The path to prepend the base path to.
- * @returns The path with the base path prepended.
- */
-export const prependBasePath = (path: string) => (basePath + path).replaceAll("//", "/")
-
-// prepend base path to routes
-for (const route in routes) {
-	// @ts-expect-error need as const above to get nanostores to parse types properly
-	routes[route] = prependBasePath(routes[route])
+	for (const [route, pattern] of candidates) {
+		const params = matchPath(pattern, pathname)
+		if (params) return { params, path: pathname, route } as Page
+	}
+	return undefined
 }
 
-export const $router = createRouter(routes, { links: false })
+function matchPath(pattern: string, pathname: string): Record<string, string> | undefined {
+	const expected = pattern.split("/").filter(Boolean)
+	const actual = pathname.split("/").filter(Boolean)
+	const params: Record<string, string> = {}
+	let actualIndex = 0
 
-/** A matched page: `route` discriminates the union, `params` is typed per route. */
-export type Page = NonNullable<ReturnType<typeof $router.get>>
+	for (const segment of expected) {
+		if (segment.startsWith(":")) {
+			const optional = segment.endsWith("?")
+			const name = segment.slice(1, optional ? -1 : undefined)
+			if (actualIndex >= actual.length) {
+				if (optional) continue
+				return undefined
+			}
+			try {
+				params[name] = decodeURIComponent(actual[actualIndex])
+			} catch {
+				return undefined
+			}
+			actualIndex++
+			continue
+		}
+		if (actual[actualIndex]?.toLowerCase() !== segment.toLowerCase()) return undefined
+		actualIndex++
+	}
+	return actualIndex === actual.length ? params : undefined
+}
 
-/** Navigate to url using router
- *  Base path is automatically prepended if serving from subpath
- */
+/** Perform traditional document navigation. React never intercepts page links. */
 export const navigate = (urlString: string) => {
-	$router.open(urlString)
+	window.location.assign(urlString || prependBasePath("/"))
+}
+
+/** Replace the current document without retaining a redirect-only history item. */
+export const redirect = (urlString: string) => {
+	window.location.replace(urlString || prependBasePath("/"))
 }
 
 export function Link(props: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: the anchor is the navigation control and always receives a route href from callers.
-		<a
-			{...props}
-			// biome-ignore lint/a11y/useValidAnchor: this anchor delegates same-document navigation to nanostores while retaining an href.
-			onClick={(e) => {
-				e.preventDefault()
-				const href = props.href || ""
-				if (e.ctrlKey || e.metaKey) {
-					window.open(href, "_blank")
-				} else {
-					navigate(href)
-					props.onClick?.(e)
-				}
-			}}
-		></a>
-	)
+	return <a {...props}></a>
 }

@@ -80,9 +80,11 @@ In another terminal:
 npm --prefix frontend run dev
 ```
 
-The frontend listens on `127.0.0.1:8090`; the API listens on
-`127.0.0.1:8091`. `frontend/public/watchdog-config.js` names the API origin
-explicitly. The API `server.origins` must admit the frontend origin.
+The API service listens on `127.0.0.1:8091` by default. A deployment web server
+may expose the frontend and API through one public address, or proxy them through
+separate public addresses. Browsers reach same-origin `/api/` when
+`watchdog-config.js` keeps `API_URL` empty; otherwise they use the configured
+public API address. The frontend does not infer deployment topology.
 
 For a deployment, build the frontend (`npm --prefix frontend run build`) and
 serve `frontend/dist` with nginx using `deploy/nginx/watchdog.conf`. The build
@@ -90,12 +92,16 @@ creates a real HTML document for every fixed page and an explicit Nginx mapping
 for each dynamic detail page. Navigation performs full browser document loads;
 unknown paths and `/api/` return real errors instead of a frontend fallback.
 HTML documents and `watchdog-config.js` are `no-store`; hashed assets remain
-immutable. The backend itself never hosts static files. Keep the production runtime configuration at
-`/var/www/watchdog-runtime/watchdog-config.js` as shown by the nginx config, rather than
-inside a versioned frontend release. This prevents a static deployment from
-silently resetting `API_URL`. Keep this public runtime directory root-owned and
-world-readable; do not expose `/etc/watchdog`, which also contains protected
-service configuration and secret paths.
+immutable. The backend itself never hosts static files. The production runtime
+configuration is `/var/www/watchdog/watchdog-config.js`, at the site root next to
+the generated documents. Edit that file in place to change `API_URL`; no frontend
+rebuild, API restart, or Nginx reload is required. Keep the site root writable
+only by the deployment owner; do not expose `/etc/watchdog`, which also contains
+protected service configuration and secret paths.
+
+Tagged releases publish the same directory as `watchdog-web_<tag>.tar.gz`.
+Extract it into the Nginx site root; server and agent container images remain
+process-only images and intentionally do not embed the web files.
 
 ## 3. First installation and login
 
@@ -118,8 +124,8 @@ so keep the backend listener private until installation completes.
 Health and install state can be checked independently:
 
 ```bash
-curl -sS http://127.0.0.1:8091/api/v1/health
-curl -sS http://127.0.0.1:8091/api/v1/install-status
+curl -sS http://<watchdog-host>/api/v1/health
+curl -sS http://<watchdog-host>/api/v1/install-status
 ```
 
 `runtime_ready:true` means that the MySQL management runtime is available.

@@ -42,7 +42,7 @@ func TestNormalizeFlowReportEndpoints(t *testing.T) {
 	if err := normalizeFlowReport(&req); err != nil {
 		t.Fatalf("endpoints: %v", err)
 	}
-	if req.Table == nil || req.Table.SortBy != "maximum" || req.Table.Limit != req.TopN {
+	if req.Table == nil || req.Table.SortBy != "last" || req.Table.Limit != req.TopN || req.Metric != flowquery.MetricEstimatedBPS {
 		t.Fatalf("endpoint table default not applied: %+v", req.Table)
 	}
 
@@ -54,6 +54,8 @@ func TestNormalizeFlowReportEndpoints(t *testing.T) {
 		{"bad side", flowReportRequest{Kind: flowReportEndpoints, Side: "middle", From: from, To: to}},
 		{"side on overview", flowReportRequest{Kind: flowReportOverview, Side: "source", From: from, To: to}},
 		{"table on overview", flowReportRequest{Kind: flowReportOverview, Table: &flowTableRequest{Limit: 10}, From: from, To: to}},
+		{"endpoint bytes metric", flowReportRequest{Kind: flowReportEndpoints, Side: "source", Metric: flowquery.MetricEstimatedBytes, From: from, To: to}},
+		{"destination source-only column", flowReportRequest{Kind: flowReportEndpoints, Side: "destination", Table: &flowTableRequest{SortBy: "p95", Limit: 10}, From: from, To: to}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := tc.req
@@ -108,32 +110,26 @@ func TestFlowEndpointCategoryChunksBoundEachJointQuery(t *testing.T) {
 	}
 }
 
-// TestComposeFlowEndpointReportTable merges direction/category/business panels into
-// the enriched per-endpoint table, computing category shares and residual rollups.
-func TestComposeFlowEndpointReportTable(t *testing.T) {
+func TestComposeSourceEndpointReportTable(t *testing.T) {
 	panels := []flowReportPanel{
 		{ID: "endpoint", Status: "ready", Data: rawJSON(t, map[string]any{
 			"table": flowTablePage{Items: []flowTableRow{
-				{Path: []string{"10.0.0.1"}, Label: "10.0.0.1", Maximum: 100, Total: 1200},
-				{Path: []string{"10.0.0.2"}, Label: "10.0.0.2", Maximum: 50, Total: 600},
+				{Path: []string{"10.0.0.1"}, Label: "10.0.0.1", Last: 100, P95: 95},
+				{Path: []string{"10.0.0.2"}, Label: "10.0.0.2", Last: 50, P95: 45},
 			}, Limit: 10, Total: 2, FilterOptions: map[string][]flowTableFilterOption{}},
 		})},
-		{ID: "endpoint_in", Status: "ready", Data: directionData(
-			row("10.0.0.1", 1000), row("10.0.0.2", 500))},
-		{ID: "endpoint_out", Status: "ready", Data: directionData(
-			row("10.0.0.1", 200), row("10.0.0.2", 100))},
 		{ID: "endpoint_category_in", Status: "ready", Data: categoryData(
-			summary("10.0.0.1", "on_net_local_city", 800),
-			summary("10.0.0.1", "overseas", 200),
-			summary("10.0.0.1", "unknown", 50),
-			summary("10.0.0.2", "on_net_local_city", 500))},
+			summary("10.0.0.1", "on_net_local_city", 80),
+			summary("10.0.0.1", "overseas", 20),
+			summary("10.0.0.1", "unknown", 5),
+			summary("10.0.0.2", "on_net_local_city", 50))},
 		{ID: "endpoint_category_out", Status: "ready", Data: categoryData(
-			summary("10.0.0.1", "overseas", 200))},
+			summary("10.0.0.1", "overseas", 20))},
 		{ID: "endpoint_business", Status: "ready", Data: businessData(
 			[]string{"10.0.0.1", "web"}, []string{"10.0.0.1", "db"}, []string{"10.0.0.2", "web"})},
 	}
 
-	merged, err := composeFlowEndpointReportTable(panels, flowTableRequest{SortBy: "maximum", SortDirection: "desc", Limit: 10})
+	merged, err := composeFlowEndpointReportTable(panels, flowTableRequest{SortBy: "last", SortDirection: "desc", Limit: 10}, "source")
 	if err != nil {
 		t.Fatalf("compose: %v", err)
 	}
@@ -147,30 +143,44 @@ func TestComposeFlowEndpointReportTable(t *testing.T) {
 	if page.Total != 2 || len(page.Items) != 2 {
 		t.Fatalf("page = %+v", page)
 	}
-	// Sorted by maximum desc: 10.0.0.1 first.
 	first := page.Items[0]
-	if endpointAddress(first.flowTableRow) != "10.0.0.1" {
-		t.Fatalf("first row = %s", endpointAddress(first.flowTableRow))
+	if first.Address != "10.0.0.1" || first.Bandwidth != 100 || first.P95 == nil || *first.P95 != 95 {
+		t.Fatalf("first row = %+v", first)
 	}
-	if first.Inbound.Total != 1000 || first.Outbound.Total != 200 {
-		t.Fatalf("direction summary = %+v / %+v", first.Inbound, first.Outbound)
-	}
-	local := first.Categories["on_net_local_city"]
-	if local.Inbound != 800 || local.InboundShare == nil || *local.InboundShare != 0.8 {
-		t.Fatalf("on_net_local_city = %+v", local)
-	}
-	overseas := first.Categories["overseas"]
-	if overseas.Inbound != 200 || overseas.Outbound != 200 || overseas.OutboundShare == nil || *overseas.OutboundShare != 1.0 {
-		t.Fatalf("overseas = %+v", overseas)
-	}
-	if first.Residual.Inbound != 50 || first.Residual.InboundShare == nil || *first.Residual.InboundShare != 0.05 {
-		t.Fatalf("residual = %+v", first.Residual)
+	if len(first.Classifications) != 3 || first.Classifications[0] != (flowEndpointClassification{Category: "on_net_local_city", Inbound: 80}) ||
+		first.Classifications[1] != (flowEndpointClassification{Category: "overseas", Inbound: 20, Outbound: 20}) ||
+		first.Classifications[2] != (flowEndpointClassification{Category: "unknown", Inbound: 5}) {
+		t.Fatalf("classifications = %+v", first.Classifications)
 	}
 	if !equalStrings(first.Businesses, []string{"db", "web"}) {
 		t.Fatalf("businesses = %v", first.Businesses)
 	}
-	if second := page.Items[1]; endpointAddress(second.flowTableRow) != "10.0.0.2" || !equalStrings(second.Businesses, []string{"web"}) {
-		t.Fatalf("second row = %s biz=%v", endpointAddress(second.flowTableRow), second.Businesses)
+	if second := page.Items[1]; second.Address != "10.0.0.2" || !equalStrings(second.Businesses, []string{"web"}) {
+		t.Fatalf("second row = %s biz=%v", second.Address, second.Businesses)
+	}
+}
+
+func TestComposeDestinationEndpointReportTableOnlyReturnsAddressAndBandwidth(t *testing.T) {
+	panels := []flowReportPanel{{ID: "endpoint", Status: "ready", Data: rawJSON(t, map[string]any{
+		"table": flowTablePage{Items: []flowTableRow{{Path: []string{"203.0.113.10"}, Last: 12_500_000_000, P95: 14_000_000_000}}},
+	})}}
+	merged, err := composeFlowEndpointReportTable(panels, flowTableRequest{SortBy: "last", SortDirection: "desc", Limit: 10}, "destination")
+	if err != nil {
+		t.Fatalf("compose: %v", err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(endpointPanelData(t, merged), &envelope); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(envelope["table"], &page); err != nil || len(page.Items) != 1 {
+		t.Fatalf("page=%v err=%v", page, err)
+	}
+	row := page.Items[0]
+	if row["address"] != "203.0.113.10" || row["bandwidth"] != float64(12_500_000_000) || len(row) != 2 {
+		t.Fatalf("destination row=%v", row)
 	}
 }
 
@@ -183,17 +193,8 @@ func rawJSON(t *testing.T, value any) json.RawMessage {
 	return data
 }
 
-func row(address string, total float64) flowTableRow {
-	return flowTableRow{Path: []string{address}, Label: address, Total: total}
-}
-
-func directionData(rows ...flowTableRow) json.RawMessage {
-	data, _ := json.Marshal(map[string]any{"table": flowTablePage{Items: rows}})
-	return data
-}
-
-func summary(address, category string, total float64) endpointCategorySummaryEntry {
-	return endpointCategorySummaryEntry{Address: address, Category: category, Total: total}
+func summary(address, category string, bandwidth float64) endpointCategorySummaryEntry {
+	return endpointCategorySummaryEntry{Address: address, Category: category, Bandwidth: bandwidth}
 }
 
 func categoryData(entries ...endpointCategorySummaryEntry) json.RawMessage {

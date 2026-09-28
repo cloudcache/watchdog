@@ -56,6 +56,15 @@
 - [x] **变更设计/测试**：浏览器只验证请求行为与 console；源码、依赖锁和构建入口扫描无 PocketBase SDK、collection endpoint 或 authStore。没有做视觉测试，也没有修改样式和布局。
 - [x] **已提交门禁**：本提交仅含 session 路由策略、统一 client body 边界、测试和核销证据；无依赖变化所以锁文件保持不变，前端 PocketBase 引用扫描为零。
 
+#### KISS-01C1 前端去 SPA 导航与兜底（静态 MPA）
+
+- [x] **设计**：保持前后端独立和现有 React 页面/UI，不引入 Node SSR 或第二个应用服务；Nginx 只服务构建产物。每个固定路由生成独立 HTML，动态详情路由使用构建生成的显式 Nginx 映射；未知路径必须返回 404，`/api/` 绝不能回落到前端文档。
+- [x] **编码**：所有站内链接和程序跳转改为浏览器 document navigation；取消 nanostores 的 history 拦截、Vite API proxy 和 Nginx `index.html` catch-all；构建生成 `watchdog-mpa-routes.conf`、逐页 title/首屏 loading shell，并将设置页也改成懒加载。运行时不再创建/订阅客户端 router，已删除 `@nanostores/router`；每个 HTML 通过 `data-watchdog-page` 声明不可变的页面身份。React 只承担当前文档内的交互，不再承担跨页面生命周期。
+- [x] **性能/可靠性**：移除导致公共入口预加载 VTable/VChart 的强制 manual chunk；构建后的入口约 146 KiB gzip，首页不再预加载约 281 KiB 的 VTable 或约 339 KiB 的图表包。HTML/runtime config 使用 `no-store`、hash 静态资源 immutable，旧标签页 chunk 失效时只允许一次受控刷新。
+- [x] **单元/构建门禁**：自动检查 Nginx 无 SPA fallback/无 API proxy、导航不再 `preventDefault`/`router.open`、构建必生成 MPA 文档，且入口只解析一次当前 document page、无 router store 订阅；前端 80 项测试、TypeScript 和 production build 通过，本切片变更文件 Biome 与 `git diff --check` 通过。全库既存格式债不在本切片扩大处理。
+- [ ] **部署验收**：用生产 Nginx 配置验证固定路由刷新、动态详情刷新、浏览器前进/后退与滚动恢复、未知路由 404、错误 API 地址返回 JSON 错误而非 HTML、安装→登录→主页面完整链路。
+- [ ] **已提交门禁**：部署验收后只提交 MPA/认证代理 cookie 相关文件，不夹带并行 Flow worker、地址库或文档删除改动。
+
 #### KISS-01D PB 剩余活入口迁移或删除
 
 - [x] **编码**：agent 注册/心跳最小入口已由 KISS-04 Gin/MySQL 承接；**PB 的告警 hook/collection/realtime 直接删除**——日志与告警作为后续单独的 ClickHouse 子系统重建（按 LibreNMS eventlog/alert 结构、无历史迁移），KISS-01 不保留任何 PB 告警路径。已确认的 systems、smart_devices、旧 realtime、hook、cron 和 collection 写链均已删除，不为历史数据造迁移器。SNMP/system 时序改写 ClickHouse 属 KISS-03 存储纵向切片，不是 PB 入口的隐性前置。

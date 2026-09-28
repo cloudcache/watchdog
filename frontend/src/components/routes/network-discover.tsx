@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, RadarIcon, SaveIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
@@ -72,7 +72,10 @@ export default memo(() => {
 			if (firstDevice) {
 				const nextDeviceID = deviceIDOf(firstDevice)
 				setDeviceID((current) => current || nextDeviceID)
-				setProfileID((current) => current || firstDevice.SNMPProfileID || firstDevice.snmp_profile_id || profileIDOf(nextProfiles[0]) || "")
+				setProfileID(
+					(current) =>
+						current || firstDevice.SNMPProfileID || firstDevice.snmp_profile_id || profileIDOf(nextProfiles[0]) || ""
+				)
 				setSNMPPort(String(firstDevice.SNMPPort ?? firstDevice.snmp_port ?? 161))
 			}
 		} catch (err) {
@@ -184,7 +187,13 @@ export default memo(() => {
 						</Select>
 					</Field>
 					<Field label={t`SNMP Port`}>
-						<Input type="number" min={1} max={65535} value={snmpPort} onChange={(event) => setSNMPPort(event.target.value)} />
+						<Input
+							type="number"
+							min={1}
+							max={65535}
+							value={snmpPort}
+							onChange={(event) => setSNMPPort(event.target.value)}
+						/>
 					</Field>
 					<Field label={t`Community Override`}>
 						<Input value={community} onChange={(event) => setCommunity(event.target.value)} disabled={loading} />
@@ -213,9 +222,13 @@ function profileIDOf(profile?: SNMPProfile) {
 }
 
 function deviceLabel(device: NetworkDevice) {
-	return [device.SysName ?? device.sys_name ?? deviceIDOf(device), device.Model ?? device.model].filter(Boolean).join(" ")
+	return [device.SysName ?? device.sys_name ?? deviceIDOf(device), device.Model ?? device.model]
+		.filter(Boolean)
+		.join(" ")
 }
 
 function profileLabel(profile: SNMPProfile) {
-	return [profile.Name ?? profile.name ?? profileIDOf(profile), profile.Version ?? profile.version].filter(Boolean).join(" ")
+	return [profile.Name ?? profile.name ?? profileIDOf(profile), profile.Version ?? profile.version]
+		.filter(Boolean)
+		.join(" ")
 }

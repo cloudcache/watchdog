@@ -37,6 +37,15 @@ func TestBuildFlowTableAggregates(t *testing.T) {
 	}
 }
 
+func TestFlowTableValuesDoNotConvertMissingTelemetryToZero(t *testing.T) {
+	t0 := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	rows := []flowTablePoint{{bucket: t0, value: 100}, {bucket: t0.Add(2 * time.Hour), value: 300}}
+	values := flowTableValues(rows, flowTablePlan{from: t0, to: t0.Add(3 * time.Hour), step: time.Hour})
+	if len(values) != 2 || values[0] != 100 || values[1] != 300 {
+		t.Fatalf("values=%v", values)
+	}
+}
+
 // TestMarshalFlowAggregateResultIncludesTable confirms the aggregate marshaler
 // embeds the composed table (and tolerates a nil geo service).
 func TestMarshalFlowAggregateResultIncludesTable(t *testing.T) {

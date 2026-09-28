@@ -6,7 +6,14 @@ import { resolveAPIBase } from "./api-transport.ts"
 
 const source = readFileSync(new URL("../../public/watchdog-config.js", import.meta.url), "utf8")
 
-type RuntimeConfig = { BASE_PATH: string; VERSION: string; API_URL: string }
+type RuntimeConfig = {
+	BASE_PATH: string
+	VERSION: string
+	API_URL: string
+	API_BOOTSTRAP_ATTEMPT_TIMEOUT_MS?: number
+	API_BOOTSTRAP_RETRIES?: number
+	API_BOOTSTRAP_RETRY_DELAY_MS?: number
+}
 
 function load(configSource: string, injected?: RuntimeConfig) {
 	const context: { WATCHDOG?: RuntimeConfig } = injected ? { WATCHDOG: injected } : {}
@@ -15,17 +22,19 @@ function load(configSource: string, injected?: RuntimeConfig) {
 	return context.WATCHDOG
 }
 
-test("runtime config preserves a host-injected configuration", () => {
-	const config = load(source, { BASE_PATH: "/console/", VERSION: "test", API_URL: "https://same.example/console" })
-	assert.equal(config.API_URL, "https://same.example/console")
-	assert.equal(config.BASE_PATH, "/console/")
+test("runtime config preserves host-injected API settings but keeps root MPA paths", () => {
+	const config = load(source, { BASE_PATH: "/ignored-subpath/", VERSION: "test", API_URL: "https://same.example/api" })
+	assert.equal(config.API_URL, "https://same.example/api")
+	assert.equal(config.BASE_PATH, "/")
 })
 
 test("standalone runtime config defaults to the same origin", () => {
 	const config = load(source)
 	assert.equal(config.API_URL, "")
 	assert.equal(config.BASE_PATH, "/")
-	// The API client turns an empty origin into base-path-relative URLs.
+	assert.equal(config.API_BOOTSTRAP_ATTEMPT_TIMEOUT_MS, 2_500)
+	assert.equal(config.API_BOOTSTRAP_RETRIES, 2)
+	assert.equal(config.API_BOOTSTRAP_RETRY_DELAY_MS, 250)
 	assert.equal(resolveAPIBase(config.API_URL, config.BASE_PATH), "/")
 })
 

@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import {
 	ArrowLeftIcon,
 	BarChart3Icon,
@@ -209,7 +209,6 @@ type DeviceDetailProps = {
 	id: string
 }
 
-
 type DeviceDeleteImpact = {
 	resource_type: string
 	behavior: string
@@ -272,9 +271,9 @@ export default memo(({ id }: DeviceDetailProps) => {
 				api.send<NetworkDevice>(`/api/v1/devices/${id}`, {}),
 				api.send<NetworkPortsResponse>(`/api/v1/devices/${id}/ports`, {}),
 				api.send<BGPSessionsResponse>(`/api/v1/devices/${id}/bgp?limit=1`, {}),
-				api.send<NetworkDeviceSensorsResponse>(`/api/v1/devices/${id}/sensors?health=problem&limit=12`, {}).catch(
-					() => ({ items: [], total: 0, counts: { total: 0, problems: 0 } })
-				),
+				api
+					.send<NetworkDeviceSensorsResponse>(`/api/v1/devices/${id}/sensors?health=problem&limit=12`, {})
+					.catch(() => ({ items: [], total: 0, counts: { total: 0, problems: 0 } })),
 				api.send<TargetsResponse>("/api/v1/devices", {}),
 				api.send<GraphDashboard>(`/api/v1/graph/devices/${id}/overview`, {}).catch(() => null),
 			])
@@ -419,7 +418,10 @@ export default memo(({ id }: DeviceDetailProps) => {
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {
-					const job = await api.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
+					const job = await api.send<{ status?: string; last_error_detail?: string }>(
+						`/api/v1/operation-jobs/${jobID}`,
+						{}
+					)
 					if (job.status === "succeeded") {
 						break
 					}
@@ -639,11 +641,7 @@ export default memo(({ id }: DeviceDetailProps) => {
 					</TabsContent>
 
 					<TabsContent value="ports">
-						<DevicePortsTable
-							deviceId={id}
-							portTraffic={portTraffic}
-							trafficView={trafficView}
-						/>
+						<DevicePortsTable deviceId={id} portTraffic={portTraffic} trafficView={trafficView} />
 					</TabsContent>
 
 					<TabsContent value="vlans" className="grid gap-3">
@@ -996,23 +994,35 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
-	const serverFiltering = useMemo(() => ({
-		options: { health: ["healthy", "problem"].map((value) => ({ value })) },
-		selected: { health: health === "all" ? [] : [health] },
-		selection: { health: "single" as const },
-		onColumnFilterChange: (_field: string, values: unknown[]) => {
-			setHealth(values.length > 0 ? String(values[0]) : "all")
-			setPage(0)
-		},
-		onClearAll: () => { setHealth("all"); setPage(0) },
-	}), [health])
+	const serverFiltering = useMemo(
+		() => ({
+			options: { health: ["healthy", "problem"].map((value) => ({ value })) },
+			selected: { health: health === "all" ? [] : [health] },
+			selection: { health: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) => {
+				setHealth(values.length > 0 ? String(values[0]) : "all")
+				setPage(0)
+			},
+			onClearAll: () => {
+				setHealth("all")
+				setPage(0)
+			},
+		}),
+		[health]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: { sensorClass: "class", name: "name", status: "status", value: "value" },
-		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { sensorClass: "class", name: "name", status: "status", value: "value" },
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				setSort(`${field}:${direction}`)
+				setPage(0)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center gap-2">
@@ -1023,11 +1033,19 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all"><Trans>All health</Trans></SelectItem>
-						<SelectItem value="healthy"><Trans>Healthy</Trans></SelectItem>
-						<SelectItem value="problem"><Trans>Problems</Trans></SelectItem>
+						<SelectItem value="all">
+							<Trans>All health</Trans>
+						</SelectItem>
+						<SelectItem value="healthy">
+							<Trans>Healthy</Trans>
+						</SelectItem>
+						<SelectItem value="problem">
+							<Trans>Problems</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 				<Select
@@ -1037,13 +1055,25 @@ function DeviceSensorsTable({ deviceId }: { deviceId: string }) {
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-48">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="class:asc"><Trans>Class ascending</Trans></SelectItem>
-						<SelectItem value="name:asc"><Trans>Name ascending</Trans></SelectItem>
-						<SelectItem value="name:desc"><Trans>Name descending</Trans></SelectItem>
-						<SelectItem value="status:asc"><Trans>Status ascending</Trans></SelectItem>
-						<SelectItem value="value:desc"><Trans>Value descending</Trans></SelectItem>
+						<SelectItem value="class:asc">
+							<Trans>Class ascending</Trans>
+						</SelectItem>
+						<SelectItem value="name:asc">
+							<Trans>Name ascending</Trans>
+						</SelectItem>
+						<SelectItem value="name:desc">
+							<Trans>Name descending</Trans>
+						</SelectItem>
+						<SelectItem value="status:asc">
+							<Trans>Status ascending</Trans>
+						</SelectItem>
+						<SelectItem value="value:desc">
+							<Trans>Value descending</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 				<Badge variant={counts.problems > 0 ? "danger" : "success"}>
@@ -1192,31 +1222,44 @@ function DevicePortsTable({
 		if (record.id) navigate(getPagePath($router, "network_port", { id: String(record.id) }))
 	}, [])
 	const portStates = ["up", "down"]
-	const serverFiltering = useMemo(() => ({
-		options: {
-			admin: portStates.map((value) => ({ value })),
-			oper: portStates.map((value) => ({ value })),
-		},
-		selected: {
-			admin: adminStatus === "all" ? [] : [adminStatus],
-			oper: operStatus === "all" ? [] : [operStatus],
-		},
-		selection: { admin: "single" as const, oper: "single" as const },
-		onColumnFilterChange: (field: string, values: unknown[]) => {
-			const value = values.length > 0 ? String(values[0]) : "all"
-			if (field === "admin") setAdminStatus(value)
-			if (field === "oper") setOperStatus(value)
-			setPage(0)
-		},
-		onClearAll: () => { setAdminStatus("all"); setOperStatus("all"); setPage(0) },
-	}), [adminStatus, operStatus])
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				admin: portStates.map((value) => ({ value })),
+				oper: portStates.map((value) => ({ value })),
+			},
+			selected: {
+				admin: adminStatus === "all" ? [] : [adminStatus],
+				oper: operStatus === "all" ? [] : [operStatus],
+			},
+			selection: { admin: "single" as const, oper: "single" as const },
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				const value = values.length > 0 ? String(values[0]) : "all"
+				if (field === "admin") setAdminStatus(value)
+				if (field === "oper") setOperStatus(value)
+				setPage(0)
+			},
+			onClearAll: () => {
+				setAdminStatus("all")
+				setOperStatus("all")
+				setPage(0)
+			},
+		}),
+		[adminStatus, operStatus]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: { name: "name", alias: "alias", admin: "admin_status", oper: "oper_status", speed: "speed" },
-		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { name: "name", alias: "alias", admin: "admin_status", oper: "oper_status", speed: "speed" },
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				setSort(`${field}:${direction}`)
+				setPage(0)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center gap-2">
@@ -1227,11 +1270,19 @@ function DevicePortsTable({
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all"><Trans>All states</Trans></SelectItem>
-						<SelectItem value="up"><Trans>Up</Trans></SelectItem>
-						<SelectItem value="down"><Trans>Down</Trans></SelectItem>
+						<SelectItem value="all">
+							<Trans>All states</Trans>
+						</SelectItem>
+						<SelectItem value="up">
+							<Trans>Up</Trans>
+						</SelectItem>
+						<SelectItem value="down">
+							<Trans>Down</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 				<Select
@@ -1241,9 +1292,13 @@ function DevicePortsTable({
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all"><Trans>All addresses</Trans></SelectItem>
+						<SelectItem value="all">
+							<Trans>All addresses</Trans>
+						</SelectItem>
 						<SelectItem value="ipv4">IPv4</SelectItem>
 						<SelectItem value="ipv6">IPv6</SelectItem>
 					</SelectContent>
@@ -1255,13 +1310,25 @@ function DevicePortsTable({
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-48">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="if_index:asc"><Trans>Index ascending</Trans></SelectItem>
-						<SelectItem value="name:asc"><Trans>Name ascending</Trans></SelectItem>
-						<SelectItem value="name:desc"><Trans>Name descending</Trans></SelectItem>
-						<SelectItem value="speed:desc"><Trans>Speed descending</Trans></SelectItem>
-						<SelectItem value="oper_status:asc"><Trans>Status ascending</Trans></SelectItem>
+						<SelectItem value="if_index:asc">
+							<Trans>Index ascending</Trans>
+						</SelectItem>
+						<SelectItem value="name:asc">
+							<Trans>Name ascending</Trans>
+						</SelectItem>
+						<SelectItem value="name:desc">
+							<Trans>Name descending</Trans>
+						</SelectItem>
+						<SelectItem value="speed:desc">
+							<Trans>Speed descending</Trans>
+						</SelectItem>
+						<SelectItem value="oper_status:asc">
+							<Trans>Status ascending</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 				<Badge variant={counts.down > 0 ? "secondary" : "success"}>
@@ -1395,23 +1462,35 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
-	const serverFiltering = useMemo(() => ({
-		options: { state: ["established", "idle", "active", "connect"].map((value) => ({ value })) },
-		selected: { state: state === "all" ? [] : [state] },
-		selection: { state: "single" as const },
-		onColumnFilterChange: (_field: string, values: unknown[]) => {
-			setState(values.length > 0 ? String(values[0]) : "all")
-			setPage(0)
-		},
-		onClearAll: () => { setState("all"); setPage(0) },
-	}), [state])
+	const serverFiltering = useMemo(
+		() => ({
+			options: { state: ["established", "idle", "active", "connect"].map((value) => ({ value })) },
+			selected: { state: state === "all" ? [] : [state] },
+			selection: { state: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) => {
+				setState(values.length > 0 ? String(values[0]) : "all")
+				setPage(0)
+			},
+			onClearAll: () => {
+				setState("all")
+				setPage(0)
+			},
+		}),
+		[state]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: { peer: "peer", peerAS: "peer_as", state: "state" },
-		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { peer: "peer", peerAS: "peer_as", state: "state" },
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				setSort(`${field}:${direction}`)
+				setPage(0)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center gap-2">
@@ -1422,13 +1501,25 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-40">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all"><Trans>All states</Trans></SelectItem>
-						<SelectItem value="established"><Trans>Established</Trans></SelectItem>
-						<SelectItem value="idle"><Trans>Idle</Trans></SelectItem>
-						<SelectItem value="active"><Trans>Active</Trans></SelectItem>
-						<SelectItem value="connect"><Trans>Connect</Trans></SelectItem>
+						<SelectItem value="all">
+							<Trans>All states</Trans>
+						</SelectItem>
+						<SelectItem value="established">
+							<Trans>Established</Trans>
+						</SelectItem>
+						<SelectItem value="idle">
+							<Trans>Idle</Trans>
+						</SelectItem>
+						<SelectItem value="active">
+							<Trans>Active</Trans>
+						</SelectItem>
+						<SelectItem value="connect">
+							<Trans>Connect</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 				<Select
@@ -1438,13 +1529,25 @@ function BGPSessionsTable({ deviceId }: { deviceId: string }) {
 						setPage(0)
 					}}
 				>
-					<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+					<SelectTrigger className="w-48">
+						<SelectValue />
+					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="peer:asc"><Trans>Peer ascending</Trans></SelectItem>
-						<SelectItem value="peer:desc"><Trans>Peer descending</Trans></SelectItem>
-						<SelectItem value="peer_as:asc"><Trans>Peer AS ascending</Trans></SelectItem>
-						<SelectItem value="peer_as:desc"><Trans>Peer AS descending</Trans></SelectItem>
-						<SelectItem value="state:asc"><Trans>State ascending</Trans></SelectItem>
+						<SelectItem value="peer:asc">
+							<Trans>Peer ascending</Trans>
+						</SelectItem>
+						<SelectItem value="peer:desc">
+							<Trans>Peer descending</Trans>
+						</SelectItem>
+						<SelectItem value="peer_as:asc">
+							<Trans>Peer AS ascending</Trans>
+						</SelectItem>
+						<SelectItem value="peer_as:desc">
+							<Trans>Peer AS descending</Trans>
+						</SelectItem>
+						<SelectItem value="state:asc">
+							<Trans>State ascending</Trans>
+						</SelectItem>
 					</SelectContent>
 				</Select>
 				<Badge variant={counts.established === counts.total && counts.total > 0 ? "success" : "secondary"}>
@@ -1740,19 +1843,16 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await api.send<{ items?: DeviceVLAN[]; total?: number }>(
-				`/api/v1/devices/${deviceId}/vlans`,
-				{
-					query: {
-						q: query || undefined,
-						status: status === "all" ? undefined : status,
-						sort: sortField,
-						order,
-						limit: pageSize,
-						offset: page * pageSize,
-					},
-				}
-			)
+			const data = await api.send<{ items?: DeviceVLAN[]; total?: number }>(`/api/v1/devices/${deviceId}/vlans`, {
+				query: {
+					q: query || undefined,
+					status: status === "all" ? undefined : status,
+					sort: sortField,
+					order,
+					limit: pageSize,
+					offset: page * pageSize,
+				},
+			})
 			if (sequence !== requestSequence.current) return
 			setVlans(data.items ?? [])
 			setTotal(data.total ?? 0)
@@ -1789,27 +1889,41 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
-	const serverFiltering = useMemo(() => ({
-		options: { status: [{ value: "active" }] },
-		selected: { status: status === "all" ? [] : [status] },
-		selection: { status: "single" as const },
-		onColumnFilterChange: (_field: string, values: unknown[]) => {
-			setStatus(values.length > 0 ? String(values[0]) : "all")
-			setPage(0)
-		},
-		onClearAll: () => { setStatus("all"); setPage(0) },
-	}), [status])
+	const serverFiltering = useMemo(
+		() => ({
+			options: { status: [{ value: "active" }] },
+			selected: { status: status === "all" ? [] : [status] },
+			selection: { status: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) => {
+				setStatus(values.length > 0 ? String(values[0]) : "all")
+				setPage(0)
+			},
+			onClearAll: () => {
+				setStatus("all")
+				setPage(0)
+			},
+		}),
+		[status]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: { vlanID: "vlan_id", name: "name", status: "status" },
-		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { vlanID: "vlan_id", name: "name", status: "status" },
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				setSort(`${field}:${direction}`)
+				setPage(0)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div className="text-sm font-medium"><Trans>VLANs</Trans></div>
+				<div className="text-sm font-medium">
+					<Trans>VLANs</Trans>
+				</div>
 				<div className="flex flex-wrap items-center gap-2">
 					<Select
 						value={status}
@@ -1818,10 +1932,16 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 							setPage(0)
 						}}
 					>
-						<SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+						<SelectTrigger className="w-36">
+							<SelectValue />
+						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="all"><Trans>All statuses</Trans></SelectItem>
-							<SelectItem value="active"><Trans>Active</Trans></SelectItem>
+							<SelectItem value="all">
+								<Trans>All statuses</Trans>
+							</SelectItem>
+							<SelectItem value="active">
+								<Trans>Active</Trans>
+							</SelectItem>
 						</SelectContent>
 					</Select>
 					<Select
@@ -1831,12 +1951,22 @@ function DeviceVLANTable({ deviceId }: { deviceId: string }) {
 							setPage(0)
 						}}
 					>
-						<SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+						<SelectTrigger className="w-44">
+							<SelectValue />
+						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="vlan_id:asc"><Trans>VLAN ID ascending</Trans></SelectItem>
-							<SelectItem value="vlan_id:desc"><Trans>VLAN ID descending</Trans></SelectItem>
-							<SelectItem value="name:asc"><Trans>Name ascending</Trans></SelectItem>
-							<SelectItem value="name:desc"><Trans>Name descending</Trans></SelectItem>
+							<SelectItem value="vlan_id:asc">
+								<Trans>VLAN ID ascending</Trans>
+							</SelectItem>
+							<SelectItem value="vlan_id:desc">
+								<Trans>VLAN ID descending</Trans>
+							</SelectItem>
+							<SelectItem value="name:asc">
+								<Trans>Name ascending</Trans>
+							</SelectItem>
+							<SelectItem value="name:desc">
+								<Trans>Name descending</Trans>
+							</SelectItem>
 						</SelectContent>
 					</Select>
 				</div>
@@ -1896,19 +2026,16 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 		setLoading(true)
 		setError("")
 		try {
-			const data = await api.send<{ items?: DeviceLAGGroup[]; total?: number }>(
-				`/api/v1/devices/${deviceId}/lags`,
-				{
-					query: {
-						q: query || undefined,
-						mode: mode === "all" ? undefined : mode,
-						sort: sortField,
-						order,
-						limit: pageSize,
-						offset: page * pageSize,
-					},
-				}
-			)
+			const data = await api.send<{ items?: DeviceLAGGroup[]; total?: number }>(`/api/v1/devices/${deviceId}/lags`, {
+				query: {
+					q: query || undefined,
+					mode: mode === "all" ? undefined : mode,
+					sort: sortField,
+					order,
+					limit: pageSize,
+					offset: page * pageSize,
+				},
+			})
 			if (sequence !== requestSequence.current) return
 			setLags(data.items ?? [])
 			setTotal(data.total ?? 0)
@@ -1945,27 +2072,41 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 		],
 		[t]
 	)
-	const serverFiltering = useMemo(() => ({
-		options: { mode: ["lacp", "active", "passive", "unknown"].map((value) => ({ value })) },
-		selected: { mode: mode === "all" ? [] : [mode] },
-		selection: { mode: "single" as const },
-		onColumnFilterChange: (_field: string, values: unknown[]) => {
-			setMode(values.length > 0 ? String(values[0]) : "all")
-			setPage(0)
-		},
-		onClearAll: () => { setMode("all"); setPage(0) },
-	}), [mode])
+	const serverFiltering = useMemo(
+		() => ({
+			options: { mode: ["lacp", "active", "passive", "unknown"].map((value) => ({ value })) },
+			selected: { mode: mode === "all" ? [] : [mode] },
+			selection: { mode: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) => {
+				setMode(values.length > 0 ? String(values[0]) : "all")
+				setPage(0)
+			},
+			onClearAll: () => {
+				setMode("all")
+				setPage(0)
+			},
+		}),
+		[mode]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: { aggregate: "aggregate_index", mac: "mac_address", mode: "mode" },
-		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { aggregate: "aggregate_index", mac: "mac_address", mode: "mode" },
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				setSort(`${field}:${direction}`)
+				setPage(0)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div className="text-sm font-medium"><Trans>LAG groups</Trans></div>
+				<div className="text-sm font-medium">
+					<Trans>LAG groups</Trans>
+				</div>
 				<div className="flex flex-wrap items-center gap-2">
 					<Select
 						value={mode}
@@ -1974,13 +2115,23 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 							setPage(0)
 						}}
 					>
-						<SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+						<SelectTrigger className="w-36">
+							<SelectValue />
+						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="all"><Trans>All modes</Trans></SelectItem>
+							<SelectItem value="all">
+								<Trans>All modes</Trans>
+							</SelectItem>
 							<SelectItem value="lacp">LACP</SelectItem>
-							<SelectItem value="active"><Trans>Active</Trans></SelectItem>
-							<SelectItem value="passive"><Trans>Passive</Trans></SelectItem>
-							<SelectItem value="unknown"><Trans>Unknown</Trans></SelectItem>
+							<SelectItem value="active">
+								<Trans>Active</Trans>
+							</SelectItem>
+							<SelectItem value="passive">
+								<Trans>Passive</Trans>
+							</SelectItem>
+							<SelectItem value="unknown">
+								<Trans>Unknown</Trans>
+							</SelectItem>
 						</SelectContent>
 					</Select>
 					<Select
@@ -1990,12 +2141,22 @@ function DeviceLAGTable({ deviceId }: { deviceId: string }) {
 							setPage(0)
 						}}
 					>
-						<SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+						<SelectTrigger className="w-48">
+							<SelectValue />
+						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="aggregate_index:asc"><Trans>Aggregate ascending</Trans></SelectItem>
-							<SelectItem value="aggregate_index:desc"><Trans>Aggregate descending</Trans></SelectItem>
-							<SelectItem value="mac_address:asc"><Trans>MAC ascending</Trans></SelectItem>
-							<SelectItem value="mode:asc"><Trans>Mode ascending</Trans></SelectItem>
+							<SelectItem value="aggregate_index:asc">
+								<Trans>Aggregate ascending</Trans>
+							</SelectItem>
+							<SelectItem value="aggregate_index:desc">
+								<Trans>Aggregate descending</Trans>
+							</SelectItem>
+							<SelectItem value="mac_address:asc">
+								<Trans>MAC ascending</Trans>
+							</SelectItem>
+							<SelectItem value="mode:asc">
+								<Trans>Mode ascending</Trans>
+							</SelectItem>
 						</SelectContent>
 					</Select>
 				</div>
@@ -2081,9 +2242,8 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 			if (query) params.set("q", query)
 			for (const field of ["severity", "event_type", "source"]) {
 				const selected = columnFilters[field]?.map(String) ?? []
-				const values = field === "severity" && alertOnly && selected.length === 0
-					? ["warning", "error", "critical"]
-					: selected
+				const values =
+					field === "severity" && alertOnly && selected.length === 0 ? ["warning", "error", "critical"] : selected
 				if (values.length > 0) params.set(`filter.${field}`, values.join(","))
 			}
 			const data = await api.send<{ items?: SNMPEventEntry[]; total?: number }>(
@@ -2139,58 +2299,72 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 	const emptyText = alertOnly
 		? t`No active warning, error, or critical events.`
 		: t`No events yet. Events appear on interface status changes and SNMP traps.`
-	const serverFiltering = useMemo(() => ({
-		options: {
-			severity: (alertOnly ? ["warning", "error", "critical"] : ["info", "warning", "error", "critical"])
-				.map((value) => ({ value })),
-			event_type: [],
-			source: [],
-		},
-		selected: columnFilters,
-		selection: { severity: "multiple" as const, event_type: "multiple" as const, source: "multiple" as const },
-		loadOptions: async (field: string, facetSearch: string, signal: AbortSignal) => {
-			if (field === "severity") {
-				return (alertOnly ? ["warning", "error", "critical"] : ["info", "warning", "error", "critical"])
-					.filter((value) => value.includes(facetSearch.toLowerCase()))
-					.map((value) => ({ value }))
-			}
-			const params = new URLSearchParams({ field, q: facetSearch, limit: "100" })
-			if (query) params.set("search", query)
-			for (const filterField of ["severity", "event_type", "source"]) {
-				if (filterField === field) continue
-				const selected = columnFilters[filterField]?.map(String) ?? []
-				const values = filterField === "severity" && alertOnly && selected.length === 0
-					? ["warning", "error", "critical"]
-					: selected
-				if (values.length > 0) params.set(`filter.${filterField}`, values.join(","))
-			}
-			const data = await api.send<{ items?: { value: string; count: number }[] }>(
-				`/api/v1/devices/${deviceId}/events/facets?${params.toString()}`,
-				{ signal }
-			)
-			return (data.items ?? []).map((item) => ({ value: item.value, count: item.count }))
-		},
-		onColumnFilterChange: (field: string, values: unknown[]) => {
-			setColumnFilters((current) => {
-				const next = { ...current }
-				if (values.length > 0) next[field] = values
-				else delete next[field]
-				return next
-			})
-			setPage(0)
-		},
-		onClearAll: () => { setColumnFilters({}); setPage(0) },
-	}), [alertOnly, columnFilters, deviceId, query])
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				severity: (alertOnly ? ["warning", "error", "critical"] : ["info", "warning", "error", "critical"]).map(
+					(value) => ({ value })
+				),
+				event_type: [],
+				source: [],
+			},
+			selected: columnFilters,
+			selection: { severity: "multiple" as const, event_type: "multiple" as const, source: "multiple" as const },
+			loadOptions: async (field: string, facetSearch: string, signal: AbortSignal) => {
+				if (field === "severity") {
+					return (alertOnly ? ["warning", "error", "critical"] : ["info", "warning", "error", "critical"])
+						.filter((value) => value.includes(facetSearch.toLowerCase()))
+						.map((value) => ({ value }))
+				}
+				const params = new URLSearchParams({ field, q: facetSearch, limit: "100" })
+				if (query) params.set("search", query)
+				for (const filterField of ["severity", "event_type", "source"]) {
+					if (filterField === field) continue
+					const selected = columnFilters[filterField]?.map(String) ?? []
+					const values =
+						filterField === "severity" && alertOnly && selected.length === 0
+							? ["warning", "error", "critical"]
+							: selected
+					if (values.length > 0) params.set(`filter.${filterField}`, values.join(","))
+				}
+				const data = await api.send<{ items?: { value: string; count: number }[] }>(
+					`/api/v1/devices/${deviceId}/events/facets?${params.toString()}`,
+					{ signal }
+				)
+				return (data.items ?? []).map((item) => ({ value: item.value, count: item.count }))
+			},
+			onColumnFilterChange: (field: string, values: unknown[]) => {
+				setColumnFilters((current) => {
+					const next = { ...current }
+					if (values.length > 0) next[field] = values
+					else delete next[field]
+					return next
+				})
+				setPage(0)
+			},
+			onClearAll: () => {
+				setColumnFilters({})
+				setPage(0)
+			},
+		}),
+		[alertOnly, columnFilters, deviceId, query]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: { time: "occurred_at", severity: "severity", type: "event_type", source: "source", message: "message" },
-		onSortChange: (field: string, direction: "asc" | "desc") => { setSort(`${field}:${direction}`); setPage(0) },
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: { time: "occurred_at", severity: "severity", type: "event_type", source: "source", message: "message" },
+			onSortChange: (field: string, direction: "asc" | "desc") => {
+				setSort(`${field}:${direction}`)
+				setPage(0)
+			},
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
-		{error ? <div className="text-sm text-destructive">{error}</div> : null}
+			{error ? <div className="text-sm text-destructive">{error}</div> : null}
 			<PagedVTable
 				records={records}
 				columns={columns}
@@ -2206,7 +2380,10 @@ function DeviceEventsTable({ deviceId, alertOnly }: { deviceId: string; alertOnl
 					pageSize,
 					totalCount: total,
 					onPageChange: setPage,
-					onPageSizeChange: (value) => { setPageSize(value); setPage(0) },
+					onPageSizeChange: (value) => {
+						setPageSize(value)
+						setPage(0)
+					},
 				}}
 			/>
 		</div>
@@ -2317,24 +2494,39 @@ function DeviceInventory({ deviceId }: { deviceId: string }) {
 		setPage(0)
 		update()
 	}
-	const serverFiltering = useMemo(() => ({
-		options: { fru: [{ value: "true", label: t`Yes` }, { value: "false", label: t`No` }] },
-		selected: { fru: fru === "all" ? [] : [fru] },
-		selection: { fru: "single" as const },
-		onColumnFilterChange: (_field: string, values: unknown[]) =>
-			resetPage(() => setFRU(values.length > 0 ? String(values[0]) : "all")),
-		onClearAll: () => resetPage(() => setFRU("all")),
-	}), [fru, t])
+	const serverFiltering = useMemo(
+		() => ({
+			options: {
+				fru: [
+					{ value: "true", label: t`Yes` },
+					{ value: "false", label: t`No` },
+				],
+			},
+			selected: { fru: fru === "all" ? [] : [fru] },
+			selection: { fru: "single" as const },
+			onColumnFilterChange: (_field: string, values: unknown[]) =>
+				resetPage(() => setFRU(values.length > 0 ? String(values[0]) : "all")),
+			onClearAll: () => resetPage(() => setFRU("all")),
+		}),
+		[fru, t]
+	)
 	const [sortField, sortDirection] = sort.split(":") as [string, "asc" | "desc"]
-	const serverSorting = useMemo(() => ({
-		field: sortField,
-		direction: sortDirection,
-		fields: {
-			index: "entity_index", name: "name", entityClass: "class",
-			model: "model", serial: "serial", manufacturer: "manufacturer",
-		},
-		onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
-	}), [sortDirection, sortField])
+	const serverSorting = useMemo(
+		() => ({
+			field: sortField,
+			direction: sortDirection,
+			fields: {
+				index: "entity_index",
+				name: "name",
+				entityClass: "class",
+				model: "model",
+				serial: "serial",
+				manufacturer: "manufacturer",
+			},
+			onSortChange: (field: string, direction: "asc" | "desc") => resetPage(() => setSort(`${field}:${direction}`)),
+		}),
+		[sortDirection, sortField]
+	)
 	return (
 		<div className="grid gap-3">
 			<div className="flex flex-wrap gap-2">
@@ -2401,7 +2593,8 @@ function DeviceSavedGraphs({ deviceId }: { deviceId: string }) {
 
 	useEffect(() => {
 		let cancelled = false
-		api.send<{ items?: { ID?: string; Name?: string; Devices?: { ID?: string }[] }[] }>("/api/v1/aggregate-graphs", {})
+		api
+			.send<{ items?: { ID?: string; Name?: string; Devices?: { ID?: string }[] }[] }>("/api/v1/aggregate-graphs", {})
 			.then((data) => {
 				if (!cancelled) {
 					setGraphs((data.items ?? []).filter((graph) => (graph.Devices ?? []).some((d) => d.ID === deviceId)))

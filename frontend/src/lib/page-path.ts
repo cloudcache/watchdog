@@ -1,12 +1,10 @@
 import { routePatterns } from "../route-manifest.ts"
 
-export const basePath = globalThis.WATCHDOG?.BASE_PATH || ""
+export const basePath = "/"
 
-export const prependBasePath = (path: string) => (basePath + path).replaceAll("//", "/")
+export const prependBasePath = (path: string) => (path.startsWith("/") ? path : `/${path}`)
 
-export const pagePaths = Object.fromEntries(
-	Object.entries(routePatterns).map(([name, pattern]) => [name, prependBasePath(pattern)])
-) as { [Name in keyof typeof routePatterns]: (typeof routePatterns)[Name] }
+export const pagePaths = routePatterns as { [Name in keyof typeof routePatterns]: (typeof routePatterns)[Name] }
 
 export type PageName = keyof typeof pagePaths
 

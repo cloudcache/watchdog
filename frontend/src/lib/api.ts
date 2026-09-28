@@ -1,7 +1,16 @@
 import { basePath } from "@/components/router"
 import type { UserSettings } from "@/types"
 import { $platformIdentity, type PlatformAuthContext } from "./platform-auth"
-import { resolveAPIBase, responseFilename } from "./api-transport"
+import {
+	apiRuntimeDefaults,
+	isHTMLAPIResponse,
+	nonNegativeRuntimeInteger,
+	positiveRuntimeInteger,
+	requestDeadline,
+	resolveAPIBase,
+	responseFilename,
+	retryTransient,
+} from "./api-transport"
 import { developmentAuth } from "./env"
 import { newUUID } from "./random"
 import { $authenticated, $authChecked, $userSettings } from "./stores"
@@ -89,7 +98,24 @@ export async function refreshWatchdogIdentity() {
 		$authenticated.set(true)
 		return
 	}
-	const user = await api.send<SessionUser>("/api/v1/session/current", {})
+	const attemptTimeoutMS = positiveRuntimeInteger(
+		globalThis.WATCHDOG?.API_BOOTSTRAP_ATTEMPT_TIMEOUT_MS,
+		apiRuntimeDefaults.bootstrapAttemptTimeoutMS
+	)
+	const retries = nonNegativeRuntimeInteger(
+		globalThis.WATCHDOG?.API_BOOTSTRAP_RETRIES,
+		apiRuntimeDefaults.bootstrapRetries
+	)
+	const retryDelayMS = nonNegativeRuntimeInteger(
+		globalThis.WATCHDOG?.API_BOOTSTRAP_RETRY_DELAY_MS,
+		apiRuntimeDefaults.bootstrapRetryDelayMS
+	)
+	const user = await retryTransient(
+		() => api.send<SessionUser>("/api/v1/session/current", { timeoutMs: attemptTimeoutMS }),
+		(error) =>
+			error instanceof WatchdogAPIError && (error.code === "request_timeout" || error.code === "network_error"),
+		new Array(retries).fill(retryDelayMS)
+	)
 	setAuthenticatedUser(user)
 }
 
@@ -116,7 +142,7 @@ export async function login(username: string, password: string) {
 }
 
 export function fetchInstallStatus() {
-	return api.send<InstallStatus>("/api/v1/install-status", {})
+	return api.send<InstallStatus>("/api/v1/install-status")
 }
 
 export function installWatchdog(input: { username: string; password: string; email?: string; display_name?: string }) {
@@ -159,18 +185,20 @@ async function sendWatchdogAPI<T>(path: string, options: WatchdogAPIOptions = {}
 	if (response.status === 204) {
 		return undefined as T
 	}
-	return response.json() as Promise<T>
+	return readAPIJSON<T>(response)
 }
 
 type WatchdogAPIOptions = Omit<RequestInit, "body"> & {
 	body?: unknown
 	query?: Record<string, string | number | boolean | undefined>
+	/** Optional operation-specific deadline. Normal API requests have no transport timeout. */
+	timeoutMs?: number
 	// onResponse exposes raw headers such as ETag for optimistic concurrency.
 	onResponse?: (response: Response) => void
 }
 
 export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions = {}) {
-	const { body, query, onResponse, ...requestInit } = options
+	const { body, query, onResponse, timeoutMs = 0, ...requestInit } = options
 	const headers = new Headers(requestInit.headers)
 	if (!headers.has("X-Request-ID")) {
 		headers.set("X-Request-ID", newUUID())
@@ -186,10 +214,12 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 			url.searchParams.set(key, String(value))
 		}
 	}
+	const deadline = requestDeadline(requestInit.signal, timeoutMs)
 	const init: RequestInit = {
 		...requestInit,
 		headers,
 		credentials: "include",
+		signal: deadline.signal,
 	}
 	if (body instanceof FormData || typeof body === "string") {
 		init.body = body
@@ -200,9 +230,29 @@ export async function fetchWatchdogAPI(path: string, options: WatchdogAPIOptions
 	if (typeof body === "string" && body && !headers.has("Content-Type")) {
 		headers.set("Content-Type", "application/json")
 	}
-	const response = await fetch(url, init)
-	onResponse?.(response)
-	return response
+	try {
+		const response = await fetch(url, init)
+		onResponse?.(response)
+		return response
+	} catch (cause) {
+		if (deadline.didTimeout()) {
+			throw new WatchdogAPIError(
+				0,
+				"request_timeout",
+				`The API did not respond within ${Math.ceil(timeoutMs / 1000)} seconds. Check the API address and service status.`
+			)
+		}
+		if (!requestInit.signal?.aborted && cause instanceof TypeError) {
+			throw new WatchdogAPIError(
+				0,
+				"network_error",
+				`Unable to reach the Watchdog API at ${url.origin}. Check WATCHDOG_CONFIG.API_URL, the web-server route, and the API service.`
+			)
+		}
+		throw cause
+	} finally {
+		deadline.cleanup()
+	}
 }
 
 function buildAPIURL(path: string) {
@@ -237,6 +287,13 @@ export async function downloadWatchdogFile(path: string) {
 
 async function readAPIError(response: Response) {
 	const text = await response.text()
+	if (isHTMLAPIResponse(response.headers.get("Content-Type"), text)) {
+		return new WatchdogAPIError(
+			response.status,
+			"api_returned_frontend_html",
+			"The API request returned a frontend document. Check WATCHDOG_CONFIG.API_URL and ensure Nginx never routes /api/ to frontend files."
+		)
+	}
 	let code = "request_failed"
 	let message = text || `Request failed with status ${response.status}`
 	try {
@@ -247,6 +304,26 @@ async function readAPIError(response: Response) {
 		// Keep the response text for non-JSON failures.
 	}
 	return new WatchdogAPIError(response.status, code, message)
+}
+
+async function readAPIJSON<T>(response: Response): Promise<T> {
+	const text = await response.text()
+	if (isHTMLAPIResponse(response.headers.get("Content-Type"), text)) {
+		throw new WatchdogAPIError(
+			response.status,
+			"api_returned_frontend_html",
+			"The API request returned a frontend document. Check WATCHDOG_CONFIG.API_URL and ensure Nginx never routes /api/ to frontend files."
+		)
+	}
+	try {
+		return JSON.parse(text) as T
+	} catch {
+		throw new WatchdogAPIError(
+			response.status,
+			"invalid_api_response",
+			`The API returned an invalid JSON response (${response.headers.get("Content-Type") || "unknown content type"}).`
+		)
+	}
 }
 
 /** Log out on explicit user action; no background login/refresh is performed. */

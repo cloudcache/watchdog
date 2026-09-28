@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, BracesIcon, PlayIcon, RefreshCwIcon } from "lucide-react"
 import { memo, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"

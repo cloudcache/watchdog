@@ -1,14 +1,14 @@
 # Watchdog 上线与发布准备（2026-09-28）
 
-本文为发布前整理：①当前代码的未提交/未测试状态；②前后端正式部署文档与环境要求，重点是磁盘容量、数据库、ClickHouse 索引与聚合配置、ClickHouse/Kafka 优化。依据为本仓库当前状态 + 生产 .18 本轮实测 + 三次磁盘打满事故的教训。
+本文为发布前整理：①当前代码的生产审计状态；②前后端正式部署文档与环境要求，重点是磁盘容量、数据库、ClickHouse 索引与聚合配置、ClickHouse/Kafka 优化。依据为本仓库当前状态 + 生产 .18 本轮实测 + 三次磁盘打满事故的教训。
 
 ---
 
-## 1. 代码状态：未提交 / 未测试
+## 1. 代码状态：生产审计基线
 
-分支 `main` 领先 `origin/main` **782 个提交**（长期未推送，自托管）。工作区约 **82** 项未提交改动（已排除缓存目录）。
+分支 `main` 长期领先 `origin/main`，远端不是当前发布事实源。发布必须以已审计提交或 tag 为唯一输入，禁止从脏工作区现场构建。
 
-### 1.1 本轮 5m 生命周期改动（未提交，未上生产）
+### 1.1 5m 生命周期改动（已进入当前分支，待生产部署验收）
 
 | 文件 | 内容 | 测试状态 |
 |---|---|---|
@@ -21,14 +21,14 @@
 | `internal/server/flow_hot_rollup_test.go` | 两个 5m 调度用例 | 通过 |
 | `docs/watchdog-install.md` | 新增「storage tiers/capacity/retention」节 | — |
 
-**测试口径**：`go build ./...` 干净；`internal/{flowch,server,flowquery}` 全套 `go test` 通过；schema/runner 已在本地 dev ClickHouse 26.3 端到端验证。**尚未做**：生产部署验证、集成测试（真实 Kafka→worker→CH→5m→查询/账单全链）、迭代 4–7（查询路由/账单读 5m/对账/retention）。
+**测试口径**：`go build ./...` 干净；`internal/{flowch,server,flowquery}` 全套 `go test` 通过；schema/runner 已在本地 dev ClickHouse 26.3 端到端验证。**尚未做**：生产部署验证、集成测试（真实 Kafka→worker→CH→5m→查询/账单全链）、迭代 4–7（查询路由/账单读 5m/对账/retention）。这些未完成项不能由编译或单元测试替代。
 
 ### 1.2 发布前必须处理
-- **提交策略**：把 §1.1 按「迭代1 schema、迭代2 runner、迭代3 调度」分 3 个聚焦提交；不要 `git add .`。
+- **发布门禁**：tag workflow 必须从 `go.mod` 读取 Go 版本，执行全库 Go 测试、前端 check/test/typecheck/build，再分别发布进程制品与独立 web 压缩包。
 - **`.gitignore` 已覆盖缓存/二进制**（已核实）：`.gocache-*/`、`.codex-deploy-*/`、根目录 `watchdog-flow-collect`/`watchdog-flow-worker`/`watchdog-server` 都在已提交的 `.gitignore` 中，`git add .` 不会带入这约 10 GB 垃圾。
-- **风险：多个源文件被工作树 `.gitignore` 标为「local-only 实验」**（未提交的 `.gitignore` 改动）：`/frontend/scripts/build-mpa.ts`、`/frontend/src/lib/install-state-cache.ts`、`/deploy/seed/address-library-em.sql`、`/internal/address/dev_mmdb_stream_test.go` 等被忽略。若前端构建（MPA/route-manifest）或后端实际依赖它们，则干净 checkout 会构建失败。发布前必须核实：要么确认是可弃实验，要么从忽略名单移除并提交入库。
+- **干净 checkout 完整性**：MPA 构建器、部署契约测试、安装状态缓存和页面路径测试均为正式源码，必须被 Git 跟踪；`.gitignore` 不得再次隐藏这些构建依赖。
 - 并行开发者的 flow 查询/账单/对账代码（`flow_reports.go`、`rollup_joint.go`、`interface_reconciliation.go`、`config.go` 等）已提交（HEAD 附近）。
-- **推送**：确认 origin 是否为发布源；782 未推送提交需要一次受控 push（或发布走 `/opt/watchdog/releases` 二进制，不依赖 origin）。
+- **推送**：确认 origin 是否为发布源；长期未推送提交需要一次受控 push（或发布走签名 tag/制品，不依赖 origin）。
 
 ---
 
@@ -70,19 +70,19 @@ raw 压缩后约 **62 字节/行**（已加 codec；未加约 84）。单 export
 
 ### 3.1 拓扑
 两种部署形态：
-- **一体化 hub（:8090）**：同一进程同时服务前端静态 + `/api/v1`。前端 `WATCHDOG_CONFIG.API_URL=""`（同源），无需 nginx 反代。
-- **分离部署（nginx）**：nginx 服务前端静态（`deploy/nginx/watchdog.conf`，`listen 8090`），把 `/api/` 反代到后端 API 进程。
+- **同源部署**：站点服务前端静态文件，并把 `/api/` 反代到后端 API 进程。前端 `WATCHDOG_CONFIG.API_URL=""`。
+- **分离源部署**：仅在确实跨域时显式设置 `API_URL`，并在后端 `server.origins` 放行前端源。
 
 ### 3.2 报错「The API request returned a frontend document」
-含义：前端对 `/api/...` 的请求拿回了 `index.html`。根因是 **`/api/` 没有被反代到 API 进程，而是落到了静态/SPA 回退**。仓库 `deploy/nginx/watchdog.conf:20-21` 当前把 `/api/` 反代到 `127.0.0.1:8091`；若生产 API 实际在 **:8090**（一体化 hub）或 8091 未运行，则 `/api/` 命中不到后端 → 返回前端文档。
+含义：前端对 `/api/...` 的请求拿回了 `index.html`。根因是 **`/api/` 没有被反代到 API 进程，而是落到了静态/MPA 文档路径**。`deploy/nginx/watchdog.conf` 现在通过 `watchdog_api` upstream 表达后端地址，生产环境必须把它指向真实 API 进程。
 
 ### 3.3 修复与验收
-- 使 nginx `location ^~ /api/ { proxy_pass <实际 API 端口>; }` 指向真实 API 进程端口（确认是 8090 还是 8091，二者历史上混淆过，须以实际部署为准）。
+- 使 nginx `location ^~ /api/ { proxy_pass http://watchdog_api; }` 指向真实 API upstream。
 - `location ^~ /api/` 用 `^~` 前缀优先级，确保 `/api/` **永不**落入 `try_files` 静态回退。
 - 前端 `API_URL=""`（同源）为默认；仅在跨源部署时显式设置，并在后端 `server.origins` 放行前端源。
 - **验收命令**（必须返回 JSON 而非 HTML）：
   ```bash
-  curl -s http://<host>:8090/api/v1/health | head -c 200
+  curl -s http://<host>/api/v1/health | head -c 200
   ```
   返回 `{"status":...}` 为正确；返回 `<!DOCTYPE html>` 即路由错误。
 

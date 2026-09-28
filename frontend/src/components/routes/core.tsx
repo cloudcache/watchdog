@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { RefreshCwIcon, RouteIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
@@ -75,7 +75,8 @@ export default memo(() => {
 		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
-		api.send<BGPSessionsResponse>("/api/v1/bgp", { query: buildQuery() })
+		api
+			.send<BGPSessionsResponse>("/api/v1/bgp", { query: buildQuery() })
 			.then((data) => {
 				if (sequence !== requestSequence.current) return
 				setSessions(data.items ?? [])

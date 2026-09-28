@@ -1,10 +1,10 @@
 import { t } from "@lingui/core/macro"
 import { Trans, useLingui } from "@lingui/react/macro"
 import { useStore } from "@nanostores/react"
-import { getPagePath, redirectPage } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { SettingsIcon } from "lucide-react"
 import { lazy, useEffect } from "react"
-import { $router } from "@/components/router.tsx"
+import { $router, redirect, resolveDocumentPage } from "@/components/router.tsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.tsx"
 import { toast } from "@/components/ui/use-toast.ts"
 import { saveUserPreferences } from "@/lib/api"
@@ -43,13 +43,12 @@ export default function SettingsLayout() {
 		},
 	]
 
-	const page = useStore($router)
+	const page = resolveDocumentPage()
 
 	useEffect(() => {
 		document.title = `${t`Settings`} / Watchdog`
-		// @ts-expect-error redirect to account page if no page is specified
 		if (!page?.params?.name) {
-			redirectPage($router, "settings", { name: "general" })
+			redirect(getPagePath($router, "settings", { name: "general" }))
 		}
 	}, [])
 
@@ -70,7 +69,6 @@ export default function SettingsLayout() {
 						<SidebarNav items={sidebarNavItems} />
 					</aside>
 					<div className="flex-1 min-w-0">
-						{/* @ts-ignore */}
 						<SettingsContent name={page?.params?.name ?? "general"} />
 					</div>
 				</div>

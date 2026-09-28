@@ -493,8 +493,8 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 	}{
 		{name: "overview", kind: flowReportOverview, metric: flowquery.MetricRawBytes, panel: "category_out", want: `"dimension_value":"on_net_cross_province"`},
 		{name: "dimensions", kind: flowReportDimensions, metric: flowquery.MetricRawBytes, panel: "dimension_out", want: `"dimension_value":"US"`},
-		{name: "source", kind: flowReportEndpoints, side: "source", metric: flowquery.MetricRawBytes, panel: "endpoint", table: map[string]any{"limit": 2, "offset": 0, "sort_by": "maximum", "sort_direction": "desc"}, want: `"limit":2`},
-		{name: "destination", kind: flowReportEndpoints, side: "destination", metric: flowquery.MetricRawBytes, panel: "endpoint", table: map[string]any{"limit": 2, "offset": 0, "sort_by": "maximum", "sort_direction": "desc"}, want: `"limit":2`},
+		{name: "source", kind: flowReportEndpoints, side: "source", metric: flowquery.MetricEstimatedBPS, panel: "endpoint", table: map[string]any{"limit": 2, "offset": 0, "sort_by": "last", "sort_direction": "desc"}, want: `"limit":2`},
+		{name: "destination", kind: flowReportEndpoints, side: "destination", metric: flowquery.MetricEstimatedBPS, panel: "endpoint", table: map[string]any{"limit": 2, "offset": 0, "sort_by": "last", "sort_direction": "desc"}, want: `"limit":2`},
 		{name: "overseas", kind: flowReportOverseas, metric: flowquery.MetricRawBytes, panel: "country_out", want: `"dimension_value":"US"`},
 		{name: "vpn", kind: flowReportVPN, metric: flowquery.MetricEstimatedBytes, panel: "vpn_findings", want: `"finding_count":1`},
 	}

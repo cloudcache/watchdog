@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/components/ui/use-toast"
 import { canManageAddressLibrary, api } from "@/lib/api"
 import { buildFlowDeviceFilter, type FlowFilterExpression } from "@/lib/flow-explorer-model"
-import { formatBitsPerSecond } from "@/lib/metric-format"
+import { formatBitsPerSecond, formatGigabitsPerSecond } from "@/lib/metric-format"
 import {
 	buildReportSeries,
 	FLOW_REPORT_CATEGORIES,
@@ -41,7 +41,6 @@ import {
 	type FlowReportSeries,
 	type FlowReportSurface,
 	type FlowDistributionPage,
-	type FlowTablePage,
 } from "@/lib/flow-report-model"
 import { createLineChart, disposeChart, TRAFFIC_DIRECTION_COLORS } from "@/lib/vchart"
 import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
@@ -223,11 +222,11 @@ const PAGE_COPY: Record<FlowReportSurface, { title: MessageDescriptor; descripti
 	},
 	source: {
 		title: msg`Source IP Report`,
-		description: msg`Top source addresses with direction, traffic class and drill-down.`,
+		description: msg`Source bandwidth, P95, traffic classification and business labels.`,
 	},
 	destination: {
 		title: msg`Destination IP Report`,
-		description: msg`Top destination addresses with direction, traffic class and drill-down.`,
+		description: msg`Destination bandwidth with record drill-down.`,
 	},
 	overseas: {
 		title: msg`Overseas Traffic Report`,
@@ -281,7 +280,9 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 	const [devices, setDevices] = useState<DeviceItem[]>([])
 	const [referencesLoaded, setReferencesLoaded] = useState(false)
 	const [advancedOpen, setAdvancedOpen] = useState(false)
-	const [table, setTable] = useState<TableControl>(INITIAL_TABLE)
+	const [table, setTable] = useState<TableControl>(() =>
+		surface === "source" || surface === "destination" ? { ...INITIAL_TABLE, sortBy: "last" } : INITIAL_TABLE
+	)
 	const [reportTables, setReportTables] = useState<Record<string, TableControl>>(INITIAL_REPORT_TABLES)
 	const [tableSearch, setTableSearch] = useState("")
 	const [selectedDetailIP, setSelectedDetailIP] = useState(() => queryState("ip", ""))
@@ -390,7 +391,12 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					step_seconds: 0,
 					limit: 250_000,
 					value_layer: "customer",
-					metric: surface === "vpn" ? "estimated_bytes" : metric,
+					metric:
+						surface === "vpn"
+							? "estimated_bytes"
+							: surface === "source" || surface === "destination"
+								? "estimated_bps"
+								: metric,
 					filters,
 					filter,
 					top_n: topN,
@@ -435,7 +441,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					await waitForFlowReportQuery(result.poll_after_ms, controller.signal)
 					result = await api.send<FlowReportResponse | FlowReportQueryJob>(
 						`/api/v1/flow/reports/query/${encodeURIComponent(result.job_id)}`,
-						{ signal: controller.signal },
+						{ signal: controller.signal }
 					)
 				}
 				if (sequence !== requestSequence.current) return
@@ -597,13 +603,15 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 							placeholder={referencesLoaded ? t`Select a Flow device` : t`Loading devices…`}
 							disabled={!referencesLoaded || devices.length === 0}
 						/>
-						<ReportSelect
-							label={t`Metric`}
-							value={surface === "vpn" ? "estimated_bytes" : metric}
-							onChange={setMetric}
-							options={METRICS.map(([value, label]) => [value, i18n._(label)] as const)}
-							disabled={surface === "vpn"}
-						/>
+						{surface !== "source" && surface !== "destination" ? (
+							<ReportSelect
+								label={t`Metric`}
+								value={surface === "vpn" ? "estimated_bytes" : metric}
+								onChange={setMetric}
+								options={METRICS.map(([value, label]) => [value, i18n._(label)] as const)}
+								disabled={surface === "vpn"}
+							/>
+						) : null}
 						<ReportSelect
 							label={t`Display mode`}
 							value={displayMode}
@@ -819,6 +827,7 @@ function ReportBody({
 		case "destination":
 			return (
 				<EndpointReport
+					surface={surface}
 					response={response}
 					table={table}
 					tableSearch={tableSearch}
@@ -1003,7 +1012,10 @@ function CategoryShareChart({ inbound, outbound }: { inbound: Map<string, number
 									<div className="h-full bg-blue-500" style={{ width: `${Math.min(100, (inShare ?? 0) * 100)}%` }} />
 								</div>
 								<div className="overflow-hidden rounded bg-muted">
-									<div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (outShare ?? 0) * 100)}%` }} />
+									<div
+										className="h-full bg-emerald-500"
+										style={{ width: `${Math.min(100, (outShare ?? 0) * 100)}%` }}
+									/>
 								</div>
 							</div>
 						</div>
@@ -1207,6 +1219,7 @@ function DimensionReport({ response }: { response: FlowReportResponse }) {
 }
 
 function EndpointReport({
+	surface,
 	response,
 	table,
 	tableSearch,
@@ -1215,6 +1228,7 @@ function EndpointReport({
 	loading,
 	onSelectIP,
 }: {
+	surface: "source" | "destination"
 	response: FlowReportResponse
 	table: TableControl
 	tableSearch: string
@@ -1225,6 +1239,7 @@ function EndpointReport({
 }) {
 	return (
 		<EndpointTable
+			surface={surface}
 			response={response}
 			table={table}
 			tableSearch={tableSearch}
@@ -1237,6 +1252,7 @@ function EndpointReport({
 }
 
 function EndpointTable({
+	surface,
 	response,
 	table,
 	tableSearch,
@@ -1245,6 +1261,7 @@ function EndpointTable({
 	loading,
 	onSelectIP,
 }: {
+	surface: "source" | "destination"
 	response: FlowReportResponse
 	table: TableControl
 	tableSearch: string
@@ -1258,53 +1275,31 @@ function EndpointTable({
 	const panel = reportPanel(response, "endpoint")
 	const page = panel?.data?.table
 	const records = (page?.items ?? []).map((item) => ({
-		address: item.path[0] || item.name,
-		current: formatMetric(item.last, reportPanelUnit(panel)),
-		average: formatMetric(item.average, reportPanelUnit(panel)),
-		p95: formatMetric(item.p95, reportPanelUnit(panel)),
-		maximum: formatMetric(item.maximum, reportPanelUnit(panel)),
-		total: formatMetric(item.total, totalUnit(reportPanelUnit(panel))),
-		inbound: formatEndpointDirection(item.inbound, reportPanelUnit(panel)),
-		outbound: formatEndpointDirection(item.outbound, reportPanelUnit(panel)),
+		address: item.address || item.path?.[0] || item.name,
+		bandwidth: formatGigabitsPerSecond(item.bandwidth ?? item.last, 1000),
+		p95: formatGigabitsPerSecond(item.p95, 1000),
+		classification:
+			item.classifications
+				?.map(
+					(item) =>
+						`${categoryLabel(item.category)}: ↓ ${formatGigabitsPerSecond(item.inbound, 1000)} / ↑ ${formatGigabitsPerSecond(item.outbound, 1000)}`
+				)
+				.join(" · ") || "—",
 		business: item.businesses?.join(", ") || "—",
-		...Object.fromEntries(
-			FLOW_REPORT_CATEGORIES.map((name) => [
-				name,
-				formatEndpointCategory(item.categories?.[name], totalUnit(reportPanelUnit(panel))),
-			])
-		),
-		residual: formatEndpointCategory(item.residual, totalUnit(reportPanelUnit(panel))),
-		correction: canManageAddressLibrary() ? t`Correct attribution` : undefined,
-		correctionHref: addressCorrectionHref(response, item.path[0] || item.name),
 	}))
-	const columns: ColumnDefine[] = [
-		{ field: "address", filterField: "dimension", title: t`IP address`, width: 190 },
-		{ field: "current", filterField: "last", title: t`Combined · current`, width: 150 },
-		{ field: "average", filterField: "average", title: t`Combined · average`, width: 155 },
-		{ field: "p95", filterField: "p95", title: t`Combined · 95th`, width: 145 },
-		{ field: "maximum", filterField: "maximum", title: t`Combined · peak`, width: 145 },
-		{ field: "total", filterField: "total", title: t`Combined · total`, width: 150 },
-		{ field: "business", title: t`Business labels`, width: 210 },
-		{ field: "inbound", title: t`Inbound current / total`, width: 190 },
-		{ field: "outbound", title: t`Outbound current / total`, width: 195 },
-		...FLOW_REPORT_CATEGORIES.map((name) => ({
-			field: name,
-			title: `${categoryLabel(name)} · ↓ / ↑`,
-			width: 205,
-		})),
-		{ field: "residual", title: t`Residual · ↓ / ↑`, width: 190 },
-		...(canManageAddressLibrary()
+	const columns: ColumnDefine[] =
+		surface === "destination"
 			? [
-					{
-						field: "correction",
-						title: t`Correction`,
-						width: 155,
-						filter: false,
-						style: { color: "#2563eb", cursor: "pointer" },
-					},
+					{ field: "address", filterField: "dimension", title: t`Destination IP`, width: 260 },
+					{ field: "bandwidth", filterField: "last", title: t`Bandwidth (Gbps)`, width: 180 },
 				]
-			: []),
-	]
+			: [
+					{ field: "address", filterField: "dimension", title: t`Source IP`, width: 220 },
+					{ field: "bandwidth", filterField: "last", title: t`Bandwidth (Gbps)`, width: 180 },
+					{ field: "p95", filterField: "p95", title: t`P95 (Gbps)`, width: 160 },
+					{ field: "classification", title: t`Classification`, width: 460 },
+					{ field: "business", title: t`Business labels`, width: 210 },
+				]
 	const filtering = {
 		options: Object.fromEntries(
 			Object.entries(page?.filter_options ?? {}).map(([field, options]) => [
@@ -1325,15 +1320,10 @@ function EndpointTable({
 		direction: table.sortDirection,
 		fields: {
 			address: "dimension",
-			current: "last",
-			average: "average",
+			bandwidth: "last",
 			p95: "p95",
-			maximum: "maximum",
-			total: "total",
+			classification: "classification",
 			business: "business",
-			inbound: "inbound",
-			outbound: "outbound",
-			...Object.fromEntries([...FLOW_REPORT_CATEGORIES, "residual"].map((field) => [field, field])),
 		},
 		onSortChange: (field: string, sortDirection: "asc" | "desc") =>
 			runTable({ ...table, page: 0, sortBy: field, sortDirection }),
@@ -1342,14 +1332,16 @@ function EndpointTable({
 		<Card>
 			<CardHeader>
 				<CardTitle>
-					<Trans>Top endpoints</Trans>
+					{surface === "source" ? <Trans>Source addresses</Trans> : <Trans>Destination addresses</Trans>}
 				</CardTitle>
 				<CardDescription>
-					<Trans>
-						One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the
-						same addresses and frozen report window. Select a row to load records below. Attribution correction opens an
-						address-library draft; it never mutates a published snapshot.
-					</Trans>
+					{surface === "source" ? (
+						<Trans>
+							Current bandwidth, P95, classification and business labels. Select a row to load records below.
+						</Trans>
+					) : (
+						<Trans>Current destination bandwidth. Select a row to load records below.</Trans>
+					)}
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -1358,7 +1350,7 @@ function EndpointTable({
 					columns={columns}
 					widthMode="standard"
 					frozenColCount={1}
-					rightFrozenColCount={canManageAddressLibrary() ? 1 : 0}
+					rightFrozenColCount={0}
 					loading={loading}
 					emptyText={t`No endpoint traffic`}
 					height={Math.min(520, 42 * (records.length + 1))}
@@ -1374,9 +1366,6 @@ function EndpointTable({
 					}}
 					serverFiltering={filtering}
 					serverSorting={sorting}
-					onCellClick={(record, field) => {
-						if (field === "correction") window.location.assign(String(record.correctionHref || ""))
-					}}
 					onRowClick={(record) => {
 						const address = String(record.address || "")
 						if (address) onSelectIP(address)
@@ -1385,20 +1374,6 @@ function EndpointTable({
 			</CardContent>
 		</Card>
 	)
-}
-
-function addressCorrectionHref(response: FlowReportResponse, address: string) {
-	const path = getPagePath($router, "address_library", { section: "prefixes" })
-	const query = new URLSearchParams({
-		q: address,
-		draft: "1",
-		ip: address,
-		evidence: "flow_report",
-		from: response.data.range.effective_from,
-		to: response.data.range.effective_to,
-	})
-	for (const [key, value] of Object.entries(response.data.versions ?? {})) query.set(key, value)
-	return `${path}?${query.toString()}`
 }
 
 function OverseasReport({ response }: { response: FlowReportResponse }) {
@@ -1922,16 +1897,6 @@ function flowDimensionFilter(
 	if (!predicates.length) return undefined
 	if (predicates.length === 1) return predicates[0]
 	return { op: "and", args: predicates }
-}
-
-function formatEndpointDirection(item: FlowTablePage["items"][number]["inbound"] | undefined, unit?: string) {
-	if (!item) return "—"
-	return `${formatMetric(item.last, unit)} / ${formatMetric(item.total, totalUnit(unit))}`
-}
-
-function formatEndpointCategory(item: FlowTablePage["items"][number]["residual"] | undefined, unit?: string) {
-	if (!item) return "—"
-	return `↓ ${formatMetric(item.inbound, unit)} (${formatNullablePercent(item.inbound_share ?? null)}) / ↑ ${formatMetric(item.outbound, unit)} (${formatNullablePercent(item.outbound_share ?? null)})`
 }
 
 function tableRequest(table: TableControl) {

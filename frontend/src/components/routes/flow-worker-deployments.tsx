@@ -295,8 +295,7 @@ export default memo(function FlowWorkerDeployments() {
 				<div className="rounded-md border border-green-500/30 bg-green-500/5 p-3 text-sm text-green-700">
 					<Trans>
 						Validated address version {validation.address_version}, policy revision {validation.profile_row_version},
-						and
-						{validation.artifact_count} immutable artifacts.
+						and {validation.artifact_count} immutable artifacts.
 					</Trans>
 				</div>
 			) : null}

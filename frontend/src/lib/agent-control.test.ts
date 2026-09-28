@@ -17,10 +17,10 @@ test("agent capabilities match the production process contracts", () => {
 })
 
 test("registry arguments keep lifecycle and domain configuration separate", () => {
-	const args = registryArguments("flow_worker", "flow-worker-a", "http://127.0.0.1:8091/")
+	const args = registryArguments("flow_worker", "flow-worker-a", "http://127.0.0.1:8080/")
 	assert.deepEqual(args.slice(0, 4), [
 		"-agent-control-plane-url",
-		"http://127.0.0.1:8091",
+		"http://127.0.0.1:8080",
 		"-worker-id",
 		"flow-worker-a",
 	])

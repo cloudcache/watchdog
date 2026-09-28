@@ -3,6 +3,8 @@ import type { FlowDimensionLabel, FlowJointPoint, FlowPoint } from "@/lib/flow-e
 
 export type FlowTablePage = {
 	items: Array<{
+		address?: string
+		bandwidth?: number
 		name: string
 		label: string
 		path: string[]
@@ -15,10 +17,7 @@ export type FlowTablePage = {
 		received_records: number
 		unknown_sampling_ratio: number
 		quality_record_ratio: number
-		inbound?: FlowEndpointDirectionSummary
-		outbound?: FlowEndpointDirectionSummary
-		categories?: Record<string, FlowEndpointCategorySummary>
-		residual?: FlowEndpointCategorySummary
+		classifications?: FlowEndpointClassification[]
 		businesses?: string[]
 	}>
 	total: number
@@ -27,19 +26,10 @@ export type FlowTablePage = {
 	filter_options: Record<string, Array<{ value: string; label?: string; count: number }>>
 }
 
-export type FlowEndpointDirectionSummary = {
-	last: number
-	average: number
-	p95: number
-	maximum: number
-	total: number
-}
-
-export type FlowEndpointCategorySummary = {
+export type FlowEndpointClassification = {
+	category: string
 	inbound: number
 	outbound: number
-	inbound_share?: number
-	outbound_share?: number
 }
 
 export type FlowReportKind = "overview" | "dimensions" | "endpoints" | "overseas" | "vpn"

@@ -6,6 +6,9 @@ declare global {
 		BASE_PATH: string
 		VERSION: string
 		API_URL: string
+		API_BOOTSTRAP_ATTEMPT_TIMEOUT_MS?: number
+		API_BOOTSTRAP_RETRIES?: number
+		API_BOOTSTRAP_RETRY_DELAY_MS?: number
 	}
 	var WATCHDOG_CONFIG: Partial<typeof WATCHDOG>
 }

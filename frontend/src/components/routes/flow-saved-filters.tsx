@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { BookmarkIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
@@ -10,11 +10,7 @@ import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
-import {
-	formatFlowFilter,
-	parseFlowFilter,
-	type FlowFilterExpression,
-} from "@/lib/flow-explorer-model"
+import { formatFlowFilter, parseFlowFilter, type FlowFilterExpression } from "@/lib/flow-explorer-model"
 import type { ColumnDefine, ServerFilterOption } from "@/lib/vtable"
 
 type FlowSavedFilter = {
@@ -156,16 +152,19 @@ export default memo(function FlowSavedFilters() {
 		try {
 			const filter = parseFlowFilter(form.expression)
 			if (!filter) throw new Error(t`Filter expression is required`)
-			const saved = await api.send<FlowSavedFilter>(form.id ? `/api/v1/flow/filters/${form.id}` : "/api/v1/flow/filters", {
-				method: form.id ? "PATCH" : "POST",
-				headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
-				body: {
-					name: form.name,
-					description: form.description,
-					share_scope: form.shareScope,
-					filter,
-				},
-			})
+			const saved = await api.send<FlowSavedFilter>(
+				form.id ? `/api/v1/flow/filters/${form.id}` : "/api/v1/flow/filters",
+				{
+					method: form.id ? "PATCH" : "POST",
+					headers: form.id ? { "If-Match": `"${form.rowVersion}"` } : undefined,
+					body: {
+						name: form.name,
+						description: form.description,
+						share_scope: form.shareScope,
+						filter,
+					},
+				}
+			)
 			selectItem(saved)
 			await fetchPage()
 		} catch (reason) {
@@ -314,29 +313,53 @@ export default memo(function FlowSavedFilters() {
 			{showForm ? (
 				<div className="grid gap-3 rounded-md border border-border bg-card p-4 md:grid-cols-2">
 					<div className="grid gap-2">
-						<Label><Trans>Name</Trans></Label>
-						<Input disabled={!form.canEdit} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+						<Label>
+							<Trans>Name</Trans>
+						</Label>
+						<Input
+							disabled={!form.canEdit}
+							value={form.name}
+							onChange={(event) => setForm({ ...form, name: event.target.value })}
+						/>
 					</div>
 					<div className="grid gap-2">
-						<Label><Trans>Scope</Trans></Label>
+						<Label>
+							<Trans>Scope</Trans>
+						</Label>
 						<Select
 							disabled={!form.canEdit}
 							value={form.shareScope}
 							onValueChange={(value: "private" | "shared") => setForm({ ...form, shareScope: value })}
 						>
-							<SelectTrigger><SelectValue /></SelectTrigger>
+							<SelectTrigger>
+								<SelectValue />
+							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="private"><Trans>Private</Trans></SelectItem>
-								{canShare || form.shareScope === "shared" ? <SelectItem value="shared"><Trans>Shared</Trans></SelectItem> : null}
+								<SelectItem value="private">
+									<Trans>Private</Trans>
+								</SelectItem>
+								{canShare || form.shareScope === "shared" ? (
+									<SelectItem value="shared">
+										<Trans>Shared</Trans>
+									</SelectItem>
+								) : null}
 							</SelectContent>
 						</Select>
 					</div>
 					<div className="grid gap-2 md:col-span-2">
-						<Label><Trans>Description</Trans></Label>
-						<Input disabled={!form.canEdit} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+						<Label>
+							<Trans>Description</Trans>
+						</Label>
+						<Input
+							disabled={!form.canEdit}
+							value={form.description}
+							onChange={(event) => setForm({ ...form, description: event.target.value })}
+						/>
 					</div>
 					<div className="grid gap-2 md:col-span-2">
-						<Label><Trans>Filter expression</Trans></Label>
+						<Label>
+							<Trans>Filter expression</Trans>
+						</Label>
 						<Textarea
 							disabled={!form.canEdit}
 							value={form.expression}
@@ -345,16 +368,25 @@ export default memo(function FlowSavedFilters() {
 						/>
 					</div>
 					<div className="flex flex-wrap gap-2 md:col-span-2">
-						{form.canEdit ? <Button size="sm" onClick={save} disabled={saving}><Trans>Save</Trans></Button> : null}
+						{form.canEdit ? (
+							<Button size="sm" onClick={save} disabled={saving}>
+								<Trans>Save</Trans>
+							</Button>
+						) : null}
 						<Button variant="outline" size="sm" onClick={() => applyExpression(form.expression)}>
-							<PlayIcon className="me-2 h-4 w-4" /><Trans>Apply in Explorer</Trans>
+							<PlayIcon className="me-2 h-4 w-4" />
+							<Trans>Apply in Explorer</Trans>
 						</Button>
-						<Button variant="ghost" size="sm" onClick={() => setShowForm(false)}><Trans>Close</Trans></Button>
+						<Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>
+							<Trans>Close</Trans>
+						</Button>
 					</div>
 				</div>
 			) : null}
 
-			{error ? <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div> : null}
+			{error ? (
+				<div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</div>
+			) : null}
 
 			<div className="overflow-hidden rounded-md border border-border bg-card">
 				<PagedVTable
@@ -371,7 +403,10 @@ export default memo(function FlowSavedFilters() {
 						pageSize,
 						totalCount: total,
 						onPageChange: setPage,
-						onPageSizeChange: (value) => { setPage(0); setPageSize(value) },
+						onPageSizeChange: (value) => {
+							setPage(0)
+							setPageSize(value)
+						},
 					}}
 					serverFiltering={serverFiltering}
 					serverSorting={serverSorting}

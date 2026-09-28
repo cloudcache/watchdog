@@ -15,7 +15,9 @@ export function KeyValueEditor({ value, onChange, disabled, keyLabel, valueLabel
 	const rows = Object.entries(value)
 
 	const updateRow = (index: number, nextKey: string, nextValue: string) => {
-		const nextRows = rows.map(([key, item], currentIndex) => (currentIndex === index ? [nextKey, nextValue] : [key, item]))
+		const nextRows = rows.map(([key, item], currentIndex) =>
+			currentIndex === index ? [nextKey, nextValue] : [key, item]
+		)
 		onChange(Object.fromEntries(nextRows.filter(([key]) => key.trim()).map(([key, item]) => [key.trim(), item])))
 	}
 

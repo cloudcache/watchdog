@@ -19,6 +19,14 @@ export function formatBitsPerSecond(value?: number | null, base = 1000) {
 	return `${sign}${current.toFixed(2)} ${units[unitIndex]}`
 }
 
+export function formatGigabitsPerSecond(value?: number | null, base = 1000) {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return "—"
+	}
+	const unit = base === 1024 ? "Gibps" : "Gbps"
+	return `${(value / base ** 3).toFixed(2)} ${unit}`
+}
+
 export function formatMetricValue(value?: number | null, unit?: string) {
 	if (unit === "bps" || unit === "bits_per_second") {
 		return formatBitsPerSecond(value)

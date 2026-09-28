@@ -13,6 +13,11 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#. placeholder {0}: records.length
+#: src/components/ui/paged-vtable.tsx
+msgid "{0, plural, one {# item on this page} other {# items on this page}}"
+msgstr "{0, plural, one {# item on this page} other {# items on this page}}"
+
 #. placeholder {0}: formatDuration(plan.step_seconds)
 #: src/components/routes/traffic-matrix.tsx
 msgid "{0} display step"
@@ -123,12 +128,6 @@ msgstr "{0} VPN / {1} overseas · unknown Geo excluded {2}"
 msgid "{0}% complete"
 msgstr "{0}% complete"
 
-#. placeholder {0}: state.workers.length
-#. placeholder {1}: installedWorkerIDs.size
-#: src/components/routes/flow-activation-guide.tsx
-msgid "{activeWorkerCount}/{0} active · {1} installed the latest version"
-msgstr "{activeWorkerCount}/{0} active · {1} installed the latest version"
-
 #: src/lib/utils.ts
 msgid "{count, plural, one {{countString} day} other {{countString} days}}"
 msgstr "{count, plural, one {{countString} day} other {{countString} days}}"
@@ -145,6 +144,10 @@ msgstr "{count, plural, one {{countString} minute} few {{countString} minutes} m
 msgid "{selectedPortCount} selected"
 msgstr "{selectedPortCount} selected"
 
+#: src/components/ui/paged-vtable.tsx
+msgid "{size} per page"
+msgstr "{size} per page"
+
 #: src/components/routes/flow-reports.tsx
 msgid "{title} · inbound"
 msgstr "{title} · inbound"
@@ -152,6 +155,10 @@ msgstr "{title} · inbound"
 #: src/components/routes/flow-reports.tsx
 msgid "{title} · outbound"
 msgstr "{title} · outbound"
+
+#: src/components/ui/paged-vtable.tsx
+msgid "{totalCount, plural, one {# item} other {# items}}"
+msgstr "{totalCount, plural, one {# item} other {# items}}"
 
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "+ Create customer"
@@ -243,6 +250,10 @@ msgstr "Account"
 msgid "Accounts"
 msgstr "Accounts"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "ACK"
+msgstr "ACK"
+
 #: src/components/routes/agents.tsx
 msgid "ACK / desired"
 msgstr "ACK / desired"
@@ -279,10 +290,6 @@ msgstr "Actions"
 msgid "Activate"
 msgstr "Activate"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Activate a WADS snapshot first."
-msgstr "Activate a WADS snapshot first."
-
 #: src/components/routes/address-imports.tsx
 msgid "Activate this immutable generation for its source slot?"
 msgstr "Activate this immutable generation for its source slot?"
@@ -306,6 +313,10 @@ msgstr "Activation"
 #: src/components/routes/users.tsx
 msgid "Active"
 msgstr "Active"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Active Flow workers"
+msgstr "Active Flow workers"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Active ports"
@@ -340,10 +351,6 @@ msgstr "Add at least one data source (metric)"
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Add customer boundary"
 msgstr "Add customer boundary"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Add customer source ranges for at least one Flow device first."
-msgstr "Add customer source ranges for at least one Flow device first."
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Add dashboard panel"
@@ -407,10 +414,6 @@ msgstr "Add User"
 msgid "added addresses"
 msgstr "added addresses"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Address checksum"
-msgstr "Address checksum"
-
 #: src/components/routes/address-taxonomy.tsx
 msgid "Address families"
 msgstr "Address families"
@@ -438,6 +441,7 @@ msgstr "Address replacement applied"
 
 #: src/components/routes/address-taxonomy.tsx
 #: src/components/routes/address-taxonomy.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Address set"
 msgstr "Address set"
 
@@ -453,17 +457,9 @@ msgstr "Address Sets"
 msgid "Address side"
 msgstr "Address side"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Address snapshot"
-msgstr "Address snapshot"
-
 #: src/components/routes/flow-attribution.tsx
 msgid "Address snapshot lifecycle"
 msgstr "Address snapshot lifecycle"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Address version"
-msgstr "Address version"
 
 #: src/components/routes/settings/general.tsx
 msgid "Adjust display options for charts."
@@ -631,6 +627,7 @@ msgstr "Alias"
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
+#: src/components/routes/flow-worker-deployments.tsx
 #: src/components/routes/network-devices.tsx
 msgid "All"
 msgstr "All"
@@ -786,10 +783,6 @@ msgstr "Apply this address replacement atomically?"
 msgid "Apply to {0}"
 msgstr "Apply to {0}"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Applying lifecycle change…"
-msgstr "Applying lifecycle change…"
-
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Approval"
@@ -801,11 +794,6 @@ msgstr "Approval"
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Approve"
 msgstr "Approve"
-
-#: src/components/routes/flow-activation-guide.tsx
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Approve and activate"
-msgstr "Approve and activate"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
@@ -822,6 +810,7 @@ msgstr "Archive retention (days, 0 = unlimited)"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "ASN"
 msgstr "ASN"
 
@@ -861,10 +850,6 @@ msgstr "At least one required capability is needed."
 #: src/components/routes/address-revisions.tsx
 msgid "Atomic Prefix Replacement"
 msgstr "Atomic Prefix Replacement"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Attempted"
-msgstr "Attempted"
 
 #: src/components/routes/operation-jobs.tsx
 msgid "Attempts"
@@ -967,6 +952,11 @@ msgstr "Background Jobs"
 msgid "Bandwidth"
 msgstr "Bandwidth"
 
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/flow-reports.tsx
+msgid "Bandwidth (Gbps)"
+msgstr "Bandwidth (Gbps)"
+
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/address-prefixes.tsx
 msgid "Base"
@@ -1054,14 +1044,6 @@ msgstr "Billing ports and metrics"
 msgid "Bits (Kbps, Mbps, Gbps)"
 msgstr "Bits (Kbps, Mbps, Gbps)"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Blocked"
-msgstr "Blocked"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Boot ID"
-msgstr "Boot ID"
-
 #: src/components/routes/flow-storage-lifecycle.tsx
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Bootstrap date"
@@ -1085,21 +1067,9 @@ msgstr "Browse"
 msgid "Buckets"
 msgstr "Buckets"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Build a WADS snapshot first."
-msgstr "Build a WADS snapshot first."
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Build address snapshot"
-msgstr "Build address snapshot"
-
 #: src/components/routes/flow-attribution.tsx
 msgid "Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries when publishing Flow."
 msgstr "Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries when publishing Flow."
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Build WADS snapshot"
-msgstr "Build WADS snapshot"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Built-in"
@@ -1119,6 +1089,7 @@ msgstr "Built-in roles cannot be deleted."
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Business"
 msgstr "Business"
 
@@ -1288,6 +1259,7 @@ msgstr "Cities"
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "City"
 msgstr "City"
 
@@ -1312,17 +1284,13 @@ msgstr "Class A–Z"
 msgid "Class ascending"
 msgstr "Class ascending"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Classification checksum"
-msgstr "Classification checksum"
+#: src/components/routes/flow-reports.tsx
+msgid "Classification"
+msgstr "Classification"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Classification residuals"
 msgstr "Classification residuals"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Classification version"
-msgstr "Classification version"
 
 #. placeholder {0}: formatShare(inboundClassified, inboundTotal)
 #. placeholder {1}: formatShare(outboundClassified, outboundTotal)
@@ -1366,7 +1334,6 @@ msgstr "ClickHouse block rows"
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/billing-account-detail.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/ui/dialog.tsx
 msgid "Close"
@@ -1399,26 +1366,6 @@ msgid "Combined"
 msgstr "Combined"
 
 #: src/components/routes/flow-reports.tsx
-msgid "Combined · 95th"
-msgstr "Combined · 95th"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · average"
-msgstr "Combined · average"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · current"
-msgstr "Combined · current"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · peak"
-msgstr "Combined · peak"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · total"
-msgstr "Combined · total"
-
-#: src/components/routes/flow-reports.tsx
 msgid "Comma-separated labels"
 msgstr "Comma-separated labels"
 
@@ -1444,18 +1391,6 @@ msgstr "Community Override"
 #: src/components/routes/billing-account-detail.tsx
 msgid "Comparison"
 msgstr "Comparison"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Compile the address library, activate it, publish the classification version, then start a worker."
-msgstr "Compile the address library, activate it, publish the classification version, then start a worker."
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Compiled customer boundaries"
-msgstr "Compiled customer boundaries"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Complete"
-msgstr "Complete"
 
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -1483,10 +1418,6 @@ msgstr "Config (JSON object)"
 msgid "Config must be a JSON object."
 msgstr "Config must be a JSON object."
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Configure customer source ranges"
-msgstr "Configure customer source ranges"
-
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Confirm delete"
 msgstr "Confirm delete"
@@ -1505,6 +1436,7 @@ msgid "Connect"
 msgstr "Connect"
 
 #: src/components/routes/address-geo-tree.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Continent"
 msgstr "Continent"
 
@@ -1555,10 +1487,6 @@ msgstr "Copy text"
 msgid "Core (BGP)"
 msgstr "Core (BGP)"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Correct attribution"
-msgstr "Correct attribution"
-
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/export-new.tsx
@@ -1568,7 +1496,6 @@ msgstr "Corrected"
 
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/address-prefixes.tsx
-#: src/components/routes/flow-reports.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/traffic-defaults.tsx
 msgid "Correction"
@@ -1601,6 +1528,7 @@ msgstr "Countries, regions, ASN, ports and protocols with observed-data caveats.
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Country"
@@ -1714,7 +1642,6 @@ msgstr "Create VPN rule"
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/export-detail.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Created"
@@ -1746,7 +1673,16 @@ msgstr "Cross-border"
 msgid "Currency"
 msgstr "Currency"
 
+#: src/components/routes/flow-reports.tsx
+msgid "Current bandwidth, P95, classification and business labels. Select a row to load records below."
+msgstr "Current bandwidth, P95, classification and business labels. Select a row to load records below."
+
+#: src/components/routes/flow-reports.tsx
+msgid "Current destination bandwidth. Select a row to load records below."
+msgstr "Current destination bandwidth. Select a row to load records below."
+
 #: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/lib/utils.ts
 msgid "Custom"
 msgstr "Custom"
@@ -1773,22 +1709,13 @@ msgstr "Customer"
 msgid "Customer name"
 msgstr "Customer name"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Customer ranges determine direction and customer attribution. Geography and operator are resolved independently from the active shared address snapshot."
-msgstr "Customer ranges determine direction and customer attribution. Geography and operator are resolved independently from the active shared address snapshot."
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a precise version after configuring each Flow device."
-msgstr "Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a precise version after configuring each Flow device."
-
 #: src/components/routes/flow-customer-boundaries.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 msgid "Customer source ranges"
 msgstr "Customer source ranges"
 
 #: src/components/routes/flow-customer-boundaries.tsx
-msgid "Customer source ranges saved"
-msgstr "Customer source ranges saved"
+msgid "Customer source ranges saved."
+msgstr "Customer source ranges saved."
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
@@ -2032,6 +1959,27 @@ msgstr "Delta"
 msgid "Denied"
 msgstr "Denied"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment is valid and ready to publish."
+msgstr "Deployment is valid and ready to publish."
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment job"
+msgstr "Deployment job"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment job failed"
+msgstr "Deployment job failed"
+
+#. placeholder {0}: response.job.id
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment job queued: {0}"
+msgstr "Deployment job queued: {0}"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment validation failed"
+msgstr "Deployment validation failed"
+
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-taxonomy.tsx
@@ -2055,14 +2003,24 @@ msgid "Desired / acknowledged"
 msgstr "Desired / acknowledged"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Desired and installed state"
-msgstr "Desired and installed state"
+msgid "Desired deployment created; waiting for worker installation acknowledgements."
+msgstr "Desired deployment created; waiting for worker installation acknowledgements."
+
+#: src/components/routes/flow-reports.tsx
+msgid "Destination addresses"
+msgstr "Destination addresses"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Destination ASN"
 msgstr "Destination ASN"
 
+#: src/components/routes/flow-reports.tsx
+msgid "Destination bandwidth with record drill-down."
+msgstr "Destination bandwidth with record drill-down."
+
 #: src/components/flow/flow-record-table.tsx
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Destination IP"
 msgstr "Destination IP"
 
@@ -2125,14 +2083,11 @@ msgstr "Device ID"
 msgid "Device SNMP"
 msgstr "Device SNMP"
 
+#: src/components/routes/flow-worker-deployments.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/user-form.tsx
 msgid "Devices"
 msgstr "Devices"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Devices included in this deployment"
-msgstr "Devices included in this deployment"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Difference threshold (%)"
@@ -2421,24 +2376,15 @@ msgstr "Effect"
 
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-publications.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/flow-vpn-rules.tsx
+#: src/components/routes/flow-worker-deployments.tsx
 msgid "Effective from"
 msgstr "Effective from"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Effective port"
 msgstr "Effective port"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Effective time"
-msgstr "Effective time"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Effective time must be a minute boundary"
-msgstr "Effective time must be a minute boundary"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Either side"
@@ -2498,10 +2444,6 @@ msgstr "Enroll"
 msgid "Enroll Agent"
 msgstr "Enroll Agent"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Enroll and start worker"
-msgstr "Enroll and start worker"
-
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Enter at least one customer source range"
 msgstr "Enter at least one customer source range"
@@ -2521,7 +2463,7 @@ msgstr "Enter valid billing and reconciliation values"
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/export-detail.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
+#: src/components/routes/flow-worker-deployments.tsx
 msgid "Error"
 msgstr "Error"
 
@@ -2545,14 +2487,21 @@ msgstr "Estimated bit rate"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Estimated bytes"
 msgstr "Estimated bytes"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Estimated L3 bit rate"
+msgstr "Estimated L3 bit rate"
+
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Estimated packet rate"
 msgstr "Estimated packet rate"
 
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Estimated packets"
 msgstr "Estimated packets"
 
@@ -2712,10 +2661,6 @@ msgstr "External evidence is invalid"
 #: src/components/routes/settings/general.tsx
 msgid "Fahrenheit (°F)"
 msgstr "Fahrenheit (°F)"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Failed"
-msgstr "Failed"
 
 #: src/components/routes/address-imports.tsx
 msgid "Failed to activate"
@@ -2933,26 +2878,14 @@ msgstr "Failed to load export"
 msgid "Failed to load exports"
 msgstr "Failed to load exports"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Failed to load Flow activation status"
-msgstr "Failed to load Flow activation status"
-
 #: src/components/routes/flow-customer-boundaries.tsx
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Failed to load Flow customer boundaries"
 msgstr "Failed to load Flow customer boundaries"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Failed to load Flow deployments"
-msgstr "Failed to load Flow deployments"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to load Flow enrichment publications"
-msgstr "Failed to load Flow enrichment publications"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to load Flow enrichment settings"
-msgstr "Failed to load Flow enrichment settings"
+msgid "Failed to load Flow deployment state"
+msgstr "Failed to load Flow deployment state"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Failed to load Flow records"
@@ -3141,10 +3074,6 @@ msgstr "Failed to load VPN rule-set publications"
 msgid "Failed to load VPN rules"
 msgstr "Failed to load VPN rules"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to load worker acknowledgements"
-msgstr "Failed to load worker acknowledgements"
-
 #: src/components/routes/dashboard-form.tsx
 msgid "Failed to preview dashboard"
 msgstr "Failed to preview dashboard"
@@ -3156,14 +3085,6 @@ msgstr "Failed to publish agent plan"
 #: src/components/routes/flow-worker-deployments.tsx
 msgid "Failed to publish Flow deployment"
 msgstr "Failed to publish Flow deployment"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to publish Flow enrichment version"
-msgstr "Failed to publish Flow enrichment version"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to publish unclassified Flow ingestion version"
-msgstr "Failed to publish unclassified Flow ingestion version"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Failed to publish VPN rule set"
@@ -3349,40 +3270,19 @@ msgstr "Findings"
 msgid "Flow"
 msgstr "Flow"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Flow activation"
-msgstr "Flow activation"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Flow Classification Publication"
-msgstr "Flow Classification Publication"
-
 #: src/components/navbar.tsx
 #: src/components/routes/flow-attribution.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Flow Data Attribution"
 msgstr "Flow Data Attribution"
 
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Flow deployment validation failed"
-msgstr "Flow deployment validation failed"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Flow deployment was queued. Installation completes only after each worker acknowledges it."
-msgstr "Flow deployment was queued. Installation completes only after each worker acknowledges it."
-
 #: src/components/flow/flow-record-table.tsx
 msgid "Flow detail export queued"
 msgstr "Flow detail export queued"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Flow devices with customer source ranges"
-msgstr "Flow devices with customer source ranges"
-
-#. placeholder {0}: published.classification_version
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Flow enrichment version {0} published"
-msgstr "Flow enrichment version {0} published"
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Flow devices"
+msgstr "Flow devices"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Flow export queued"
@@ -3419,20 +3319,9 @@ msgstr "Flow storage lifecycle"
 msgid "Flow storage lifecycle action failed"
 msgstr "Flow storage lifecycle action failed"
 
-#. placeholder {0}: state.publication.classification_version
-#. placeholder {1}: state.publication.dimension_version
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Flow v{0} · WADS v{1}"
-msgstr "Flow v{0} · WADS v{1}"
-
-#. placeholder {0}: state.publication.classification_version
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Flow v{0} uses an older address snapshot."
-msgstr "Flow v{0} uses an older address snapshot."
-
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Flow worker deployment"
-msgstr "Flow worker deployment"
+msgid "Flow worker deployments"
+msgstr "Flow worker deployments"
 
 #: src/components/routes/agents.tsx
 msgid "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
@@ -3578,6 +3467,10 @@ msgstr "Health"
 msgid "Healthy"
 msgstr "Healthy"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Heatmap"
+msgstr "Heatmap"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Hide advanced filters"
 msgstr "Hide advanced filters"
@@ -3691,8 +3584,11 @@ msgstr "In + out"
 msgid "Inactive"
 msgstr "Inactive"
 
-#: src/components/flow/flow-record-table.tsx
-#: src/components/flow/flow-record-table.tsx
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.direction.inbound"
+msgstr "Inbound"
+
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -3720,10 +3616,6 @@ msgstr "Inbound and outbound from the local-network perspective."
 #: src/components/routes/traffic-matrix.tsx
 msgid "Inbound and outbound traffic from the published overseas rollup."
 msgstr "Inbound and outbound traffic from the published overseas rollup."
-
-#: src/components/routes/flow-reports.tsx
-msgid "Inbound current / total"
-msgstr "Inbound current / total"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include all"
@@ -3784,7 +3676,6 @@ msgstr "Install the matching process, save the token and public key, then start 
 msgid "Install Watchdog"
 msgstr "Install Watchdog"
 
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-worker-deployments.tsx
 msgid "Installed"
 msgstr "Installed"
@@ -3806,10 +3697,6 @@ msgstr "Inventory"
 msgid "Inventory class"
 msgstr "Inventory class"
 
-#: src/components/routes/flow-reports.tsx
-msgid "IP address"
-msgstr "IP address"
-
 #: src/components/routes/address-sets.tsx
 msgid "IP families"
 msgstr "IP families"
@@ -3817,6 +3704,10 @@ msgstr "IP families"
 #: src/components/routes/address-sets.tsx
 msgid "IP families must be 4 or 6"
 msgstr "IP families must be 4 or 6"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "IP protocol"
+msgstr "IP protocol"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "IP protocols"
@@ -3838,6 +3729,10 @@ msgstr "IPv6 addresses"
 msgid "IPv6 target prefix"
 msgstr "IPv6 target prefix"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "ISP"
+msgstr "ISP"
+
 #: src/components/routes/address-taxonomy.tsx
 msgid "ISP Operators"
 msgstr "ISP Operators"
@@ -3846,12 +3741,6 @@ msgstr "ISP Operators"
 #: src/components/routes/billing-account-detail.tsx
 msgid "Issues"
 msgstr "Issues"
-
-#. placeholder {0}: state.buildJob.id
-#. placeholder {1}: state.buildJob.status
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Job {0} · {1}"
-msgstr "Job {0} · {1}"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Kafka maximum wait (ms)"
@@ -3931,9 +3820,61 @@ msgstr "Language"
 msgid "Last"
 msgstr "Last"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 12 hours"
+msgstr "Last 12 hours"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 15 minutes"
+msgstr "Last 15 minutes"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 2 days"
+msgstr "Last 2 days"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 24 hours"
+msgstr "Last 24 hours"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 3 hours"
+msgstr "Last 3 hours"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 3 months"
+msgstr "Last 3 months"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 30 days"
+msgstr "Last 30 days"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 30 minutes"
+msgstr "Last 30 minutes"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 5 minutes"
+msgstr "Last 5 minutes"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 6 hours"
+msgstr "Last 6 hours"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 6 months"
+msgstr "Last 6 months"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 7 days"
+msgstr "Last 7 days"
+
 #: src/components/routes/agents.tsx
 msgid "Last Error"
 msgstr "Last Error"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last hour"
+msgstr "Last hour"
 
 #: src/components/routes/agents.tsx
 msgid "Last Run"
@@ -3951,6 +3892,10 @@ msgstr "Last Seen"
 #: src/components/routes/agents.tsx
 msgid "Last Success"
 msgstr "Last Success"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last year"
+msgstr "Last year"
 
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Late arrival"
@@ -4003,6 +3948,7 @@ msgstr "Light"
 
 #: src/components/routes/address-library.tsx
 #: src/components/routes/address-lines.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Lines"
 msgstr "Lines"
 
@@ -4023,6 +3969,10 @@ msgstr "Load more"
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Loading chart data..."
 msgstr "Loading chart data..."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Loading customer source ranges..."
+msgstr "Loading customer source ranges..."
 
 #: src/components/routes/flow-reports.tsx
 msgid "Loading devices…"
@@ -4072,6 +4022,10 @@ msgstr "Local login identity, status and operation roles."
 #: src/components/routes/flow-vpn.tsx
 msgid "Local port"
 msgstr "Local port"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Local prefix"
+msgstr "Local prefix"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Local side"
@@ -4630,6 +4584,10 @@ msgstr "No discovered ports."
 msgid "No down ports."
 msgstr "No down ports."
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "No enabled Flow devices."
+msgstr "No enabled Flow devices."
+
 #: src/components/routes/flow-reports.tsx
 msgid "No endpoint traffic"
 msgstr "No endpoint traffic"
@@ -4646,10 +4604,6 @@ msgstr "No exports found."
 msgid "No findings"
 msgstr "No findings"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "No Flow enrichment publications found."
-msgstr "No Flow enrichment publications found."
-
 #: src/components/routes/traffic-matrix.tsx
 msgid "No Flow points found"
 msgstr "No Flow points found"
@@ -4662,13 +4616,9 @@ msgstr "No Flow rows found"
 msgid "No Flow storage policies found."
 msgstr "No Flow storage policies found."
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "No Flow worker is enrolled."
-msgstr "No Flow worker is enrolled."
-
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "No Flow-enabled devices."
-msgstr "No Flow-enabled devices."
+msgid "No Flow worker deployments."
+msgstr "No Flow worker deployments."
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "No geography points found"
@@ -4768,6 +4718,10 @@ msgstr "No prefixes found."
 msgid "No prefixes found. Activate an import first."
 msgstr "No prefixes found. Activate an import first."
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "No recommended worker"
+msgstr "No recommended worker"
+
 #: src/components/routes/billing-account-detail.tsx
 msgid "No reconciliation issues."
 msgstr "No reconciliation issues."
@@ -4853,10 +4807,6 @@ msgstr "No traffic in the selected window."
 msgid "No users found."
 msgstr "No users found."
 
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "No v2 Flow deployments have been published."
-msgstr "No v2 Flow deployments have been published."
-
 #: src/components/routes/network-device.tsx
 msgid "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
 msgstr "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
@@ -4873,14 +4823,6 @@ msgstr "No VPN rule drafts found."
 msgid "No VPN rule-set publications found."
 msgstr "No VPN rule-set publications found."
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "No WADS snapshot has been built."
-msgstr "No WADS snapshot has been built."
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "No worker acknowledgements found."
-msgstr "No worker acknowledgements found."
-
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "No worker has reported this version."
 msgstr "No worker has reported this version."
@@ -4889,6 +4831,7 @@ msgstr "No worker has reported this version."
 msgid "Non-FRU only"
 msgstr "Non-FRU only"
 
+#: src/components/routes/flow-worker-deployments.tsx
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -4922,6 +4865,10 @@ msgstr "Nothing selected: all ports are aggregated."
 #: src/components/routes/address-prefixes.tsx
 msgid "Nothing to merge — no adjacent prefixes share the same attribution."
 msgstr "Nothing to merge — no adjacent prefixes share the same attribution."
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Observation interface"
+msgstr "Observation interface"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Observed local hosts"
@@ -4980,6 +4927,14 @@ msgstr "On-net · local city"
 msgid "On-net by province"
 msgstr "On-net by province"
 
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province (province total)"
+msgstr "On-net in-province (province total)"
+
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province by city"
+msgstr "On-net in-province by city"
+
 #: src/components/routes/user-form.tsx
 msgid "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
 msgstr "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
@@ -4987,10 +4942,6 @@ msgstr "Once selected, metrics become an allow-list. No selection keeps all metr
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "One CIDR per line, for example 192.0.2.0/24"
 msgstr "One CIDR per line, for example 192.0.2.0/24"
-
-#: src/components/routes/flow-reports.tsx
-msgid "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
-msgstr "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
 
 #: src/components/routes/agents.tsx
 msgid "One-time enrollment token"
@@ -5049,10 +5000,6 @@ msgstr "Operating System"
 msgid "Operation"
 msgstr "Operation"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Operation failed"
-msgstr "Operation failed"
-
 #: src/components/routes/export-detail.tsx
 msgid "Operation job"
 msgstr "Operation job"
@@ -5061,6 +5008,12 @@ msgstr "Operation job"
 #: src/components/routes/role-form.tsx
 msgid "Operations"
 msgstr "Operations"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgctxt "User role"
+msgid "Operator"
+msgstr "Operator"
 
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/address-geo-tree.tsx
@@ -5076,12 +5029,6 @@ msgstr "Operations"
 #: src/components/routes/address-taxonomy.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
-msgid "Operator"
-msgstr "Operator"
-
-#: src/components/routes/user-form.tsx
-#: src/components/routes/users.tsx
-msgctxt "User role"
 msgid "Operator"
 msgstr "Operator"
 
@@ -5113,6 +5060,11 @@ msgstr "Optional panel title"
 msgid "OS"
 msgstr "OS"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.value.other"
+msgstr "Other"
+
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -5124,8 +5076,11 @@ msgstr "Other"
 msgid "Out"
 msgstr "Out"
 
-#: src/components/flow/flow-record-table.tsx
-#: src/components/flow/flow-record-table.tsx
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.direction.outbound"
+msgstr "Outbound"
+
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -5145,10 +5100,6 @@ msgstr "Out"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Outbound"
 msgstr "Outbound"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Outbound current / total"
-msgstr "Outbound current / total"
 
 #: src/components/routes/address-math.tsx
 msgid "Overlap details"
@@ -5202,6 +5153,10 @@ msgstr "Owned by me"
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Owner"
 msgstr "Owner"
+
+#: src/components/routes/flow-reports.tsx
+msgid "P95 (Gbps)"
+msgstr "P95 (Gbps)"
 
 #: src/components/command-palette.tsx
 msgid "Page"
@@ -5333,7 +5288,6 @@ msgstr "Peer descending"
 msgid "pending"
 msgstr "pending"
 
-#: src/components/routes/flow-activation-guide.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/target-form.tsx
@@ -5529,6 +5483,7 @@ msgstr "Problems"
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Protocol"
 msgstr "Protocol"
 
@@ -5538,6 +5493,7 @@ msgstr "Provider"
 
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Province"
 msgstr "Province"
@@ -5554,10 +5510,6 @@ msgstr "Province catalog is unavailable"
 #: src/components/routes/address-base-data.tsx
 msgid "Provinces"
 msgstr "Provinces"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Publication"
-msgstr "Publication"
 
 #: src/components/routes/address-library.tsx
 msgid "Publications"
@@ -5580,18 +5532,6 @@ msgstr "Publish deployment"
 msgid "Publish failed"
 msgstr "Publish failed"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Publish Flow classification"
-msgstr "Publish Flow classification"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Publish Flow version"
-msgstr "Publish Flow version"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Publish Flow version pair"
-msgstr "Publish Flow version pair"
-
 #: src/components/routes/agent-plans.tsx
 msgid "Publish immutable plan"
 msgstr "Publish immutable plan"
@@ -5605,13 +5545,13 @@ msgstr "Publish job queued"
 msgid "Publish job queued: {0}"
 msgstr "Publish job queued: {0}"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Publish the active shared address snapshot with the compiled customer boundaries."
-msgstr "Publish the active shared address snapshot with the compiled customer boundaries."
-
 #: src/components/routes/address-publications.tsx
 msgid "Publish this immutable address dimension snapshot?"
 msgstr "Publish this immutable address dimension snapshot?"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Publish this immutable deployment to the selected Flow workers?"
+msgstr "Publish this immutable deployment to the selected Flow workers?"
 
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Published"
@@ -5620,10 +5560,6 @@ msgstr "Published"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Published policy revisions drive archive eligibility. Physical deletion remains locked."
 msgstr "Published policy revisions drive archive eligibility. Physical deletion remains locked."
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Publishing is immutable. Workers pull it asynchronously and keep the last-known-good pair for offline restart."
-msgstr "Publishing is immutable. Workers pull it asynchronously and keep the last-known-good pair for offline restart."
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -5681,12 +5617,6 @@ msgstr "Raw retention"
 msgid "Raw retention (days)"
 msgstr "Raw retention (days)"
 
-#. placeholder {0}: validation.address_version
-#. placeholder {1}: validation.artifact_count
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Ready: address catalog version {0}, {1} immutable artifacts."
-msgstr "Ready: address catalog version {0}, {1} immutable artifacts."
-
 #: src/components/routes/aggregate-charts.tsx
 msgid "Realtime"
 msgstr "Realtime"
@@ -5723,6 +5653,10 @@ msgstr "Reassigned {0} prefixes"
 msgid "Receive buffer (bytes)"
 msgstr "Receive buffer (bytes)"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Received Flow records"
+msgstr "Received Flow records"
+
 #: src/components/routes/dashboards.tsx
 msgid "Recently created"
 msgstr "Recently created"
@@ -5735,10 +5669,6 @@ msgstr "Recently updated"
 #: src/components/routes/agent-plans.tsx
 msgid "Recipes per cycle"
 msgstr "Recipes per cycle"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "recommended"
-msgstr "recommended"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reconcile"
@@ -5785,7 +5715,6 @@ msgstr "Reference"
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/flow-customer-boundaries.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-vpn-rules.tsx
@@ -5807,12 +5736,9 @@ msgstr "Reference"
 msgid "Refresh"
 msgstr "Refresh"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Refresh status"
-msgstr "Refresh status"
-
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Region"
 msgstr "Region"
@@ -5856,12 +5782,17 @@ msgstr "Remote IP"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Remote port"
 msgstr "Remote port"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Remote ports"
 msgstr "Remote ports"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Remote prefix"
+msgstr "Remote prefix"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Remote prefix IDs"
@@ -5916,7 +5847,6 @@ msgstr "Reset"
 msgid "Reset Password"
 msgstr "Reset Password"
 
-#: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Residual · ↓ / ↑"
 msgstr "Residual · ↓ / ↑"
@@ -5976,7 +5906,9 @@ msgid "Retries"
 msgstr "Retries"
 
 #: src/components/error-boundary.tsx
+#: src/components/page-loading.tsx
 #: src/components/routes/export-detail.tsx
+#: src/main.tsx
 #: src/main.tsx
 msgid "Retry"
 msgstr "Retry"
@@ -6103,10 +6035,6 @@ msgstr "Run history"
 msgid "Run this command on the Watchdog host, then paste the one-time token when prompted. The token is not echoed or stored in shell history."
 msgstr "Run this command on the Watchdog host, then paste the one-time token when prompted. The token is not echoed or stored in shell history."
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Running"
-msgstr "Running"
-
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -6123,8 +6051,21 @@ msgid "Sampled bit rate"
 msgstr "Sampled bit rate"
 
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Sampled bytes"
 msgstr "Sampled bytes"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sampled L3 bit rate"
+msgstr "Sampled L3 bit rate"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sampled packet rate"
+msgstr "Sampled packet rate"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sampled packets"
+msgstr "Sampled packets"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "samples"
@@ -6133,6 +6074,10 @@ msgstr "samples"
 #: src/components/flow/flow-record-table.tsx
 msgid "Sampling rate"
 msgstr "Sampling rate"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sankey"
+msgstr "Sankey"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sat"
@@ -6380,10 +6325,6 @@ msgstr "Search ports, addresses..."
 msgid "Search ports..."
 msgstr "Search ports..."
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Search publication, snapshot, checksum, or signing key..."
-msgstr "Search publication, snapshot, checksum, or signing key..."
-
 #: src/components/routes/billing-account-detail.tsx
 msgid "Search reconciliations..."
 msgstr "Search reconciliations..."
@@ -6427,10 +6368,6 @@ msgstr "Search versions or checksums..."
 #: src/components/routes/network-device.tsx
 msgid "Search VLANs..."
 msgstr "Search VLANs..."
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Search worker acknowledgements..."
-msgstr "Search worker acknowledgements..."
 
 #: src/components/address-reference-picker.tsx
 msgid "Searches the server and stores the stable reference ID."
@@ -6517,6 +6454,10 @@ msgstr "Select an MMDB or IPDB file"
 msgid "Select an SNMP profile"
 msgstr "Select an SNMP profile"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Select at least one active Flow worker and one Flow device"
+msgstr "Select at least one active Flow worker and one Flow device"
+
 #: src/components/routes/billing-account-form.tsx
 msgid "Select at least one billing port."
 msgstr "Select at least one billing port."
@@ -6529,10 +6470,6 @@ msgstr "Select at least one metric"
 #: src/components/routes/network-device.tsx
 msgid "Select at least one port"
 msgstr "Select at least one port"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Select devices and workers explicitly. Existing device bindings are recommendations only; every active worker remains selectable."
-msgstr "Select devices and workers explicitly. Existing device bindings are recommendations only; every active worker remains selectable."
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select Existing Prefixes"
@@ -6735,7 +6672,6 @@ msgid "Signed amount"
 msgstr "Signed amount"
 
 #: src/components/routes/agent-plans.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 msgid "Signing key"
 msgstr "Signing key"
 
@@ -6793,10 +6729,6 @@ msgstr "SNMP Profiles"
 msgid "SNMP Version"
 msgstr "SNMP Version"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Software version"
-msgstr "Software version"
-
 #: src/components/error-boundary.tsx
 msgid "Something went wrong"
 msgstr "Something went wrong"
@@ -6840,9 +6772,17 @@ msgstr "Sort order must be an integer"
 msgid "Source"
 msgstr "Source"
 
+#: src/components/routes/flow-reports.tsx
+msgid "Source addresses"
+msgstr "Source addresses"
+
 #: src/components/flow/flow-record-table.tsx
 msgid "Source ASN"
 msgstr "Source ASN"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Source bandwidth, P95, traffic classification and business labels."
+msgstr "Source bandwidth, P95, traffic classification and business labels."
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Source filter"
@@ -6853,6 +6793,8 @@ msgid "Source generation"
 msgstr "Source generation"
 
 #: src/components/flow/flow-record-table.tsx
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Source IP"
 msgstr "Source IP"
 
@@ -6891,30 +6833,25 @@ msgstr "Speed descending"
 msgid "Split side"
 msgstr "Split side"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Stacked area"
+msgstr "Stacked area"
+
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Start"
 msgstr "Start"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Start Flow worker"
-msgstr "Start Flow worker"
-
 #: src/components/routes/address-imports.tsx
 msgid "Start Import"
 msgstr "Start Import"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Start unclassified Flow ingestion"
-msgstr "Start unclassified Flow ingestion"
 
 #: src/components/routes/agent-runs.tsx
 msgid "Started"
 msgstr "Started"
 
 #: src/components/routes/core.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/network-device.tsx
 msgid "State"
 msgstr "State"
@@ -7035,6 +6972,10 @@ msgstr "System Information"
 msgid "System Name"
 msgstr "System Name"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Table only"
+msgstr "Table only"
+
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -7068,10 +7009,6 @@ msgstr "Target points"
 msgid "Target summary"
 msgstr "Target summary"
 
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Target workers"
-msgstr "Target workers"
-
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #: src/components/routes/watchdog-overview.tsx
@@ -7083,10 +7020,6 @@ msgstr "Targets"
 msgid "Temperature unit"
 msgstr "Temperature unit"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "The active approved address snapshot and this profile are signed and published as one worker version."
-msgstr "The active approved address snapshot and this profile are signed and published as one worker version."
-
 #: src/components/routes/billing-account-form.tsx
 msgid "The billing floor is contract bandwidth multiplied by this percentage."
 msgstr "The billing floor is contract bandwidth multiplied by this percentage."
@@ -7095,13 +7028,13 @@ msgstr "The billing floor is contract bandwidth multiplied by this percentage."
 msgid "The export record and generated file will be permanently deleted."
 msgstr "The export record and generated file will be permanently deleted."
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "The last build failed."
-msgstr "The last build failed."
-
 #: src/components/routes/agents.tsx
 msgid "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
 msgstr "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
+
+#: src/components/page-loading.tsx
+msgid "The request is taking longer than expected."
+msgstr "The request is taking longer than expected."
 
 #: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
@@ -7199,13 +7132,13 @@ msgstr "Tokens & Fingerprints"
 msgid "Top countries"
 msgstr "Top countries"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Top destination addresses with direction, traffic class and drill-down."
-msgstr "Top destination addresses with direction, traffic class and drill-down."
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top destination IP"
+msgstr "Top destination IP"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Top endpoints"
-msgstr "Top endpoints"
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top local prefix"
+msgstr "Top local prefix"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -7217,13 +7150,18 @@ msgstr "Top N"
 msgid "Top regions"
 msgstr "Top regions"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Top source addresses with direction, traffic class and drill-down."
-msgstr "Top source addresses with direction, traffic class and drill-down."
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top remote prefix"
+msgstr "Top remote prefix"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top source IP"
+msgstr "Top source IP"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Total"
 msgstr "Total"
@@ -7265,12 +7203,20 @@ msgstr "Traffic analysis separated from findings, evidence and probe disposition
 msgid "Traffic by Dimension"
 msgstr "Traffic by Dimension"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Traffic category"
+msgstr "Traffic category"
+
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
 msgstr "Traffic Defaults"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Traffic direction"
+msgstr "Traffic direction"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Traffic direction, category, completeness and current trends."
@@ -7322,6 +7268,11 @@ msgstr "Tue"
 msgid "Type"
 msgstr "Type"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.value.unassigned"
+msgstr "Unassigned"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Unassigned"
 msgstr "Unassigned"
@@ -7343,11 +7294,6 @@ msgstr "Unbound"
 #: src/components/routes/network-device-snmp.tsx
 msgid "unchanged"
 msgstr "unchanged"
-
-#. placeholder {0}: published.classification_version
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Unclassified Flow ingestion version {0} published"
-msgstr "Unclassified Flow ingestion version {0} published"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7381,6 +7327,14 @@ msgstr "Unknown"
 #: src/lib/flow-report-model.ts
 msgid "flow.category.unknown"
 msgstr "Unknown"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination IP"
+msgstr "Unknown by destination IP"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination segment"
+msgstr "Unknown by destination segment"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Unknown geography"
@@ -7463,8 +7417,8 @@ msgid "Use as next input"
 msgstr "Use as next input"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Use recommended"
-msgstr "Use recommended"
+msgid "Use recommendations"
+msgstr "Use recommendations"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7508,18 +7462,29 @@ msgstr "Users"
 msgid "Users & Roles"
 msgstr "Users & Roles"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Validate"
+msgstr "Validate"
+
 #: src/components/routes/address-math.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Validate & Preview"
 msgstr "Validate & Preview"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Validate and preview"
-msgstr "Validate and preview"
+msgid "Validate and publish one signed manifest that atomically combines the active address catalog, policy, and selected device boundaries."
+msgstr "Validate and publish one signed manifest that atomically combines the active address catalog, policy, and selected device boundaries."
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Validate preview"
 msgstr "Validate preview"
+
+#. placeholder {0}: validation.address_version
+#. placeholder {1}: validation.profile_row_version
+#. placeholder {2}: validation.artifact_count
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Validated address version {0}, policy revision {1}, and {2} immutable artifacts."
+msgstr "Validated address version {0}, policy revision {1}, and {2} immutable artifacts."
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7604,10 +7569,6 @@ msgstr "Versions"
 #: src/components/routes/flow-saved-filters.tsx
 msgid "View"
 msgstr "View"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "View ACKs"
-msgstr "View ACKs"
 
 #: src/components/routes/network-device.tsx
 msgid "View all"
@@ -7698,22 +7659,6 @@ msgstr "VPN traffic trend"
 msgid "VPN type distribution"
 msgstr "VPN type distribution"
 
-#. placeholder {0}: state.latestSnapshot.version
-#. placeholder {1}: state.latestSnapshot.approval_state
-#: src/components/routes/flow-activation-guide.tsx
-msgid "WADS v{0} · {1}"
-msgstr "WADS v{0} · {1}"
-
-#. placeholder {0}: state.activeSnapshot?.version ?? 0
-#: src/components/routes/flow-activation-guide.tsx
-msgid "WADS v{0} is active."
-msgstr "WADS v{0} is active."
-
-#. placeholder {0}: state.latestSnapshot.version
-#: src/components/routes/flow-activation-guide.tsx
-msgid "WADS v{0} is waiting for approval or activation."
-msgstr "WADS v{0} is waiting for approval or activation."
-
 #: src/components/routes/settings/general.tsx
 msgid "Warning (%)"
 msgstr "Warning (%)"
@@ -7744,18 +7689,13 @@ msgstr "Window end"
 msgid "Workbench"
 msgstr "Workbench"
 
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-worker-deployments.tsx
 msgid "Worker"
 msgstr "Worker"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Worker acknowledgements"
-msgstr "Worker acknowledgements"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Worker ACKs"
-msgstr "Worker ACKs"
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Worker health"
+msgstr "Worker health"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Worker installation status"
@@ -7781,151 +7721,3 @@ msgstr "Your role does not grant access to this page."
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "Your user settings have been updated."
-
-#: src/components/routes/flow-reports.tsx
-msgid "On-net in-province (province total)"
-msgstr "On-net in-province (province total)"
-
-#: src/components/routes/flow-reports.tsx
-msgid "On-net in-province by city"
-msgstr "On-net in-province by city"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Unknown by destination segment"
-msgstr "Unknown by destination segment"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Unknown by destination IP"
-msgstr "Unknown by destination IP"
-
-msgid "{0, plural, one {# item on this page} other {# items on this page}}"
-msgstr "{0, plural, one {# item on this page} other {# items on this page}}"
-
-msgid "{size} per page"
-msgstr "{size} per page"
-
-msgid "{totalCount, plural, one {# item} other {# items}}"
-msgstr "{totalCount, plural, one {# item} other {# items}}"
-
-msgid "Customer source ranges saved."
-msgstr "Customer source ranges saved."
-
-msgid "Estimated L3 bit rate"
-msgstr "Estimated L3 bit rate"
-
-msgid "Heatmap"
-msgstr "Heatmap"
-
-msgid "flow.direction.inbound"
-msgstr "Inbound"
-
-msgid "IP protocol"
-msgstr "IP protocol"
-
-msgid "ISP"
-msgstr "ISP"
-
-msgid "Last 12 hours"
-msgstr "Last 12 hours"
-
-msgid "Last 15 minutes"
-msgstr "Last 15 minutes"
-
-msgid "Last 2 days"
-msgstr "Last 2 days"
-
-msgid "Last 24 hours"
-msgstr "Last 24 hours"
-
-msgid "Last 3 hours"
-msgstr "Last 3 hours"
-
-msgid "Last 3 months"
-msgstr "Last 3 months"
-
-msgid "Last 30 days"
-msgstr "Last 30 days"
-
-msgid "Last 30 minutes"
-msgstr "Last 30 minutes"
-
-msgid "Last 5 minutes"
-msgstr "Last 5 minutes"
-
-msgid "Last 6 hours"
-msgstr "Last 6 hours"
-
-msgid "Last 6 months"
-msgstr "Last 6 months"
-
-msgid "Last 7 days"
-msgstr "Last 7 days"
-
-msgid "Last hour"
-msgstr "Last hour"
-
-msgid "Last year"
-msgstr "Last year"
-
-msgid "Loading customer source ranges..."
-msgstr "Loading customer source ranges..."
-
-msgid "Local prefix"
-msgstr "Local prefix"
-
-msgid "Observation interface"
-msgstr "Observation interface"
-
-msgid "flow.value.other"
-msgstr "Other"
-
-msgid "flow.direction.outbound"
-msgstr "Outbound"
-
-msgid "Received Flow records"
-msgstr "Received Flow records"
-
-msgid "Remote prefix"
-msgstr "Remote prefix"
-
-msgid "Sampled L3 bit rate"
-msgstr "Sampled L3 bit rate"
-
-msgid "Sampled packet rate"
-msgstr "Sampled packet rate"
-
-msgid "Sampled packets"
-msgstr "Sampled packets"
-
-msgid "Sankey"
-msgstr "Sankey"
-
-msgid "Stacked area"
-msgstr "Stacked area"
-
-msgid "Table only"
-msgstr "Table only"
-
-msgid "The request is taking longer than expected."
-msgstr "The request is taking longer than expected."
-
-msgid "Top destination IP"
-msgstr "Top destination IP"
-
-msgid "Top local prefix"
-msgstr "Top local prefix"
-
-msgid "Top remote prefix"
-msgstr "Top remote prefix"
-
-msgid "Top source IP"
-msgstr "Top source IP"
-
-msgid "Traffic category"
-msgstr "Traffic category"
-
-msgid "Traffic direction"
-msgstr "Traffic direction"
-
-msgid "flow.value.unassigned"
-msgstr "Unassigned"

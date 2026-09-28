@@ -18,6 +18,11 @@ msgstr ""
 "X-Crowdin-File: /main/internal/site/src/locales/en/en.po\n"
 "X-Crowdin-File-ID: 32\n"
 
+#. placeholder {0}: records.length
+#: src/components/ui/paged-vtable.tsx
+msgid "{0, plural, one {# item on this page} other {# items on this page}}"
+msgstr "本页 {0} 条"
+
 #. placeholder {0}: formatDuration(plan.step_seconds)
 #: src/components/routes/traffic-matrix.tsx
 msgid "{0} display step"
@@ -128,12 +133,6 @@ msgstr "{0} VPN / {1} 跨境 · 已排除未知归属 {2}"
 msgid "{0}% complete"
 msgstr "完成度 {0}%"
 
-#. placeholder {0}: state.workers.length
-#. placeholder {1}: installedWorkerIDs.size
-#: src/components/routes/flow-activation-guide.tsx
-msgid "{activeWorkerCount}/{0} active · {1} installed the latest version"
-msgstr "{activeWorkerCount}/{0} 个运行中 · {1} 个已加载最新版本"
-
 #: src/lib/utils.ts
 msgid "{count, plural, one {{countString} day} other {{countString} days}}"
 msgstr "{count, plural, one {{countString} 天} other {{countString} 天}}"
@@ -150,6 +149,10 @@ msgstr "{count, plural, one {{countString} 分钟} few {{countString} 分钟} ma
 msgid "{selectedPortCount} selected"
 msgstr "已选 {selectedPortCount} 个"
 
+#: src/components/ui/paged-vtable.tsx
+msgid "{size} per page"
+msgstr "每页 {size} 条"
+
 #: src/components/routes/flow-reports.tsx
 msgid "{title} · inbound"
 msgstr "{title} · 流入"
@@ -157,6 +160,10 @@ msgstr "{title} · 流入"
 #: src/components/routes/flow-reports.tsx
 msgid "{title} · outbound"
 msgstr "{title} · 流出"
+
+#: src/components/ui/paged-vtable.tsx
+msgid "{totalCount, plural, one {# item} other {# items}}"
+msgstr "共 {totalCount} 条"
 
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "+ Create customer"
@@ -248,6 +255,10 @@ msgstr "账户"
 msgid "Accounts"
 msgstr "账户"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "ACK"
+msgstr "确认"
+
 #: src/components/routes/agents.tsx
 msgid "ACK / desired"
 msgstr "已确认 / 期望版本"
@@ -284,10 +295,6 @@ msgstr "操作"
 msgid "Activate"
 msgstr "启用"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Activate a WADS snapshot first."
-msgstr "请先激活地址快照。"
-
 #: src/components/routes/address-imports.tsx
 msgid "Activate this immutable generation for its source slot?"
 msgstr "将此不可变代次启用到对应源槽位？"
@@ -311,6 +318,10 @@ msgstr "启用"
 #: src/components/routes/users.tsx
 msgid "Active"
 msgstr "活跃"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Active Flow workers"
+msgstr "活跃 Flow 工作节点"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Active ports"
@@ -345,10 +356,6 @@ msgstr "请至少添加一个数据源（指标）"
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Add customer boundary"
 msgstr "添加客户地址"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Add customer source ranges for at least one Flow device first."
-msgstr "请先为至少一台 Flow 设备添加客户源地址段。"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Add dashboard panel"
@@ -412,10 +419,6 @@ msgstr "添加用户"
 msgid "added addresses"
 msgstr "新增地址"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Address checksum"
-msgstr "地址库校验和"
-
 #: src/components/routes/address-taxonomy.tsx
 msgid "Address families"
 msgstr "地址族"
@@ -443,6 +446,7 @@ msgstr "地址替换已应用"
 
 #: src/components/routes/address-taxonomy.tsx
 #: src/components/routes/address-taxonomy.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Address set"
 msgstr "地址集合"
 
@@ -458,17 +462,9 @@ msgstr "地址集合"
 msgid "Address side"
 msgstr "地址方向"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Address snapshot"
-msgstr "地址库快照"
-
 #: src/components/routes/flow-attribution.tsx
 msgid "Address snapshot lifecycle"
 msgstr "地址快照生命周期"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Address version"
-msgstr "地址库版本"
 
 #: src/components/routes/settings/general.tsx
 msgid "Adjust display options for charts."
@@ -636,6 +632,7 @@ msgstr "别名"
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/exports.tsx
+#: src/components/routes/flow-worker-deployments.tsx
 #: src/components/routes/network-devices.tsx
 msgid "All"
 msgstr "全部"
@@ -791,10 +788,6 @@ msgstr "原子应用此地址替换？"
 msgid "Apply to {0}"
 msgstr "应用到 {0} 项"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Applying lifecycle change…"
-msgstr "正在执行…"
-
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Approval"
@@ -806,11 +799,6 @@ msgstr "审批"
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Approve"
 msgstr "批准"
-
-#: src/components/routes/flow-activation-guide.tsx
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Approve and activate"
-msgstr "审批并激活"
 
 #. placeholder {0}: snap.version
 #: src/components/routes/address-publications.tsx
@@ -827,6 +815,7 @@ msgstr "归档保留期（天，0 表示永久保留）"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "ASN"
 msgstr "ASN"
 
@@ -866,10 +855,6 @@ msgstr "至少需要选择一项必需能力。"
 #: src/components/routes/address-revisions.tsx
 msgid "Atomic Prefix Replacement"
 msgstr "原子地址段替换"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Attempted"
-msgstr "尝试时间"
 
 #: src/components/routes/operation-jobs.tsx
 msgid "Attempts"
@@ -972,6 +957,11 @@ msgstr "后台任务"
 msgid "Bandwidth"
 msgstr "带宽"
 
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/flow-reports.tsx
+msgid "Bandwidth (Gbps)"
+msgstr "带宽 (Gbps)"
+
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/address-prefixes.tsx
 msgid "Base"
@@ -1059,14 +1049,6 @@ msgstr "计费端口与指标"
 msgid "Bits (Kbps, Mbps, Gbps)"
 msgstr "比特 (Kbps, Mbps, Gbps)"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Blocked"
-msgstr "等待前置步骤"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Boot ID"
-msgstr "启动 ID"
-
 #: src/components/routes/flow-storage-lifecycle.tsx
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Bootstrap date"
@@ -1090,21 +1072,9 @@ msgstr "浏览"
 msgid "Buckets"
 msgstr "时间桶"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Build a WADS snapshot first."
-msgstr "请先生成地址快照。"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Build address snapshot"
-msgstr "生成地址快照"
-
 #: src/components/routes/flow-attribution.tsx
 msgid "Build and activate the shared Geo/operator snapshot independently, then pair it with customer boundaries when publishing Flow."
 msgstr "独立生成并激活共享地域/运营商快照，发布 Flow 时再与客户地址边界配对。"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Build WADS snapshot"
-msgstr "生成地址快照"
 
 #: src/components/routes/snmp-mib-modules.tsx
 msgid "Built-in"
@@ -1124,6 +1094,7 @@ msgstr "内置角色不可删除。"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Business"
 msgstr "业务"
 
@@ -1293,6 +1264,7 @@ msgstr "城市"
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "City"
 msgstr "城市"
 
@@ -1317,17 +1289,13 @@ msgstr "类别 A–Z"
 msgid "Class ascending"
 msgstr "按类别升序"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Classification checksum"
-msgstr "分类校验和"
+#: src/components/routes/flow-reports.tsx
+msgid "Classification"
+msgstr "分类"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Classification residuals"
 msgstr "未归类流量"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Classification version"
-msgstr "分类版本"
 
 #. placeholder {0}: formatShare(inboundClassified, inboundTotal)
 #. placeholder {1}: formatShare(outboundClassified, outboundTotal)
@@ -1371,7 +1339,6 @@ msgstr "ClickHouse 批次行数"
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/agents.tsx
 #: src/components/routes/billing-account-detail.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/ui/dialog.tsx
 msgid "Close"
@@ -1404,26 +1371,6 @@ msgid "Combined"
 msgstr "合并"
 
 #: src/components/routes/flow-reports.tsx
-msgid "Combined · 95th"
-msgstr "合计 · 95 分位"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · average"
-msgstr "合计 · 平均"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · current"
-msgstr "合计 · 当前"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · peak"
-msgstr "合计 · 峰值"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Combined · total"
-msgstr "合计 · 总量"
-
-#: src/components/routes/flow-reports.tsx
 msgid "Comma-separated labels"
 msgstr "逗号分隔的标签"
 
@@ -1449,18 +1396,6 @@ msgstr "Community 覆盖值"
 #: src/components/routes/billing-account-detail.tsx
 msgid "Comparison"
 msgstr "对比"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Compile the address library, activate it, publish the classification version, then start a worker."
-msgstr "依次生成并激活地址快照、发布流量分类版本，然后启动处理服务。"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Compiled customer boundaries"
-msgstr "已编译的客户地址边界"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Complete"
-msgstr "已完成"
 
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/flow-vpn.tsx
@@ -1488,10 +1423,6 @@ msgstr "配置（JSON 对象）"
 msgid "Config must be a JSON object."
 msgstr "配置必须是 JSON 对象。"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Configure customer source ranges"
-msgstr "配置客户源地址段"
-
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Confirm delete"
 msgstr "确认删除"
@@ -1510,6 +1441,7 @@ msgid "Connect"
 msgstr "连接"
 
 #: src/components/routes/address-geo-tree.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Continent"
 msgstr "洲"
 
@@ -1560,10 +1492,6 @@ msgstr "复制文本"
 msgid "Core (BGP)"
 msgstr "核心 (BGP)"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Correct attribution"
-msgstr "修正归属"
-
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/export-new.tsx
@@ -1573,7 +1501,6 @@ msgstr "修正值"
 
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/address-prefixes.tsx
-#: src/components/routes/flow-reports.tsx
 #: src/components/routes/network-port-policy.tsx
 #: src/components/routes/traffic-defaults.tsx
 msgid "Correction"
@@ -1606,6 +1533,7 @@ msgstr "按国家/地区、区域、ASN、端口和协议展示跨境流量，�
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Country"
@@ -1719,7 +1647,6 @@ msgstr "创建 VPN 规则"
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/export-detail.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/operation-jobs.tsx
 msgid "Created"
@@ -1751,7 +1678,16 @@ msgstr "跨境"
 msgid "Currency"
 msgstr "币种"
 
+#: src/components/routes/flow-reports.tsx
+msgid "Current bandwidth, P95, classification and business labels. Select a row to load records below."
+msgstr "当前带宽、P95、流量分类和业务标签。选择一行可在下方加载记录。"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Current destination bandwidth. Select a row to load records below."
+msgstr "当前目的地址带宽。选择一行可在下方加载记录。"
+
 #: src/components/routes/aggregate-charts.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/lib/utils.ts
 msgid "Custom"
 msgstr "自定义"
@@ -1778,22 +1714,13 @@ msgstr "客户"
 msgid "Customer name"
 msgstr "客户名称"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Customer ranges determine direction and customer attribution. Geography and operator are resolved independently from the active shared address snapshot."
-msgstr "客户地址段用于判断流向和客户归属；地域与运营商独立从当前共享地址快照解析。"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Customer source CIDRs are not configured. Start ingestion now as unclassified traffic, then publish a precise version after configuring each Flow device."
-msgstr "尚未配置客户源地址段。可以先按未分类流量开始采集，再在配置各 Flow 设备后发布精确分类版本。"
-
 #: src/components/routes/flow-customer-boundaries.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 msgid "Customer source ranges"
 msgstr "客户源地址段"
 
 #: src/components/routes/flow-customer-boundaries.tsx
-msgid "Customer source ranges saved"
-msgstr "客户源地址段已保存"
+msgid "Customer source ranges saved."
+msgstr "客户源地址段已保存。"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-form.tsx
@@ -2037,6 +1964,27 @@ msgstr "差值"
 msgid "Denied"
 msgstr "已拒绝"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment is valid and ready to publish."
+msgstr "部署配置有效，可以发布。"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment job"
+msgstr "部署任务"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment job failed"
+msgstr "部署任务失败"
+
+#. placeholder {0}: response.job.id
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment job queued: {0}"
+msgstr "部署任务已进入队列：{0}"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Deployment validation failed"
+msgstr "部署校验失败"
+
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-taxonomy.tsx
@@ -2060,14 +2008,24 @@ msgid "Desired / acknowledged"
 msgstr "期望 / 已确认"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Desired and installed state"
-msgstr "期望状态与安装状态"
+msgid "Desired deployment created; waiting for worker installation acknowledgements."
+msgstr "期望部署已创建，正在等待工作节点确认安装。"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Destination addresses"
+msgstr "目的地址"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Destination ASN"
 msgstr "目的 ASN"
 
+#: src/components/routes/flow-reports.tsx
+msgid "Destination bandwidth with record drill-down."
+msgstr "目的地址带宽及记录下钻。"
+
 #: src/components/flow/flow-record-table.tsx
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Destination IP"
 msgstr "目的 IP"
 
@@ -2130,14 +2088,11 @@ msgstr "设备 ID"
 msgid "Device SNMP"
 msgstr "设备 SNMP"
 
+#: src/components/routes/flow-worker-deployments.tsx
 #: src/components/routes/target-detail.tsx
 #: src/components/routes/user-form.tsx
 msgid "Devices"
 msgstr "设备"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Devices included in this deployment"
-msgstr "本次发布包含的设备"
 
 #: src/components/routes/billing-account-form.tsx
 msgid "Difference threshold (%)"
@@ -2426,24 +2381,15 @@ msgstr "动作"
 
 #: src/components/routes/address-publications.tsx
 #: src/components/routes/address-publications.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-vpn-rules.tsx
 #: src/components/routes/flow-vpn-rules.tsx
+#: src/components/routes/flow-worker-deployments.tsx
 msgid "Effective from"
 msgstr "生效时间"
 
 #: src/components/routes/network-device-snmp.tsx
 msgid "Effective port"
 msgstr "生效端口"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Effective time"
-msgstr "生效时间"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Effective time must be a minute boundary"
-msgstr "生效时间必须对齐到整分钟"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Either side"
@@ -2462,7 +2408,7 @@ msgstr "邮箱（可选）"
 #. Context: Battery state
 #: src/lib/i18n.ts
 msgid "Empty"
-msgstr "空电"
+msgstr "空"
 
 #: src/components/routes/address-sets.tsx
 #: src/components/routes/address-sets.tsx
@@ -2503,10 +2449,6 @@ msgstr "注册"
 msgid "Enroll Agent"
 msgstr "注册 Agent"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Enroll and start worker"
-msgstr "注册并启动处理服务"
-
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Enter at least one customer source range"
 msgstr "请至少输入一个客户源地址段"
@@ -2526,7 +2468,7 @@ msgstr "请输入有效的计费与对账数值"
 #: src/components/routes/address-imports.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/export-detail.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
+#: src/components/routes/flow-worker-deployments.tsx
 msgid "Error"
 msgstr "错误"
 
@@ -2546,20 +2488,27 @@ msgstr "已建立 / 总数"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Estimated bit rate"
-msgstr "估算速率"
+msgstr "带宽"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Estimated bytes"
-msgstr "估算流量"
+msgstr "流量"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Estimated L3 bit rate"
+msgstr "估算三层速率"
 
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Estimated packet rate"
-msgstr "估算包速率"
+msgstr "包速率"
 
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Estimated packets"
-msgstr "估算包数"
+msgstr "包数"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Evening peak"
@@ -2717,10 +2666,6 @@ msgstr "外部证据无效"
 #: src/components/routes/settings/general.tsx
 msgid "Fahrenheit (°F)"
 msgstr "华氏度 (°F)"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Failed"
-msgstr "失败"
 
 #: src/components/routes/address-imports.tsx
 msgid "Failed to activate"
@@ -2938,26 +2883,14 @@ msgstr "加载导出任务失败"
 msgid "Failed to load exports"
 msgstr "加载导出任务失败"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Failed to load Flow activation status"
-msgstr "加载 Flow 启用状态失败"
-
 #: src/components/routes/flow-customer-boundaries.tsx
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "Failed to load Flow customer boundaries"
 msgstr "加载 Flow 客户地址边界失败"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Failed to load Flow deployments"
-msgstr "加载 Flow 发布记录失败"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to load Flow enrichment publications"
-msgstr "加载 Flow 增强发布版本失败"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to load Flow enrichment settings"
-msgstr "加载 Flow 增强设置失败"
+msgid "Failed to load Flow deployment state"
+msgstr "加载 Flow 部署状态失败"
 
 #: src/components/flow/flow-record-table.tsx
 msgid "Failed to load Flow records"
@@ -3146,10 +3079,6 @@ msgstr "加载 VPN 规则集发布版本失败"
 msgid "Failed to load VPN rules"
 msgstr "加载 VPN 规则失败"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to load worker acknowledgements"
-msgstr "加载 Worker 回执失败"
-
 #: src/components/routes/dashboard-form.tsx
 msgid "Failed to preview dashboard"
 msgstr "预览仪表盘失败"
@@ -3161,14 +3090,6 @@ msgstr "发布 Agent 计划失败"
 #: src/components/routes/flow-worker-deployments.tsx
 msgid "Failed to publish Flow deployment"
 msgstr "发布 Flow 配置失败"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to publish Flow enrichment version"
-msgstr "发布 Flow 增强版本失败"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Failed to publish unclassified Flow ingestion version"
-msgstr "发布未分类 Flow 采集版本失败"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Failed to publish VPN rule set"
@@ -3354,40 +3275,19 @@ msgstr "识别结果"
 msgid "Flow"
 msgstr "流量"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Flow activation"
-msgstr "Flow 启用向导"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Flow Classification Publication"
-msgstr "Flow 分类发布"
-
 #: src/components/navbar.tsx
 #: src/components/routes/flow-attribution.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Flow Data Attribution"
 msgstr "流量数据归属"
 
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Flow deployment validation failed"
-msgstr "Flow 发布校验失败"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Flow deployment was queued. Installation completes only after each worker acknowledges it."
-msgstr "Flow 配置已进入发布队列；每个 Worker 确认安装后才算完成。"
-
 #: src/components/flow/flow-record-table.tsx
 msgid "Flow detail export queued"
 msgstr "Flow 明细导出任务已排队"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Flow devices with customer source ranges"
-msgstr "已配置客户源地址段的 Flow 设备"
-
-#. placeholder {0}: published.classification_version
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Flow enrichment version {0} published"
-msgstr "Flow 增强版本 {0} 已发布"
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Flow devices"
+msgstr "Flow 设备"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Flow export queued"
@@ -3424,20 +3324,9 @@ msgstr "Flow 存储生命周期"
 msgid "Flow storage lifecycle action failed"
 msgstr "Flow 存储生命周期操作失败"
 
-#. placeholder {0}: state.publication.classification_version
-#. placeholder {1}: state.publication.dimension_version
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Flow v{0} · WADS v{1}"
-msgstr "Flow 版本 {0} · 地址快照版本 {1}"
-
-#. placeholder {0}: state.publication.classification_version
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Flow v{0} uses an older address snapshot."
-msgstr "Flow 版本 {0} 使用的是旧地址快照。"
-
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Flow worker deployment"
-msgstr "Flow Worker 配置发布"
+msgid "Flow worker deployments"
+msgstr "Flow 工作节点部署"
 
 #: src/components/routes/agents.tsx
 msgid "For automated deployment, save the token and public key to protected files, add the registry arguments to {serviceName}, then enable that service."
@@ -3583,6 +3472,10 @@ msgstr "健康"
 msgid "Healthy"
 msgstr "健康"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Heatmap"
+msgstr "热力图"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Hide advanced filters"
 msgstr "收起高级筛选"
@@ -3696,8 +3589,11 @@ msgstr "流入 + 流出"
 msgid "Inactive"
 msgstr "非活跃"
 
-#: src/components/flow/flow-record-table.tsx
-#: src/components/flow/flow-record-table.tsx
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.direction.inbound"
+msgstr "流入"
+
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -3725,10 +3621,6 @@ msgstr "从本网视角看的流入与流出。"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Inbound and outbound traffic from the published overseas rollup."
 msgstr "来自已发布跨境汇总的流入与流出流量。"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Inbound current / total"
-msgstr "流入：当前值 / 总量"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Include all"
@@ -3789,7 +3681,6 @@ msgstr "安装对应进程，保存令牌和公钥，然后使用上述注册参
 msgid "Install Watchdog"
 msgstr "安装 Watchdog"
 
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-worker-deployments.tsx
 msgid "Installed"
 msgstr "安装时间"
@@ -3811,10 +3702,6 @@ msgstr "资产"
 msgid "Inventory class"
 msgstr "资产类别"
 
-#: src/components/routes/flow-reports.tsx
-msgid "IP address"
-msgstr "IP 地址"
-
 #: src/components/routes/address-sets.tsx
 msgid "IP families"
 msgstr "IP 地址族"
@@ -3822,6 +3709,10 @@ msgstr "IP 地址族"
 #: src/components/routes/address-sets.tsx
 msgid "IP families must be 4 or 6"
 msgstr "IP 地址族必须为 4 或 6"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "IP protocol"
+msgstr "IP 协议"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "IP protocols"
@@ -3843,6 +3734,10 @@ msgstr "IPv6 地址"
 msgid "IPv6 target prefix"
 msgstr "IPv6 目标前缀"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "ISP"
+msgstr "运营商"
+
 #: src/components/routes/address-taxonomy.tsx
 msgid "ISP Operators"
 msgstr "运营商"
@@ -3851,12 +3746,6 @@ msgstr "运营商"
 #: src/components/routes/billing-account-detail.tsx
 msgid "Issues"
 msgstr "问题"
-
-#. placeholder {0}: state.buildJob.id
-#. placeholder {1}: state.buildJob.status
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Job {0} · {1}"
-msgstr "任务 {0} · {1}"
 
 #: src/components/routes/agent-plans.tsx
 msgid "Kafka maximum wait (ms)"
@@ -3936,9 +3825,61 @@ msgstr "语言"
 msgid "Last"
 msgstr "最近"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 12 hours"
+msgstr "最近 12 小时"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 15 minutes"
+msgstr "最近 15 分钟"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 2 days"
+msgstr "最近 2 天"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 24 hours"
+msgstr "最近 24 小时"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 3 hours"
+msgstr "最近 3 小时"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 3 months"
+msgstr "最近 3 个月"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 30 days"
+msgstr "最近 30 天"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 30 minutes"
+msgstr "最近 30 分钟"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 5 minutes"
+msgstr "最近 5 分钟"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 6 hours"
+msgstr "最近 6 小时"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 6 months"
+msgstr "最近 6 个月"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last 7 days"
+msgstr "最近 7 天"
+
 #: src/components/routes/agents.tsx
 msgid "Last Error"
 msgstr "最近错误"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last hour"
+msgstr "最近 1 小时"
 
 #: src/components/routes/agents.tsx
 msgid "Last Run"
@@ -3956,6 +3897,10 @@ msgstr "最后在线"
 #: src/components/routes/agents.tsx
 msgid "Last Success"
 msgstr "最近成功"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Last year"
+msgstr "最近 1 年"
 
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Late arrival"
@@ -4008,6 +3953,7 @@ msgstr "浅色"
 
 #: src/components/routes/address-library.tsx
 #: src/components/routes/address-lines.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Lines"
 msgstr "线路"
 
@@ -4028,6 +3974,10 @@ msgstr "加载更多"
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "Loading chart data..."
 msgstr "正在加载图表数据..."
+
+#: src/components/routes/flow-customer-boundaries.tsx
+msgid "Loading customer source ranges..."
+msgstr "正在加载客户源地址段…"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Loading devices…"
@@ -4077,6 +4027,10 @@ msgstr "维护本地登录身份、状态和操作角色。"
 #: src/components/routes/flow-vpn.tsx
 msgid "Local port"
 msgstr "本地端口"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Local prefix"
+msgstr "本地地址段"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Local side"
@@ -4635,6 +4589,10 @@ msgstr "未探测到端口。"
 msgid "No down ports."
 msgstr "没有故障端口。"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "No enabled Flow devices."
+msgstr "没有已启用的 Flow 设备。"
+
 #: src/components/routes/flow-reports.tsx
 msgid "No endpoint traffic"
 msgstr "暂无 IP 流量"
@@ -4651,10 +4609,6 @@ msgstr "未找到导出任务。"
 msgid "No findings"
 msgstr "暂无识别结果"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "No Flow enrichment publications found."
-msgstr "未找到 Flow 增强发布版本。"
-
 #: src/components/routes/traffic-matrix.tsx
 msgid "No Flow points found"
 msgstr "未找到 Flow 数据点"
@@ -4667,13 +4621,9 @@ msgstr "未找到 Flow 数据行"
 msgid "No Flow storage policies found."
 msgstr "没有 Flow 存储策略。"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "No Flow worker is enrolled."
-msgstr "尚未注册 Flow 处理服务。"
-
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "No Flow-enabled devices."
-msgstr "没有已启用 Flow 的设备。"
+msgid "No Flow worker deployments."
+msgstr "没有 Flow 工作节点部署。"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "No geography points found"
@@ -4773,6 +4723,10 @@ msgstr "未找到地址段。"
 msgid "No prefixes found. Activate an import first."
 msgstr "未找到地址段，请先启用一个导入版本。"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "No recommended worker"
+msgstr "没有推荐的工作节点"
+
 #: src/components/routes/billing-account-detail.tsx
 msgid "No reconciliation issues."
 msgstr "没有对账问题。"
@@ -4858,10 +4812,6 @@ msgstr "所选时段内无流量。"
 msgid "No users found."
 msgstr "暂无用户。"
 
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "No v2 Flow deployments have been published."
-msgstr "尚未发布组合式 Flow 配置。"
-
 #: src/components/routes/network-device.tsx
 msgid "No VLANs discovered (Q-BRIDGE-MIB not supported or empty)."
 msgstr "未探测到 VLAN（不支持 Q-BRIDGE-MIB 或内容为空）。"
@@ -4878,14 +4828,6 @@ msgstr "未找到 VPN 规则草稿。"
 msgid "No VPN rule-set publications found."
 msgstr "没有 VPN 规则集发布版本。"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "No WADS snapshot has been built."
-msgstr "尚未生成地址快照。"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "No worker acknowledgements found."
-msgstr "未找到 Worker 回执。"
-
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "No worker has reported this version."
 msgstr "尚无工作进程上报此版本。"
@@ -4894,6 +4836,7 @@ msgstr "尚无工作进程上报此版本。"
 msgid "Non-FRU only"
 msgstr "仅非 FRU"
 
+#: src/components/routes/flow-worker-deployments.tsx
 #: src/components/routes/network-device-snmp.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -4927,6 +4870,10 @@ msgstr "未选择时聚合全部端口。"
 #: src/components/routes/address-prefixes.tsx
 msgid "Nothing to merge — no adjacent prefixes share the same attribution."
 msgstr "没有可合并项——不存在归属相同的相邻地址段。"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Observation interface"
+msgstr "观测接口"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Observed local hosts"
@@ -4985,6 +4932,14 @@ msgstr "本网・本市"
 msgid "On-net by province"
 msgstr "本网・按省份"
 
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province (province total)"
+msgstr "本网本省（省内总量）"
+
+#: src/components/routes/flow-reports.tsx
+msgid "On-net in-province by city"
+msgstr "本网本省・按地市"
+
 #: src/components/routes/user-form.tsx
 msgid "Once selected, metrics become an allow-list. No selection keeps all metrics inside granted devices and ports."
 msgstr "选择后，指标将成为允许列表；不选择则保留已授权设备和端口内的全部指标。"
@@ -4992,10 +4947,6 @@ msgstr "选择后，指标将成为允许列表；不选择则保留已授权设
 #: src/components/routes/flow-customer-boundaries.tsx
 msgid "One CIDR per line, for example 192.0.2.0/24"
 msgstr "每行一个 CIDR，例如 192.0.2.0/24"
-
-#: src/components/routes/flow-reports.tsx
-msgid "One stable page ranked by combined traffic, with exact inbound/outbound and traffic-class values for the same addresses and frozen report window. Select a row to load records below. Attribution correction opens an address-library draft; it never mutates a published snapshot."
-msgstr "按合计流量排序，统一展示同一 IP 在固定报表时段内的流入、流出和六类流量。选择一行可加载明细；归属修正只创建地址库草稿，不会修改已发布快照。"
 
 #: src/components/routes/agents.tsx
 msgid "One-time enrollment token"
@@ -5054,10 +5005,6 @@ msgstr "操作系统"
 msgid "Operation"
 msgstr "操作"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Operation failed"
-msgstr "操作失败"
-
 #: src/components/routes/export-detail.tsx
 msgid "Operation job"
 msgstr "后台任务"
@@ -5066,6 +5013,12 @@ msgstr "后台任务"
 #: src/components/routes/role-form.tsx
 msgid "Operations"
 msgstr "操作权限"
+
+#: src/components/routes/user-form.tsx
+#: src/components/routes/users.tsx
+msgctxt "User role"
+msgid "Operator"
+msgstr "操作员"
 
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/address-geo-tree.tsx
@@ -5083,12 +5036,6 @@ msgstr "操作权限"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Operator"
 msgstr "运营商"
-
-#: src/components/routes/user-form.tsx
-#: src/components/routes/users.tsx
-msgctxt "User role"
-msgid "Operator"
-msgstr "操作员"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Operator catalog is unavailable"
@@ -5118,6 +5065,11 @@ msgstr "面板标题（可选）"
 msgid "OS"
 msgstr "OS"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.value.other"
+msgstr "其他"
+
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -5129,8 +5081,11 @@ msgstr "其他"
 msgid "Out"
 msgstr "流出"
 
-#: src/components/flow/flow-record-table.tsx
-#: src/components/flow/flow-record-table.tsx
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.direction.outbound"
+msgstr "流出"
+
 #: src/components/graph/graph-panel-renderer.tsx
 #: src/components/routes/aggregate-charts.tsx
 #: src/components/routes/aggregate-graph-form.tsx
@@ -5150,10 +5105,6 @@ msgstr "流出"
 #: src/components/routes/traffic-matrix.tsx
 msgid "Outbound"
 msgstr "流出"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Outbound current / total"
-msgstr "流出：当前值 / 总量"
 
 #: src/components/routes/address-math.tsx
 msgid "Overlap details"
@@ -5207,6 +5158,10 @@ msgstr "我创建的"
 #: src/components/routes/flow-saved-filters.tsx
 msgid "Owner"
 msgstr "所有者"
+
+#: src/components/routes/flow-reports.tsx
+msgid "P95 (Gbps)"
+msgstr "P95 (Gbps)"
 
 #: src/components/command-palette.tsx
 msgid "Page"
@@ -5338,7 +5293,6 @@ msgstr "按邻居降序"
 msgid "pending"
 msgstr "待更新"
 
-#: src/components/routes/flow-activation-guide.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/network-devices.tsx
 #: src/components/routes/target-form.tsx
@@ -5534,6 +5488,7 @@ msgstr "问题"
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Protocol"
 msgstr "协议"
 
@@ -5543,6 +5498,7 @@ msgstr "供应方"
 
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Province"
 msgstr "省份"
@@ -5559,10 +5515,6 @@ msgstr "省份目录不可用"
 #: src/components/routes/address-base-data.tsx
 msgid "Provinces"
 msgstr "省/州"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Publication"
-msgstr "发布版本"
 
 #: src/components/routes/address-library.tsx
 msgid "Publications"
@@ -5585,18 +5537,6 @@ msgstr "发布配置"
 msgid "Publish failed"
 msgstr "发布失败"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Publish Flow classification"
-msgstr "发布流量分类版本"
-
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Publish Flow version"
-msgstr "发布 Flow 版本"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Publish Flow version pair"
-msgstr "发布 Flow 配对版本"
-
 #: src/components/routes/agent-plans.tsx
 msgid "Publish immutable plan"
 msgstr "发布不可变计划"
@@ -5610,13 +5550,13 @@ msgstr "发布任务已排队"
 msgid "Publish job queued: {0}"
 msgstr "发布任务已排队：{0}"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Publish the active shared address snapshot with the compiled customer boundaries."
-msgstr "将当前共享地址快照与已编译的客户地址边界一起发布。"
-
 #: src/components/routes/address-publications.tsx
 msgid "Publish this immutable address dimension snapshot?"
 msgstr "发布此不可变地址维度快照？"
+
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Publish this immutable deployment to the selected Flow workers?"
+msgstr "将这个不可变部署发布到所选 Flow 工作节点吗？"
 
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Published"
@@ -5625,10 +5565,6 @@ msgstr "已发布"
 #: src/components/routes/flow-storage-lifecycle.tsx
 msgid "Published policy revisions drive archive eligibility. Physical deletion remains locked."
 msgstr "已发布的策略版本决定归档资格；物理删除当前保持锁定。"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Publishing is immutable. Workers pull it asynchronously and keep the last-known-good pair for offline restart."
-msgstr "发布版本不可变。Worker 异步拉取，并保留最后可用的配对版本用于离线重启。"
 
 #: src/components/flow/flow-record-table.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -5686,12 +5622,6 @@ msgstr "原始数据保留期"
 msgid "Raw retention (days)"
 msgstr "原始数据保留期（天）"
 
-#. placeholder {0}: validation.address_version
-#. placeholder {1}: validation.artifact_count
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Ready: address catalog version {0}, {1} immutable artifacts."
-msgstr "校验通过：地址库版本 {0}，共 {1} 个不可变制品。"
-
 #: src/components/routes/aggregate-charts.tsx
 msgid "Realtime"
 msgstr "实时"
@@ -5728,6 +5658,10 @@ msgstr "已重新归属 {0} 个地址段"
 msgid "Receive buffer (bytes)"
 msgstr "接收缓冲区（字节）"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Received Flow records"
+msgstr "收到的 Flow 记录数"
+
 #: src/components/routes/dashboards.tsx
 msgid "Recently created"
 msgstr "最近创建"
@@ -5740,10 +5674,6 @@ msgstr "最近更新"
 #: src/components/routes/agent-plans.tsx
 msgid "Recipes per cycle"
 msgstr "每轮轮询任务数"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "recommended"
-msgstr "推荐"
 
 #: src/components/routes/billing-account-detail.tsx
 msgid "Reconcile"
@@ -5790,7 +5720,6 @@ msgstr "引用"
 #: src/components/routes/export-detail.tsx
 #: src/components/routes/exports.tsx
 #: src/components/routes/flow-customer-boundaries.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-saved-filters.tsx
 #: src/components/routes/flow-vpn-rules.tsx
@@ -5812,12 +5741,9 @@ msgstr "引用"
 msgid "Refresh"
 msgstr "刷新"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Refresh status"
-msgstr "刷新状态"
-
 #: src/components/routes/address-geo-tree.tsx
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Region"
 msgstr "区域"
@@ -5861,12 +5787,17 @@ msgstr "远端 IP"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-vpn.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Remote port"
 msgstr "远端端口"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Remote ports"
 msgstr "远端端口"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Remote prefix"
+msgstr "远端地址段"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Remote prefix IDs"
@@ -5921,7 +5852,6 @@ msgstr "重置"
 msgid "Reset Password"
 msgstr "重置密码"
 
-#: src/components/routes/flow-reports.tsx
 #: src/components/routes/flow-reports.tsx
 msgid "Residual · ↓ / ↑"
 msgstr "未归类 · ↓ / ↑"
@@ -5981,7 +5911,9 @@ msgid "Retries"
 msgstr "重试次数"
 
 #: src/components/error-boundary.tsx
+#: src/components/page-loading.tsx
 #: src/components/routes/export-detail.tsx
+#: src/main.tsx
 #: src/main.tsx
 msgid "Retry"
 msgstr "重试"
@@ -6108,10 +6040,6 @@ msgstr "运行历史"
 msgid "Run this command on the Watchdog host, then paste the one-time token when prompted. The token is not echoed or stored in shell history."
 msgstr "在 Watchdog 主机上运行此命令，然后按提示粘贴一次性令牌。令牌不会回显，也不会写入命令历史。"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Running"
-msgstr "进行中"
-
 #: src/components/routes/agent-plans.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -6128,8 +6056,21 @@ msgid "Sampled bit rate"
 msgstr "原始采样速率"
 
 #: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Sampled bytes"
 msgstr "原始采样流量"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sampled L3 bit rate"
+msgstr "原始采样三层速率"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sampled packet rate"
+msgstr "原始采样包速率"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sampled packets"
+msgstr "原始采样包数"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 msgid "samples"
@@ -6138,6 +6079,10 @@ msgstr "个样本"
 #: src/components/flow/flow-record-table.tsx
 msgid "Sampling rate"
 msgstr "采样率"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Sankey"
+msgstr "桑基图"
 
 #: src/components/routes/flow-reports.tsx
 msgid "Sat"
@@ -6385,10 +6330,6 @@ msgstr "搜索端口或地址..."
 msgid "Search ports..."
 msgstr "搜索端口..."
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Search publication, snapshot, checksum, or signing key..."
-msgstr "搜索发布版本、快照、校验和或签名密钥……"
-
 #: src/components/routes/billing-account-detail.tsx
 msgid "Search reconciliations..."
 msgstr "搜索对账记录..."
@@ -6432,10 +6373,6 @@ msgstr "搜索版本或校验和..."
 #: src/components/routes/network-device.tsx
 msgid "Search VLANs..."
 msgstr "搜索 VLAN..."
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Search worker acknowledgements..."
-msgstr "搜索 Worker 回执……"
 
 #: src/components/address-reference-picker.tsx
 msgid "Searches the server and stores the stable reference ID."
@@ -6522,6 +6459,10 @@ msgstr "选择 MMDB 或 IPDB 文件"
 msgid "Select an SNMP profile"
 msgstr "选择 SNMP 配置档案"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Select at least one active Flow worker and one Flow device"
+msgstr "请至少选择一个活跃 Flow 工作节点和一个 Flow 设备"
+
 #: src/components/routes/billing-account-form.tsx
 msgid "Select at least one billing port."
 msgstr "请至少选择一个计费端口。"
@@ -6534,10 +6475,6 @@ msgstr "请至少选择一个指标"
 #: src/components/routes/network-device.tsx
 msgid "Select at least one port"
 msgstr "请至少选择一个端口"
-
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Select devices and workers explicitly. Existing device bindings are recommendations only; every active worker remains selectable."
-msgstr "请明确选择设备和 Worker。现有设备绑定仅作推荐，所有可用 Worker 均可选择。"
 
 #: src/components/routes/address-revisions.tsx
 msgid "Select Existing Prefixes"
@@ -6740,7 +6677,6 @@ msgid "Signed amount"
 msgstr "带符号数值"
 
 #: src/components/routes/agent-plans.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 msgid "Signing key"
 msgstr "签名密钥"
 
@@ -6798,10 +6734,6 @@ msgstr "SNMP 配置档案"
 msgid "SNMP Version"
 msgstr "SNMP 版本"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Software version"
-msgstr "软件版本"
-
 #: src/components/error-boundary.tsx
 msgid "Something went wrong"
 msgstr "页面出错了"
@@ -6845,9 +6777,17 @@ msgstr "排序序号必须为整数"
 msgid "Source"
 msgstr "来源"
 
+#: src/components/routes/flow-reports.tsx
+msgid "Source addresses"
+msgstr "源地址"
+
 #: src/components/flow/flow-record-table.tsx
 msgid "Source ASN"
 msgstr "源 ASN"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Source bandwidth, P95, traffic classification and business labels."
+msgstr "源地址带宽、P95、流量分类和业务标签。"
 
 #: src/components/routes/address-prefixes.tsx
 msgid "Source filter"
@@ -6858,6 +6798,8 @@ msgid "Source generation"
 msgstr "源数据代次"
 
 #: src/components/flow/flow-record-table.tsx
+#: src/components/routes/flow-reports.tsx
+#: src/components/routes/traffic-matrix.tsx
 msgid "Source IP"
 msgstr "源 IP"
 
@@ -6896,30 +6838,25 @@ msgstr "按速率降序"
 msgid "Split side"
 msgstr "拆分方向"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Stacked area"
+msgstr "堆叠面积图"
+
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Start"
 msgstr "开始"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "Start Flow worker"
-msgstr "启动 Flow 处理服务"
-
 #: src/components/routes/address-imports.tsx
 msgid "Start Import"
 msgstr "开始导入"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Start unclassified Flow ingestion"
-msgstr "开始采集未分类 Flow"
 
 #: src/components/routes/agent-runs.tsx
 msgid "Started"
 msgstr "开始时间"
 
 #: src/components/routes/core.tsx
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/network-device.tsx
 msgid "State"
 msgstr "状态"
@@ -7040,6 +6977,10 @@ msgstr "系统信息"
 msgid "System Name"
 msgstr "系统名称"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Table only"
+msgstr "仅表格"
+
 #: src/components/routes/agent-form.tsx
 #: src/components/routes/agent-runs.tsx
 #: src/components/routes/agents.tsx
@@ -7073,10 +7014,6 @@ msgstr "目标数据点"
 msgid "Target summary"
 msgstr "目标摘要"
 
-#: src/components/routes/flow-worker-deployments.tsx
-msgid "Target workers"
-msgstr "目标 Worker"
-
 #: src/components/navbar.tsx
 #: src/components/navbar.tsx
 #: src/components/routes/watchdog-overview.tsx
@@ -7088,10 +7025,6 @@ msgstr "目标"
 msgid "Temperature unit"
 msgstr "温度单位"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "The active approved address snapshot and this profile are signed and published as one worker version."
-msgstr "当前已批准的地址库快照与此分类配置将签名并作为一个 Worker 版本发布。"
-
 #: src/components/routes/billing-account-form.tsx
 msgid "The billing floor is contract bandwidth multiplied by this percentage."
 msgstr "计费保底为合同总带宽乘以该百分比。"
@@ -7100,13 +7033,13 @@ msgstr "计费保底为合同总带宽乘以该百分比。"
 msgid "The export record and generated file will be permanently deleted."
 msgstr "导出记录和生成的文件将被永久删除。"
 
-#: src/components/routes/flow-activation-guide.tsx
-msgid "The last build failed."
-msgstr "上次生成失败。"
-
 #: src/components/routes/agents.tsx
 msgid "The platform manages identity, signed configuration, ACK and health. systemd or a container runtime owns process start, restart and host privileges."
 msgstr "平台管理身份、签名配置、确认状态和健康状态；进程启动、重启及宿主机权限由 systemd 或容器运行时管理。"
+
+#: src/components/page-loading.tsx
+msgid "The request is taking longer than expected."
+msgstr "请求耗时超出预期。"
 
 #: src/components/mode-toggle.tsx
 #: src/components/routes/settings/general.tsx
@@ -7204,13 +7137,13 @@ msgstr "令牌与指纹"
 msgid "Top countries"
 msgstr "国家/地区排行"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Top destination addresses with direction, traffic class and drill-down."
-msgstr "按流量排序的目的 IP，展示流向和六类流量并支持下钻。"
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top destination IP"
+msgstr "目的 IP 排行"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Top endpoints"
-msgstr "高流量 IP 地址"
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top local prefix"
+msgstr "本地地址段排行"
 
 #: src/components/routes/flow-reports.tsx
 #: src/components/routes/traffic-matrix.tsx
@@ -7222,13 +7155,18 @@ msgstr "Top N"
 msgid "Top regions"
 msgstr "区域排行"
 
-#: src/components/routes/flow-reports.tsx
-msgid "Top source addresses with direction, traffic class and drill-down."
-msgstr "按流量排序的源 IP，展示流向和六类流量并支持下钻。"
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top remote prefix"
+msgstr "远端地址段排行"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Top source IP"
+msgstr "源 IP 排行"
 
 #: src/components/routes/aggregate-graph-detail.tsx
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/network-device.tsx
+#: src/components/routes/traffic-matrix.tsx
 #: src/components/routes/traffic-matrix.tsx
 msgid "Total"
 msgstr "总计"
@@ -7270,12 +7208,20 @@ msgstr "分析 VPN 流量；识别结果、证据和探测处置独立展示。"
 msgid "Traffic by Dimension"
 msgstr "多维流量分析"
 
+#: src/components/routes/traffic-matrix.tsx
+msgid "Traffic category"
+msgstr "流量分类"
+
 #: src/components/navbar.tsx
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/traffic-defaults.tsx
 #: src/components/routes/watchdog-overview.tsx
 msgid "Traffic Defaults"
 msgstr "流量默认规则"
+
+#: src/components/routes/traffic-matrix.tsx
+msgid "Traffic direction"
+msgstr "流量方向"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Traffic direction, category, completeness and current trends."
@@ -7327,6 +7273,11 @@ msgstr "周二"
 msgid "Type"
 msgstr "类型"
 
+#. js-lingui-explicit-id
+#: src/lib/flow-report-model.ts
+msgid "flow.value.unassigned"
+msgstr "未分配"
+
 #: src/components/routes/flow-reports.tsx
 msgid "Unassigned"
 msgstr "未归属"
@@ -7348,11 +7299,6 @@ msgstr "未绑定"
 #: src/components/routes/network-device-snmp.tsx
 msgid "unchanged"
 msgstr "未更改"
-
-#. placeholder {0}: published.classification_version
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Unclassified Flow ingestion version {0} published"
-msgstr "未分类 Flow 采集版本 {0} 已发布"
 
 #: src/components/routes/aggregate-graph-form.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7386,6 +7332,14 @@ msgstr "未知"
 #: src/lib/flow-report-model.ts
 msgid "flow.category.unknown"
 msgstr "未知"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination IP"
+msgstr "未识别・按目的 IP"
+
+#: src/components/routes/flow-reports.tsx
+msgid "Unknown by destination segment"
+msgstr "未识别・按目的地址段"
 
 #: src/components/routes/traffic-matrix.tsx
 msgid "Unknown geography"
@@ -7468,8 +7422,8 @@ msgid "Use as next input"
 msgstr "用作下一步输入"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Use recommended"
-msgstr "使用推荐"
+msgid "Use recommendations"
+msgstr "使用推荐项"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7513,18 +7467,29 @@ msgstr "用户"
 msgid "Users & Roles"
 msgstr "用户与角色"
 
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Validate"
+msgstr "校验"
+
 #: src/components/routes/address-math.tsx
 #: src/components/routes/address-publications.tsx
 msgid "Validate & Preview"
 msgstr "验证并预览"
 
 #: src/components/routes/flow-worker-deployments.tsx
-msgid "Validate and preview"
-msgstr "校验并预览"
+msgid "Validate and publish one signed manifest that atomically combines the active address catalog, policy, and selected device boundaries."
+msgstr "校验并发布一份签名清单，将生效中的地址目录、策略和所选设备边界原子组合。"
 
 #: src/components/routes/dashboard-form.tsx
 msgid "Validate preview"
 msgstr "验证预览"
+
+#. placeholder {0}: validation.address_version
+#. placeholder {1}: validation.profile_row_version
+#. placeholder {2}: validation.artifact_count
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Validated address version {0}, policy revision {1}, and {2} immutable artifacts."
+msgstr "已校验地址版本 {0}、策略修订 {1} 和 {2} 个不可变制品。"
 
 #: src/components/routes/billing-account-detail.tsx
 #: src/components/routes/billing-account-detail.tsx
@@ -7609,10 +7574,6 @@ msgstr "版本"
 #: src/components/routes/flow-saved-filters.tsx
 msgid "View"
 msgstr "视图"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "View ACKs"
-msgstr "查看回执"
 
 #: src/components/routes/network-device.tsx
 msgid "View all"
@@ -7703,22 +7664,6 @@ msgstr "VPN 流量趋势"
 msgid "VPN type distribution"
 msgstr "VPN 类型分布"
 
-#. placeholder {0}: state.latestSnapshot.version
-#. placeholder {1}: state.latestSnapshot.approval_state
-#: src/components/routes/flow-activation-guide.tsx
-msgid "WADS v{0} · {1}"
-msgstr "地址快照版本 {0} · {1}"
-
-#. placeholder {0}: state.activeSnapshot?.version ?? 0
-#: src/components/routes/flow-activation-guide.tsx
-msgid "WADS v{0} is active."
-msgstr "地址快照版本 {0} 已激活。"
-
-#. placeholder {0}: state.latestSnapshot.version
-#: src/components/routes/flow-activation-guide.tsx
-msgid "WADS v{0} is waiting for approval or activation."
-msgstr "地址快照版本 {0} 等待审批或激活。"
-
 #: src/components/routes/settings/general.tsx
 msgid "Warning (%)"
 msgstr "警告 (%)"
@@ -7749,18 +7694,13 @@ msgstr "窗口结束"
 msgid "Workbench"
 msgstr "工作台"
 
-#: src/components/routes/flow-enrichment-publications.tsx
 #: src/components/routes/flow-worker-deployments.tsx
 msgid "Worker"
 msgstr "处理服务"
 
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Worker acknowledgements"
-msgstr "Worker 回执"
-
-#: src/components/routes/flow-enrichment-publications.tsx
-msgid "Worker ACKs"
-msgstr "Worker 回执"
+#: src/components/routes/flow-worker-deployments.tsx
+msgid "Worker health"
+msgstr "工作节点健康状态"
 
 #: src/components/routes/flow-vpn-rules.tsx
 msgid "Worker installation status"
@@ -7786,151 +7726,3 @@ msgstr "您的角色无权访问此页面。"
 #: src/components/routes/settings/layout.tsx
 msgid "Your user settings have been updated."
 msgstr "您的用户设置已更新。"
-
-#: src/components/routes/flow-reports.tsx
-msgid "On-net in-province (province total)"
-msgstr "本网本省（省内总量）"
-
-#: src/components/routes/flow-reports.tsx
-msgid "On-net in-province by city"
-msgstr "本网本省・按地市"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Unknown by destination segment"
-msgstr "未识别・按目的地址段"
-
-#: src/components/routes/flow-reports.tsx
-msgid "Unknown by destination IP"
-msgstr "未识别・按目的 IP"
-
-msgid "{0, plural, one {# item on this page} other {# items on this page}}"
-msgstr "本页 {0} 条"
-
-msgid "{size} per page"
-msgstr "每页 {size} 条"
-
-msgid "{totalCount, plural, one {# item} other {# items}}"
-msgstr "共 {totalCount} 条"
-
-msgid "Customer source ranges saved."
-msgstr "客户源地址段已保存。"
-
-msgid "Estimated L3 bit rate"
-msgstr "估算三层速率"
-
-msgid "Heatmap"
-msgstr "热力图"
-
-msgid "flow.direction.inbound"
-msgstr "流入"
-
-msgid "IP protocol"
-msgstr "IP 协议"
-
-msgid "ISP"
-msgstr "运营商"
-
-msgid "Last 12 hours"
-msgstr "最近 12 小时"
-
-msgid "Last 15 minutes"
-msgstr "最近 15 分钟"
-
-msgid "Last 2 days"
-msgstr "最近 2 天"
-
-msgid "Last 24 hours"
-msgstr "最近 24 小时"
-
-msgid "Last 3 hours"
-msgstr "最近 3 小时"
-
-msgid "Last 3 months"
-msgstr "最近 3 个月"
-
-msgid "Last 30 days"
-msgstr "最近 30 天"
-
-msgid "Last 30 minutes"
-msgstr "最近 30 分钟"
-
-msgid "Last 5 minutes"
-msgstr "最近 5 分钟"
-
-msgid "Last 6 hours"
-msgstr "最近 6 小时"
-
-msgid "Last 6 months"
-msgstr "最近 6 个月"
-
-msgid "Last 7 days"
-msgstr "最近 7 天"
-
-msgid "Last hour"
-msgstr "最近 1 小时"
-
-msgid "Last year"
-msgstr "最近 1 年"
-
-msgid "Loading customer source ranges..."
-msgstr "正在加载客户源地址段…"
-
-msgid "Local prefix"
-msgstr "本地地址段"
-
-msgid "Observation interface"
-msgstr "观测接口"
-
-msgid "flow.value.other"
-msgstr "其他"
-
-msgid "flow.direction.outbound"
-msgstr "流出"
-
-msgid "Received Flow records"
-msgstr "收到的 Flow 记录数"
-
-msgid "Remote prefix"
-msgstr "远端地址段"
-
-msgid "Sampled L3 bit rate"
-msgstr "原始采样三层速率"
-
-msgid "Sampled packet rate"
-msgstr "原始采样包速率"
-
-msgid "Sampled packets"
-msgstr "原始采样包数"
-
-msgid "Sankey"
-msgstr "桑基图"
-
-msgid "Stacked area"
-msgstr "堆叠面积图"
-
-msgid "Table only"
-msgstr "仅表格"
-
-msgid "The request is taking longer than expected."
-msgstr "请求耗时超出预期。"
-
-msgid "Top destination IP"
-msgstr "目的 IP 排行"
-
-msgid "Top local prefix"
-msgstr "本地地址段排行"
-
-msgid "Top remote prefix"
-msgstr "远端地址段排行"
-
-msgid "Top source IP"
-msgstr "源 IP 排行"
-
-msgid "Traffic category"
-msgstr "流量分类"
-
-msgid "Traffic direction"
-msgstr "流量方向"
-
-msgid "flow.value.unassigned"
-msgstr "未归属"

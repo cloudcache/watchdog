@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { NetworkIcon, PlusIcon, RadarIcon, RefreshCwIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, navigate } from "@/components/router"
@@ -165,7 +165,8 @@ export default memo(() => {
 		const sequence = ++requestSequence.current
 		setLoading(true)
 		setError("")
-		api.send<DeviceSummariesResponse>("/api/v1/devices/summary", { query: buildQuery() })
+		api
+			.send<DeviceSummariesResponse>("/api/v1/devices/summary", { query: buildQuery() })
 			.then((data) => {
 				if (sequence !== requestSequence.current) return
 				setRecords((data.items ?? []).map(toTableRecord))

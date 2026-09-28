@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, PlusIcon, SaveIcon, Trash2Icon } from "lucide-react"
 import type React from "react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -236,7 +236,13 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 	const addItem = () => {
 		setItems((current) => [
 			...current,
-			{ id: `item_${current.length}_${Math.random().toString(36).slice(2, 8)}`, metric: "", direction: "other", label: "", total: false },
+			{
+				id: `item_${current.length}_${Math.random().toString(36).slice(2, 8)}`,
+				metric: "",
+				direction: "other",
+				label: "",
+				total: false,
+			},
 		])
 	}
 	const removeItem = (index: number) => {
@@ -328,9 +334,7 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 				>
 					<ArrowLeftIcon className="h-4 w-4" />
 				</Link>
-				<h1 className="text-xl font-semibold tracking-normal">
-					{isEditing ? t`Edit Graph` : t`Create Graph`}
-				</h1>
+				<h1 className="text-xl font-semibold tracking-normal">{isEditing ? t`Edit Graph` : t`Create Graph`}</h1>
 			</div>
 
 			{error ? (
@@ -364,18 +368,18 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 								disabled={!isAdmin() && form.valueMode !== "corrected"}
 							>
 								<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="corrected">
-									<Trans>Corrected</Trans>
-								</SelectItem>
-								<SelectItem value="raw">
-									<Trans>Raw</Trans>
-								</SelectItem>
-								<SelectItem value="both">
-									<Trans>All values</Trans>
-								</SelectItem>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="corrected">
+										<Trans>Corrected</Trans>
+									</SelectItem>
+									<SelectItem value="raw">
+										<Trans>Raw</Trans>
+									</SelectItem>
+									<SelectItem value="both">
+										<Trans>All values</Trans>
+									</SelectItem>
 								</SelectContent>
 							</Select>
 						</Field>
@@ -383,94 +387,97 @@ export default memo(({ id }: AggregateGraphFormProps) => {
 							<Input value={form.unit} onChange={(event) => update("unit", event.target.value)} placeholder="bps" />
 						</Field>
 					</div>
-				<Field label={t`Description`}>
-					<Textarea
-						value={form.description}
-						onChange={(event) => update("description", event.target.value)}
-						rows={2}
-					/>
-				</Field>
-			</div>
-
-			<div className="grid gap-3 rounded-md border border-border p-4">
-				<div className="flex items-center justify-between gap-3">
-					<h2 className="text-base font-medium">
-						<Trans>Data Sources</Trans>
-					</h2>
-					<Button type="button" variant="outline" size="sm" onClick={addItem}>
-						<PlusIcon className="me-2 h-4 w-4" />
-						<Trans>Add</Trans>
-					</Button>
+					<Field label={t`Description`}>
+						<Textarea
+							value={form.description}
+							onChange={(event) => update("description", event.target.value)}
+							rows={2}
+						/>
+					</Field>
 				</div>
-				<div className="grid gap-2">
-					{items.map((item, index) => (
-						<div key={item.id} className="grid gap-2 rounded-md border border-border p-2 md:grid-cols-[1fr_120px_120px_auto]">
-							<Select value={item.metric} onValueChange={(value) => updateItem(index, { metric: value })}>
-								<SelectTrigger>
-									<SelectValue placeholder={t`Metric`} />
-								</SelectTrigger>
-								<SelectContent>
-									{metrics.map((metric) => {
-										const name = metric.Name ?? metric.name ?? ""
-										return (
-											<SelectItem key={name} value={name}>
-												{metric.Description ?? metric.description ?? name}
-											</SelectItem>
-										)
-									})}
-								</SelectContent>
-							</Select>
-							<Select value={item.direction} onValueChange={(value) => updateItem(index, { direction: value })}>
-								<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="in">
-									<Trans>Inbound</Trans>
-								</SelectItem>
-								<SelectItem value="out">
-									<Trans>Outbound</Trans>
-								</SelectItem>
-								<SelectItem value="other">
-									<Trans>Other</Trans>
-								</SelectItem>
-								</SelectContent>
-							</Select>
-							<Input
-								value={item.label}
-								onChange={(event) => updateItem(index, { label: event.target.value })}
-								placeholder={t`Label`}
-							/>
-							<div className="flex items-center gap-2">
-								<label
-									htmlFor={`aggregate-graph-item-total-${index}`}
-									className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground"
-								>
-									<Checkbox
-										id={`aggregate-graph-item-total-${index}`}
-										checked={item.total}
-										onCheckedChange={(value) => updateItem(index, { total: value === true })}
-									/>
-									<Trans>Total</Trans>
-								</label>
-								<Button type="button" variant="ghost" size="icon" onClick={() => removeItem(index)}>
-									<Trash2Icon className="h-4 w-4" />
-								</Button>
+
+				<div className="grid gap-3 rounded-md border border-border p-4">
+					<div className="flex items-center justify-between gap-3">
+						<h2 className="text-base font-medium">
+							<Trans>Data Sources</Trans>
+						</h2>
+						<Button type="button" variant="outline" size="sm" onClick={addItem}>
+							<PlusIcon className="me-2 h-4 w-4" />
+							<Trans>Add</Trans>
+						</Button>
+					</div>
+					<div className="grid gap-2">
+						{items.map((item, index) => (
+							<div
+								key={item.id}
+								className="grid gap-2 rounded-md border border-border p-2 md:grid-cols-[1fr_120px_120px_auto]"
+							>
+								<Select value={item.metric} onValueChange={(value) => updateItem(index, { metric: value })}>
+									<SelectTrigger>
+										<SelectValue placeholder={t`Metric`} />
+									</SelectTrigger>
+									<SelectContent>
+										{metrics.map((metric) => {
+											const name = metric.Name ?? metric.name ?? ""
+											return (
+												<SelectItem key={name} value={name}>
+													{metric.Description ?? metric.description ?? name}
+												</SelectItem>
+											)
+										})}
+									</SelectContent>
+								</Select>
+								<Select value={item.direction} onValueChange={(value) => updateItem(index, { direction: value })}>
+									<SelectTrigger>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="in">
+											<Trans>Inbound</Trans>
+										</SelectItem>
+										<SelectItem value="out">
+											<Trans>Outbound</Trans>
+										</SelectItem>
+										<SelectItem value="other">
+											<Trans>Other</Trans>
+										</SelectItem>
+									</SelectContent>
+								</Select>
+								<Input
+									value={item.label}
+									onChange={(event) => updateItem(index, { label: event.target.value })}
+									placeholder={t`Label`}
+								/>
+								<div className="flex items-center gap-2">
+									<label
+										htmlFor={`aggregate-graph-item-total-${index}`}
+										className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground"
+									>
+										<Checkbox
+											id={`aggregate-graph-item-total-${index}`}
+											checked={item.total}
+											onCheckedChange={(value) => updateItem(index, { total: value === true })}
+										/>
+										<Trans>Total</Trans>
+									</label>
+									<Button type="button" variant="ghost" size="icon" onClick={() => removeItem(index)}>
+										<Trash2Icon className="h-4 w-4" />
+									</Button>
+								</div>
 							</div>
-						</div>
-					))}
+						))}
+					</div>
 				</div>
-			</div>
 
-			<div className="grid gap-3 rounded-md border border-border p-4">
-				<div className="flex items-center justify-between gap-3">
-					<h2 className="text-base font-medium">
-						<Trans>Ports</Trans>
-					</h2>
-					<Badge variant="outline">
-						{selectedPorts.length} / {visiblePorts.length}
-					</Badge>
-				</div>
+				<div className="grid gap-3 rounded-md border border-border p-4">
+					<div className="flex items-center justify-between gap-3">
+						<h2 className="text-base font-medium">
+							<Trans>Ports</Trans>
+						</h2>
+						<Badge variant="outline">
+							{selectedPorts.length} / {visiblePorts.length}
+						</Badge>
+					</div>
 					<div className="grid max-h-[360px] gap-1 overflow-auto pe-1">
 						{visiblePorts.length === 0 ? (
 							<div className="px-2 py-1 text-sm text-muted-foreground">

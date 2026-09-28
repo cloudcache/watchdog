@@ -232,6 +232,9 @@ func normalizeFlowReport(req *flowReportRequest) error {
 	if req.Kind == flowReportVPN && req.Metric != flowquery.MetricEstimatedBytes {
 		return errors.New("vpn reports require metric=estimated_bytes so traffic ratios use one additive unit")
 	}
+	if req.Kind == flowReportEndpoints && req.Metric != flowquery.MetricEstimatedBPS {
+		return errors.New("endpoint reports require metric=estimated_bps")
+	}
 	if req.TopN == 0 {
 		req.TopN = 20
 	}
@@ -262,9 +265,9 @@ func normalizeFlowReport(req *flowReportRequest) error {
 	}
 	if req.Kind == flowReportEndpoints {
 		if req.Table == nil {
-			req.Table = &flowTableRequest{SortBy: "maximum", SortDirection: "desc", Limit: req.TopN}
+			req.Table = &flowTableRequest{SortBy: "last", SortDirection: "desc", Limit: req.TopN}
 		}
-		if err := normalizeFlowEndpointTableRequest(req.Table); err != nil {
+		if err := normalizeFlowEndpointTableRequest(req.Table, req.Side); err != nil {
 			return err
 		}
 	} else if req.Table != nil {

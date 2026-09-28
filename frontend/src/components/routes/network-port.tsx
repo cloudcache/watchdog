@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, CableIcon, PencilIcon, RefreshCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
@@ -87,7 +87,6 @@ type NetworkPortResponse = {
 type PortDetailProps = {
 	id: string
 }
-
 
 type PortDeleteImpact = {
 	resource_type: string
@@ -177,7 +176,10 @@ export default memo(({ id }: PortDetailProps) => {
 			const jobID = response?.job_id
 			if (jobID) {
 				for (let attempt = 0; attempt < 120; attempt++) {
-					const job = await api.send<{ status?: string; last_error_detail?: string }>(`/api/v1/operation-jobs/${jobID}`, {})
+					const job = await api.send<{ status?: string; last_error_detail?: string }>(
+						`/api/v1/operation-jobs/${jobID}`,
+						{}
+					)
 					if (job.status === "succeeded") {
 						break
 					}
@@ -200,13 +202,15 @@ export default memo(({ id }: PortDetailProps) => {
 				className={cn(
 					"overflow-hidden rounded-md border border-border",
 					(port?.OperStatus ?? port?.oper_status ?? "").toLowerCase() === "up" && "border-l-4 border-l-green-500",
-					(port?.OperStatus ?? port?.oper_status ?? "").toLowerCase() === "down" && "border-l-4 border-l-red-500",
+					(port?.OperStatus ?? port?.oper_status ?? "").toLowerCase() === "down" && "border-l-4 border-l-red-500"
 				)}
 			>
 				<div className="flex items-center justify-between gap-4 p-4">
 					<div className="flex min-w-0 items-center gap-2">
 						<Link
-							href={deviceID ? getPagePath($router, "network_device", { id: deviceID }) : getPagePath($router, "network")}
+							href={
+								deviceID ? getPagePath($router, "network_device", { id: deviceID }) : getPagePath($router, "network")
+							}
 							className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "shrink-0")}
 							aria-label={t`Back to network device`}
 						>
@@ -219,17 +223,27 @@ export default memo(({ id }: PortDetailProps) => {
 								<StatusBadge label={t`Oper`} value={port?.OperStatus ?? port?.oper_status} />
 							</div>
 							<div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-								{device?.SysName ?? device?.sys_name ? <span>{device.SysName ?? device.sys_name}</span> : null}
-								{port?.SpeedBps ?? port?.speed_bps ? <span>{formatBitsPerSecond(port.SpeedBps ?? port.speed_bps)}</span> : null}
-								{transceiver?.ModuleType ?? transceiver?.module_type ? <span>{transceiver.ModuleType ?? transceiver.module_type}</span> : null}
+								{(device?.SysName ?? device?.sys_name) ? <span>{device.SysName ?? device.sys_name}</span> : null}
+								{(port?.SpeedBps ?? port?.speed_bps) ? (
+									<span>{formatBitsPerSecond(port.SpeedBps ?? port.speed_bps)}</span>
+								) : null}
+								{(transceiver?.ModuleType ?? transceiver?.module_type) ? (
+									<span>{transceiver.ModuleType ?? transceiver.module_type}</span>
+								) : null}
 							</div>
 						</div>
 					</div>
 					<div className="flex shrink-0 items-center gap-1.5">
-						<Link href={getPagePath($router, "network_port_edit", { id })} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+						<Link
+							href={getPagePath($router, "network_port_edit", { id })}
+							className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+						>
 							<PencilIcon className="h-4 w-4" />
 						</Link>
-						<Link href={getPagePath($router, "network_port_policy", { id })} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+						<Link
+							href={getPagePath($router, "network_port_policy", { id })}
+							className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+						>
 							<SlidersHorizontalIcon className="h-4 w-4" />
 						</Link>
 						<Button variant="ghost" size="sm" onClick={openDeletePreview} disabled={loading}>
@@ -396,7 +410,11 @@ function transceiverModule(transceiver: NetworkPortTransceiver | null) {
 	if (!transceiver) {
 		return undefined
 	}
-	return [transceiver.ModuleType ?? transceiver.module_type, transceiver.Vendor ?? transceiver.vendor, transceiver.Model ?? transceiver.model]
+	return [
+		transceiver.ModuleType ?? transceiver.module_type,
+		transceiver.Vendor ?? transceiver.vendor,
+		transceiver.Model ?? transceiver.model,
+	]
 		.filter(Boolean)
 		.join(" ")
 }
@@ -408,4 +426,3 @@ function formatNM(value?: number) {
 function formatMeters(value?: number) {
 	return typeof value === "number" && value > 0 ? `${value} m` : undefined
 }
-

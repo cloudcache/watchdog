@@ -1,6 +1,6 @@
 # Flow 地址发布、入库分类与查询计划
 
-状态：**Accepted，替代旧 ClickHouse `IP_TRIE/dictGet` 方案**。本文件是地址分类发布、热路径和历史修正的当前唯一口径。
+状态：**Accepted，替代旧 ClickHouse `IP_TRIE/dictGet` 方案**。本文件继续作为地址构建、入库热路径、查询和历史修正口径；其中“WADS + classification 强制版本对”的发布生命周期将由 `flow-address-artifact-deployment-design.md` 的独立制品 + Worker deployment manifest v2 替代。在 v2 完成 installed/LKG/rollback 门禁前，现有 pair v1 仅作为兼容实现保留。
 
 ## 1. 已核实的现状
 
@@ -106,7 +106,11 @@ AddressSnap 的构建输入使用 dimension definition bundle schema v3。v2 只
 
 gossip 可作为后续低延迟提示，只传播 `(scope,version,checksum,control endpoint)`；权威 metadata、认证下载和 ACK 仍在平台。它不是 v1 的前置条件。
 
-KISS 控制面版本对由 migration 0031/0044/0045 保存：`flow_device_customers` 表达“观测设备 → 客户”，`flow_customer_source_prefixes` 保存该客户在该设备上的一段或多段可编辑 IPv4/IPv6 源边界；这些小而碎片化的业务边界不写入共享 Geo 地址库。系统从两表自动生成 `flow_classification_profiles.device_profiles[]`，不再让用户手工维护 prefix ID。省份、地市、运营商和 ASN 仍只来自共享 AddressSnap。`flow_enrichment_publications` 是全局单调且不可变的 event-time pair，`flow_enrichment_publication_acks` 保存每个 `agents(kind=flow_worker)` 的 downloaded/installed/failed 里程碑。一次发布把客户边界对象与最新已审批、active、未删除的 WADS/1 签名为同一版本；客户 CIDR 不要求成为 WADS 的单独 prefix 行，worker 对命中的实际 IP 使用 WADS 的最长前缀/区间结果取得 Geo、运营商和 ASN。每条记录按 collector 已写入的稳定 `device_id` 选择自己的客户 CIDR trie，先计算流入/流出/内网/中转并固化 customer/business，再从 WADS 读取两端地址属性计算六分类；缺设备边界或地址属性时归为 unknown。MySQL 只保存客户边界、profile、ref/checksum、版本、签名与 ACK，不保存 WADS/classification 大对象。分类对象和完整 pair 使用同一个 active agent-plan Ed25519 key 签名，worker 复用其单调 trust bundle，不建立第二套 key 表。该管理操作不在 UDP/Kafka ingest 热路径上，也没有给事实或发布物增加固定 TTL。
+KISS 控制面的编辑态仍由 migration 0031/0044/0045 保存：`flow_device_customers` 表达“观测设备 → 客户”，`flow_customer_source_prefixes` 保存该客户在该设备上的一段或多段可编辑 IPv4/IPv6 源边界；这些小而碎片化的业务边界不写入共享 Geo 地址库。省份、地市、运营商和 ASN 仍只来自共享 AddressSnap。
+
+目标发布协议由 migration 0049 的组合制品 v2 承载：全局 `address_catalog` 继续引用 WADS/1，每台设备的客户边界独立编译为规范 JSON `device_boundary`，剩余六分类行为独立编译为规范 JSON `classification_policy`；三者由每个 Worker 自己的 Ed25519 签名 deployment manifest 原子组合。保存客户 CIDR 只更新编辑态，不自动绑定 Worker、不自动发布；管理员在发布页显式选择设备和任意 active `flow_worker`，既有 `flow_worker_device_bindings` 只提供推荐。未绑定但被本次 deployment 选中的 Worker 具有该版本的下载和 ACK 权限，未选 Worker 不可见。
+
+Worker 将 WADS 编译为共享只读地址目录，将每台设备的 boundary JSON 编译为独立 BART trie，再与小型 policy 组装成一个 runtime snapshot。客户 CIDR 修改只产生新的 boundary artifact 与 manifest，不重建或重传 WADS；Geo/运营商修改不重建 boundary；策略修改不重建两类地址。所有变更对象校验、编译和 LKG 持久化成功后才一次 atomic swap。每条记录按 collector 已写入的稳定 `device_id` 选择客户 CIDR trie，先计算流入/流出/内网/中转并固化 customer/business，再从 WADS 读取两端地址属性计算六分类；缺设备边界或地址属性时归为 unknown。MySQL 只保存编辑态、artifact metadata、deployment、签名与 ACK，大对象仍位于有界 object store。v1 pair 仅在 reader-first 迁移期间保留；Worker 首次安装或从 LKG 恢复 v2 后不再回退安装 v1。完整协议、迁移和门禁见 `flow-address-artifact-deployment-design.md`。
 
 ## 6. 写入、查询与历史修正
 

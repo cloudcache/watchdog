@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, CrosshairIcon, SaveIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { KeyValueEditor } from "@/components/key-value-editor"
@@ -119,7 +119,8 @@ export default memo(({ id, defaultKind }: TargetFormProps) => {
 		let cancelled = false
 		setProfilesLoading(true)
 		setProfilesError("")
-		api.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {})
+		api
+			.send<SNMPProfilesResponse>("/api/v1/snmp/profiles", {})
 			.then((data) => {
 				if (cancelled) return
 				const profiles = data.items ?? []

@@ -10,6 +10,17 @@
 		<title>Watchdog</title>
 		<style>
 			.dark { background: hsl(220 5.5% 9%); color-scheme: dark; }
+			.watchdog-document-loading { box-sizing: border-box; width: min(100% - 32px, 1440px); margin: 24px auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; font: 14px/1.5 system-ui, sans-serif; color: #64748b; }
+			.watchdog-document-loading__mark { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 28px; border-radius: 10px; background: #2563eb; color: white; font-weight: 700; }
+			.watchdog-document-loading__line { height: 14px; margin-top: 12px; border-radius: 7px; background: #e5e7eb; animation: watchdog-loading 1.2s ease-in-out infinite alternate; }
+			.watchdog-document-loading__line--short { width: 58%; }
+			.watchdog-document-loading__label { display: block; margin-top: 24px; }
+			.watchdog-document-loading__recovery { display: block; width: max-content; margin-top: 12px; color: inherit; opacity: 0; pointer-events: none; animation: watchdog-recovery 0s 12s forwards; }
+			.dark .watchdog-document-loading { border-color: #27272a; color: #a1a1aa; }
+			.dark .watchdog-document-loading__line { background: #27272a; }
+			@keyframes watchdog-loading { from { opacity: .45; } to { opacity: 1; } }
+			@keyframes watchdog-recovery { to { opacity: 1; pointer-events: auto; } }
+			@media (prefers-reduced-motion: reduce) { .watchdog-document-loading__line { animation: none; } }
 		</style>
 		<script>
 			(function() {

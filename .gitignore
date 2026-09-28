@@ -47,3 +47,26 @@ deploy/seed/*.sql.gz
 # Stray build artifact + DB dumps at repo root (never commit; audit 2026-09-15)
 /watchdog-server
 dbbak-*.sql
+
+# Local research, generated deliverables, and review artifacts (2026-09-25)
+/outputs/
+/软件著作权申请资料/
+/docs/launch/
+/build_cmcc_ipv6_map.py
+/build_cn_address_attribution_audit.py
+/cmcc_2409_full_32_map.csv
+/cmcc_2409_ipv6_province_report.md
+/cmcc_2409_province_ranges.csv
+/cmcc_2409_rpki_prefixes_classified.csv
+/cmcc_2409_validation_summary.csv
+/cmcc_as9808_he_prefixes_classified.csv
+/geoip_validation_curl.conf
+/mobile_ipv6_classification_notes.md
+/mobile_ipv6_province_classification.csv
+/mobile_ipv6_province_summary.csv
+/mobile_ipv6_raw.csv
+/rpki_validation_curl.conf
+
+# Local-only implementation experiments intentionally kept out of Git
+/deploy/seed/address-library-em.sql
+/internal/address/dev_mmdb_stream_test.go

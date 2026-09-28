@@ -1,14 +1,15 @@
 # Watchdog local development
 
 Local development uses one fixed control-plane process and independent data-plane
-processes. The frontend talks directly to the API configured by
-`frontend/public/watchdog-config.js`; there is no proxy, PocketBase Hub, or static
-server in the backend.
+processes. The production deployment contract is still same-origin `/api/`; a
+local frontend can point `API_URL` in `frontend/public/watchdog-config.js` at
+`http://127.0.0.1:8091`. Vite has no API proxy. There is no PocketBase Hub or
+static server in the backend.
 
 | Process | Fixed executable | Responsibility |
 | --- | --- | --- |
-| Frontend | `npm --prefix frontend run dev` | Vite frontend on `127.0.0.1:8090` |
-| API | `build/watchdog-server` | Gin management/query API on `127.0.0.1:8091` |
+| Frontend | `npm --prefix frontend run dev` | Frontend development server |
+| API | `build/watchdog-server` | Gin management/query API from `server.listen` |
 | SNMP polling | `build/watchdog-snmp-collector` | Discovery, polling, MySQL recipes, ClickHouse samples |
 | SNMP traps | `build/watchdog-snmp-agent` | UDP Trap listener and forwarding to the API |
 | Flow collection | `build/watchdog-flow-collect` | sFlow/NetFlow/IPFIX receive and Kafka production |
@@ -55,7 +56,8 @@ npm --prefix frontend run dev
 
 Open `http://127.0.0.1:8090`. An empty management database redirects to
 `/install`; installation creates the schema and first administrator only after
-the form is submitted.
+the form is submitted. The API remains on `http://127.0.0.1:8091`; `8090` is only
+the local frontend development port and is not part of the production contract.
 
 ## 3. Independent SNMP processes
 
@@ -86,7 +88,7 @@ make build-snmp-agent
 
 - `make build-server`: compile only the Gin API to `build/watchdog-server`.
 - `make dev-server`: build and run that fixed API executable.
-- `make dev-frontend`: run the independent frontend on port 8090.
+- `make dev-frontend`: run the independent frontend development server.
 - `make build-snmp-collector`: compile the SNMP polling process.
 - `make dev-snmp-collector`: build and run continuous SNMP polling.
 - `make build-snmp-agent`: compile the independent UDP Trap process.
@@ -97,6 +99,6 @@ make build-snmp-agent
 - `make build-web-ui`: build the frontend separately.
 
 Do not name runtime binaries after a task (`watchdog-server-snmp`,
-`watchdog-server-rbac`, and similar), and do not let multiple sessions replace the
-listener on port 8091. Before starting a new API process, resolve the existing
-listener with `lsof -nP -iTCP:8091 -sTCP:LISTEN`.
+`watchdog-server-rbac`, and similar), and do not let multiple sessions replace
+the listener configured in `config/watchdog.yaml`. Before starting a new API
+process, resolve any existing listener on that address.

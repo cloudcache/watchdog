@@ -418,23 +418,9 @@ func buildFlowTable(points []flowTablePoint, plan flowTablePlan, unit string, re
 }
 
 func flowTableValues(rows []flowTablePoint, plan flowTablePlan) []float64 {
-	if plan.from.IsZero() || !plan.to.After(plan.from) || plan.step <= 0 {
-		values := make([]float64, len(rows))
-		for index, row := range rows {
-			values[index] = row.value
-		}
-		return values
-	}
-	existing := make(map[int64]float64, len(rows))
+	values := make([]float64, 0, len(rows))
 	for _, row := range rows {
-		existing[row.bucket.UnixMilli()] = row.value
-	}
-	values := make([]float64, 0, int(plan.to.Sub(plan.from)/plan.step))
-	for bucket := plan.from; bucket.Before(plan.to); bucket = bucket.Add(plan.step) {
-		if !flowquery.InLocalTimeWindows(bucket, plan.timeWindows, plan.timezone) {
-			continue
-		}
-		values = append(values, existing[bucket.UnixMilli()])
+		values = append(values, row.value)
 	}
 	if len(values) == 0 {
 		return []float64{0}

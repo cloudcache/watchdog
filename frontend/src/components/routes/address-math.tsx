@@ -255,18 +255,31 @@ export default memo(function AddressMath() {
 									<thead className="sticky top-0 bg-muted/95 text-left">
 										<tr>
 											<th className="w-16 px-3 py-2 font-medium">#</th>
-											<th className="px-3 py-2 font-medium"><Trans>Left range</Trans></th>
-											<th className="px-3 py-2 font-medium"><Trans>Right range</Trans></th>
+											<th className="px-3 py-2 font-medium">
+												<Trans>Left range</Trans>
+											</th>
+											<th className="px-3 py-2 font-medium">
+												<Trans>Right range</Trans>
+											</th>
 										</tr>
 									</thead>
 									<tbody>
 										{(preview.overlaps ?? []).map((item, index) => (
-											<tr key={`${item.left_operand}:${item.left_index}:${item.right_operand}:${item.right_index}`} className="border-t border-border">
+											<tr
+												key={`${item.left_operand}:${item.left_index}:${item.right_operand}:${item.right_index}`}
+												className="border-t border-border"
+											>
 												<td className="px-3 py-2 tabular-nums">{index + 1}</td>
-												<td className="truncate px-3 py-2 font-mono text-xs" title={`${item.left_operand}[${item.left_index}]`}>
+												<td
+													className="truncate px-3 py-2 font-mono text-xs"
+													title={`${item.left_operand}[${item.left_index}]`}
+												>
 													{item.left_operand}[{item.left_index}]
 												</td>
-												<td className="truncate px-3 py-2 font-mono text-xs" title={`${item.right_operand}[${item.right_index}]`}>
+												<td
+													className="truncate px-3 py-2 font-mono text-xs"
+													title={`${item.right_operand}[${item.right_index}]`}
+												>
 													{item.right_operand}[{item.right_index}]
 												</td>
 											</tr>

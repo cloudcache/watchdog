@@ -1,6 +1,6 @@
 import { t } from "@lingui/core/macro"
 import { Trans } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { LoaderCircle, LockIcon, LogInIcon, UserIcon } from "lucide-react"
 import { useCallback, useState } from "react"
 import * as v from "valibot"

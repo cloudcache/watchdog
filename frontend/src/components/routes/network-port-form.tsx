@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { ArrowLeftIcon, CableIcon, SaveIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { KeyValueEditor } from "@/components/key-value-editor"

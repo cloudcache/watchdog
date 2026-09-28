@@ -9,14 +9,14 @@ import ReactDOM from "react-dom/client"
 import { ErrorBoundary } from "@/components/error-boundary.tsx"
 import Navbar from "@/components/navbar.tsx"
 import { PageLoading } from "@/components/page-loading.tsx"
-import { $router, navigate, type Page, prependBasePath } from "@/components/router.tsx"
-import Settings from "@/components/routes/settings/layout.tsx"
+import { redirect, type Page, prependBasePath, resolveDocumentPage } from "@/components/router.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toaster.tsx"
-import { canAny, fetchInstallStatus, type InstallStatus, restoreSession } from "@/lib/api.ts"
+import { canAny, fetchInstallStatus, type InstallStatus, restoreSession, WatchdogAPIError } from "@/lib/api.ts"
 import { isInstallRedirectRoute, isPublicSessionRoute, shouldRestoreSession } from "@/lib/auth-route-policy.ts"
 import { developmentAuth } from "@/lib/env.ts"
 import { dynamicActivate, getLocale } from "@/lib/i18n"
+import { readInstalledCache, writeInstalledCache } from "@/lib/install-state-cache.ts"
 import { $platformIdentity } from "@/lib/platform-auth"
 import {
 	$authenticated,
@@ -26,6 +26,21 @@ import {
 	$userSettings,
 	defaultLayoutWidth,
 } from "@/lib/stores.ts"
+
+// An already-open tab can request a lazy chunk from the previous release after
+// the server atomically switches the static root. Vite reports that condition
+// before React renders the rejected lazy component. Reload once to pick up the
+// current index; the timestamp prevents a broken deployment from reload-looping.
+const preloadReloadKey = "watchdog-preload-reload-at"
+window.addEventListener("vite:preloadError", (event) => {
+	event.preventDefault()
+	const previous = Number.parseInt(sessionStorage.getItem(preloadReloadKey) || "0", 10)
+	if (!Number.isFinite(previous) || Date.now() - previous > 30_000) {
+		sessionStorage.setItem(preloadReloadKey, String(Date.now()))
+		window.location.reload()
+	}
+})
+window.setTimeout(() => sessionStorage.removeItem(preloadReloadKey), 30_000)
 
 const LoginPage = lazy(() => import("@/components/login/login.tsx"))
 const InstallPage = lazy(() => import("@/components/install/install.tsx"))
@@ -66,6 +81,7 @@ const SNMPMIBModuleForm = lazy(() => import("@/components/routes/snmp-mib-module
 const SNMPMIBModules = lazy(() => import("@/components/routes/snmp-mib-modules.tsx"))
 const SNMPProfileForm = lazy(() => import("@/components/routes/snmp-profile-form.tsx"))
 const SNMPProfiles = lazy(() => import("@/components/routes/snmp-profiles.tsx"))
+const Settings = lazy(() => import("@/components/routes/settings/layout.tsx"))
 const TargetDetail = lazy(() => import("@/components/routes/target-detail.tsx"))
 const TargetForm = lazy(() => import("@/components/routes/target-form.tsx"))
 const Targets = lazy(() => import("@/components/routes/targets.tsx"))
@@ -91,6 +107,10 @@ type PageDefinition<R extends Route> = {
 	deniedMessage?: () => ReactNode
 	render: (page: PageOf<R>) => ReactNode
 }
+
+// An MPA document has one immutable page identity for its whole lifetime.
+// Route changes are full browser navigations and therefore load a new document.
+const documentPage = resolveDocumentPage()
 
 const deviceView = ["device.view"]
 const deviceUpdate = ["device.update"]
@@ -189,7 +209,7 @@ function pageDefinition<R extends Route>(route: R): PageDefinition<R> {
 }
 
 const App = memo(() => {
-	const page = useStore($router)
+	const page = documentPage
 	const platformIdentity = useStore($platformIdentity)
 
 	// Authenticated pages mount only after the route-triggered session check.
@@ -228,7 +248,7 @@ function PermissionDenied({ message }: { message?: ReactNode }) {
 
 function RedirectHome() {
 	useEffect(() => {
-		navigate(prependBasePath("/"))
+		redirect(prependBasePath("/"))
 	}, [])
 	return null
 }
@@ -236,29 +256,61 @@ function RedirectHome() {
 const Layout = () => {
 	const authenticated = useStore($authenticated)
 	const authChecked = useStore($authChecked)
-	const page = useStore($router)
+	const page = documentPage
 	const copyContent = useStore($copyContent)
 	const direction = useStore($direction)
 	const { layoutWidth } = useStore($userSettings, { keys: ["layoutWidth"] })
-	const [installStatus, setInstallStatus] = useState<InstallStatus>()
+	const cachedInstalled = page?.route !== "install" && readInstalledCache(window.sessionStorage)
+	const [installStatus, setInstallStatus] = useState<InstallStatus | undefined>(() =>
+		cachedInstalled
+			? {
+					installed: true,
+					requires_install: false,
+					runtime_ready: true,
+					schema_version: "",
+					product_version: "",
+					admin_bootstrapped: true,
+					installed_at: "",
+				}
+			: undefined
+	)
+	const [mustCheckInstallation] = useState(() => page?.route === "install" || !cachedInstalled)
 	const [installError, setInstallError] = useState("")
+	const [sessionError, setSessionError] = useState("")
 
 	const checkInstallation = useCallback(async () => {
 		setInstallError("")
 		try {
-			setInstallStatus(await fetchInstallStatus())
+			const status = await fetchInstallStatus()
+			writeInstalledCache(window.sessionStorage, status.installed)
+			setInstallStatus(status)
 		} catch (cause) {
 			setInstallError((cause as Error).message)
 		}
 	}, [])
 
 	useEffect(() => {
-		checkInstallation()
-	}, [checkInstallation])
+		if (mustCheckInstallation) checkInstallation()
+	}, [checkInstallation, mustCheckInstallation])
 
 	useEffect(() => {
 		document.documentElement.dir = direction
 	}, [direction])
+
+	const checkSession = useCallback(async () => {
+		setSessionError("")
+		try {
+			await restoreSession()
+		} catch (cause) {
+			if (cause instanceof WatchdogAPIError && cause.status === 428 && cause.code === "install_required") {
+				writeInstalledCache(window.sessionStorage, false)
+				setInstallStatus(undefined)
+				await checkInstallation()
+				return
+			}
+			setSessionError(cause instanceof Error ? cause.message : "Unable to verify the current session.")
+		}
+	}, [checkInstallation])
 
 	useEffect(() => {
 		const route = page?.route
@@ -272,14 +324,14 @@ const Layout = () => {
 		if (isInstallRedirectRoute(route)) return
 		if (!shouldRestoreSession({ installed: installStatus?.installed === true, developmentAuth, authChecked, route }))
 			return
-		restoreSession().catch(() => $authChecked.set(true))
-	}, [authChecked, installStatus?.installed, page?.route])
+		checkSession()
+	}, [authChecked, checkSession, installStatus?.installed, page?.route])
 
 	useEffect(() => {
 		if (installStatus?.requires_install && page?.route !== "install") {
-			navigate(prependBasePath("/install"))
+			redirect(prependBasePath("/install"))
 		} else if (installStatus?.installed && page?.route === "install") {
-			navigate(prependBasePath("/"))
+			redirect(prependBasePath("/"))
 		}
 	}, [installStatus?.installed, installStatus?.requires_install, page?.route])
 
@@ -295,11 +347,23 @@ const Layout = () => {
 			</div>
 		)
 	}
+	if (sessionError) {
+		return (
+			<div className="min-h-svh grid place-content-center gap-4 px-4 text-center">
+				<p role="alert" className="max-w-xl text-sm text-destructive">
+					{sessionError}
+				</p>
+				<button type="button" className="text-sm underline" onClick={checkSession}>
+					<Trans>Retry</Trans>
+				</button>
+			</div>
+		)
+	}
 
 	// Two round trips (install status, then session) precede the first page; show
 	// progress instead of an empty document.
 	if (!installStatus) {
-		return <PageLoading />
+		return <PageLoading onRetry={checkInstallation} />
 	}
 
 	if (installStatus.requires_install) {
@@ -308,11 +372,12 @@ const Layout = () => {
 				<Suspense fallback={<PageLoading />}>
 					<InstallPage
 						onInstalled={(status) => {
+							writeInstalledCache(window.sessionStorage, status.installed)
 							setInstallStatus(status)
 							$platformIdentity.set({ ready: true })
 							$authenticated.set(false)
 							$authChecked.set(true)
-							navigate(prependBasePath("/"))
+							redirect(prependBasePath("/"))
 						}}
 					/>
 				</Suspense>
@@ -321,7 +386,7 @@ const Layout = () => {
 	}
 
 	if (!authChecked) {
-		return <PageLoading />
+		return <PageLoading onRetry={checkSession} />
 	}
 
 	return (
@@ -354,24 +419,32 @@ const Layout = () => {
 }
 
 const I18nApp = () => {
-	useEffect(() => {
-		dynamicActivate(getLocale())
-	}, [])
-
 	return (
 		<I18nProvider i18n={i18n}>
 			<ThemeProvider>
-				<Layout />
-				<Toaster />
+				<ErrorBoundary>
+					<Layout />
+					<Toaster />
+				</ErrorBoundary>
 			</ThemeProvider>
 		</I18nProvider>
 	)
 }
 
-ReactDOM.createRoot(document.getElementById("app") as HTMLElement).render(
-	// strict mode in dev mounts / unmounts components twice
-	// and breaks the clipboard dialog
-	//<StrictMode>
-	<I18nApp />
-	//</StrictMode>
-)
+async function mountApplication() {
+	try {
+		await dynamicActivate(getLocale())
+	} catch (cause) {
+		console.error("locale initialization failed", cause)
+		await dynamicActivate("en")
+	}
+	ReactDOM.createRoot(document.getElementById("app") as HTMLElement).render(
+		// strict mode in dev mounts / unmounts components twice
+		// and breaks the clipboard dialog
+		//<StrictMode>
+		<I18nApp />
+		//</StrictMode>
+	)
+}
+
+mountApplication().catch((cause) => console.error("application startup failed", cause))

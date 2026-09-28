@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { FileDownIcon, RefreshCwIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
@@ -268,11 +268,8 @@ export default memo(() => {
 					onCellClick={(record, field) => {
 						const task = record.task as ExportTask
 						if (field === "action" && exportStatus(task) === "complete") {
-							downloadExport(task).catch((error) =>
-								setError(error instanceof Error ? error.message : String(error))
-							)
-						}
-						else navigate(getPagePath($router, "export_detail", { id: exportID(task) }))
+							downloadExport(task).catch((error) => setError(error instanceof Error ? error.message : String(error)))
+						} else navigate(getPagePath($router, "export_detail", { id: exportID(task) }))
 					}}
 				/>
 			</div>

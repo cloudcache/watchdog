@@ -1,6 +1,6 @@
 import { t } from "@lingui/core/macro"
 import { Trans } from "@lingui/react/macro"
-import { getPagePath } from "@nanostores/router"
+import { getPagePath } from "@/lib/page-path"
 import { DialogDescription } from "@radix-ui/react-dialog"
 import { BookIcon, FingerprintIcon, ServerIcon, SettingsIcon, UsersIcon } from "lucide-react"
 import { memo, useEffect, useMemo } from "react"

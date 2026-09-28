@@ -6,7 +6,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,20 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// flow_report_endpoints.go migrates the hub's multi-stage endpoint report to Gin +
-// the direct runners: query the top-N endpoints, then enrich each with in/out
-// direction, per-category, and business breakdowns, and merge them into one
-// per-endpoint table. The table-merge composer is a faithful de-tenanted port; the
-// query stages call the aggregate/joint runners directly.
-
-type flowEndpointDirectionSummary struct {
-	Last    float64 `json:"last"`
-	Average float64 `json:"average"`
-	P95     float64 `json:"p95"`
-	Maximum float64 `json:"maximum"`
-	Total   float64 `json:"total"`
-}
-
 type flowEndpointCategorySummary struct {
 	Inbound       float64  `json:"inbound"`
 	Outbound      float64  `json:"outbound"`
@@ -39,12 +24,17 @@ type flowEndpointCategorySummary struct {
 }
 
 type flowEndpointReportRow struct {
-	flowTableRow
-	Inbound    flowEndpointDirectionSummary           `json:"inbound"`
-	Outbound   flowEndpointDirectionSummary           `json:"outbound"`
-	Categories map[string]flowEndpointCategorySummary `json:"categories"`
-	Residual   flowEndpointCategorySummary            `json:"residual"`
-	Businesses []string                               `json:"businesses"`
+	Address         string                       `json:"address"`
+	Bandwidth       float64                      `json:"bandwidth"`
+	P95             *float64                     `json:"p95,omitempty"`
+	Classifications []flowEndpointClassification `json:"classifications,omitempty"`
+	Businesses      []string                     `json:"businesses,omitempty"`
+}
+
+type flowEndpointClassification struct {
+	Category string  `json:"category"`
+	Inbound  float64 `json:"inbound,omitempty"`
+	Outbound float64 `json:"outbound,omitempty"`
 }
 
 type flowEndpointReportPage struct {
@@ -56,28 +46,24 @@ type flowEndpointReportPage struct {
 }
 
 type endpointCategorySummaryEntry struct {
-	Address  string  `json:"address"`
-	Category string  `json:"category"`
-	Total    float64 `json:"total"`
+	Address   string  `json:"address"`
+	Category  string  `json:"category"`
+	Bandwidth float64 `json:"bandwidth"`
 }
 
-var flowEndpointTableFields = func() map[string]struct{} {
-	fields := make(map[string]struct{}, len(flowTableFields)+3+len(flowReportCategories)+1)
-	for field := range flowTableFields {
-		fields[field] = struct{}{}
+func flowEndpointTableFields(side string) map[string]struct{} {
+	fields := map[string]struct{}{"dimension": {}, "last": {}}
+	if side == "destination" {
+		return fields
 	}
-	fields["inbound"] = struct{}{}
-	fields["outbound"] = struct{}{}
+	fields["p95"] = struct{}{}
+	fields["classification"] = struct{}{}
 	fields["business"] = struct{}{}
-	for _, category := range flowReportCategories {
-		fields[category] = struct{}{}
-	}
-	fields["residual"] = struct{}{}
 	return fields
-}()
+}
 
-func normalizeFlowEndpointTableRequest(request *flowTableRequest) error {
-	return normalizeFlowTableRequestWithFields(request, flowEndpointTableFields)
+func normalizeFlowEndpointTableRequest(request *flowTableRequest, side string) error {
+	return normalizeFlowTableRequestWithFields(request, flowEndpointTableFields(side))
 }
 
 // enrichEndpointReport runs the endpoint pipeline: top-N endpoints, then per-endpoint
@@ -87,24 +73,15 @@ func (s *Server) enrichEndpointReport(ctx context.Context, scope flowquery.Scope
 	if req.Side == "destination" {
 		dimension = flowquery.DimensionDestinationIP
 	}
-	candidateTable := flowTableRequest{SortBy: "maximum", SortDirection: "desc", Limit: req.TopN}
+	candidateTable := flowTableRequest{SortBy: "last", SortDirection: "desc", Limit: req.TopN}
 	endpointRaw, plan, err := s.runEndpointAggregate(ctx, scope, view, req, dimension, req.Filters, &candidateTable, req.TargetPoints, req.TopN, now)
 	if err != nil {
 		return nil, err
 	}
 	panels := []flowReportPanel{{ID: "endpoint", Status: "ready", Data: endpointRaw, Meta: gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source, "approximate": plan.Approximate}}}
 	addresses := flowReportEndpointAddresses(panels, "endpoint")
-	if len(addresses) > 0 {
+	if req.Side == "source" && len(addresses) > 0 {
 		for _, direction := range []string{"in", "out"} {
-			filters := req.Filters
-			filters.Directions = []string{direction}
-			filters.DimensionValues = append([]string(nil), addresses...)
-			table := flowTableRequest{SortBy: "dimension", SortDirection: "asc", Limit: uint16(len(addresses))}
-			raw, dirPlan, err := s.runEndpointAggregate(ctx, scope, view, req, dimension, filters, &table, req.TargetPoints, uint16(len(addresses)), now)
-			if err != nil {
-				return nil, err
-			}
-			panels = append(panels, flowReportPanel{ID: "endpoint_" + direction, Status: "ready", Data: raw, Meta: gin.H{"step_seconds": dirPlan.StepSeconds, "source": dirPlan.Source}})
 			catRaw, catStep, err := s.runEndpointCategoryPanel(ctx, scope, view, req, dimension, direction, addresses, now)
 			if err != nil {
 				return nil, err
@@ -117,11 +94,11 @@ func (s *Server) enrichEndpointReport(ctx context.Context, scope flowquery.Scope
 		}
 		panels = append(panels, flowReportPanel{ID: "endpoint_business", Status: "ready", Data: bizRaw, Meta: bizMeta})
 	}
-	table := flowTableRequest{SortBy: "maximum", SortDirection: "desc", Limit: req.TopN}
+	table := flowTableRequest{SortBy: "last", SortDirection: "desc", Limit: req.TopN}
 	if req.Table != nil {
 		table = *req.Table
 	}
-	return composeFlowEndpointReportTable(panels, table)
+	return composeFlowEndpointReportTable(panels, table, req.Side)
 }
 
 // runEndpointAggregate runs one single-dimension endpoint query (planned onto a
@@ -232,7 +209,7 @@ func (s *Server) runEndpointCategoryPanel(ctx context.Context, scope flowquery.S
 				continue
 			}
 			summaries = append(summaries, endpointCategorySummaryEntry{
-				Address: row.Path[0], Category: row.Path[1], Total: row.Total,
+				Address: row.Path[0], Category: row.Path[1], Bandwidth: row.Last,
 			})
 		}
 	}
@@ -474,7 +451,7 @@ func flowReportEndpointAddresses(panels []flowReportPanel, panelID string) []str
 	return nil
 }
 
-func composeFlowEndpointReportTable(panels []flowReportPanel, request flowTableRequest) ([]flowReportPanel, error) {
+func composeFlowEndpointReportTable(panels []flowReportPanel, request flowTableRequest, side string) ([]flowReportPanel, error) {
 	endpointIndex := -1
 	var endpointEnvelope struct {
 		Table flowTablePage `json:"table"`
@@ -492,8 +469,6 @@ func composeFlowEndpointReportTable(panels []flowReportPanel, request flowTableR
 	if endpointIndex < 0 {
 		return panels, nil
 	}
-	inbound := flowEndpointDirectionRows(panels, "endpoint_in")
-	outbound := flowEndpointDirectionRows(panels, "endpoint_out")
 	inboundCategories, err := flowEndpointCategoryRows(panels, "endpoint_category_in")
 	if err != nil {
 		return nil, err
@@ -510,36 +485,27 @@ func composeFlowEndpointReportTable(panels []flowReportPanel, request flowTableR
 	rows := make([]flowEndpointReportRow, 0, len(endpointEnvelope.Table.Items))
 	for _, base := range endpointEnvelope.Table.Items {
 		address := endpointAddress(base)
-		in := inbound[address]
-		out := outbound[address]
 		row := flowEndpointReportRow{
-			flowTableRow: base,
-			Inbound:      endpointDirectionSummary(in),
-			Outbound:     endpointDirectionSummary(out),
-			Categories:   make(map[string]flowEndpointCategorySummary, len(flowReportCategories)),
-			Businesses:   append([]string(nil), businesses[address]...),
+			Address:   address,
+			Bandwidth: base.Last,
 		}
-		for _, category := range flowReportCategories {
-			row.Categories[category] = endpointCategorySummary(
-				inboundCategories[address][category], outboundCategories[address][category], in.Total, out.Total,
-			)
+		if side == "source" {
+			p95 := base.P95
+			row.P95 = &p95
+			row.Businesses = append([]string(nil), businesses[address]...)
+			row.Classifications = endpointClassifications(inboundCategories[address], outboundCategories[address])
 		}
-		var residualIn, residualOut float64
-		for _, category := range flowReportResiduals {
-			residualIn += inboundCategories[address][category]
-			residualOut += outboundCategories[address][category]
-		}
-		row.Residual = endpointCategorySummary(residualIn, residualOut, in.Total, out.Total)
 		rows = append(rows, row)
 	}
-	options := flowEndpointTableOptions(rows)
+	fields := flowEndpointTableFields(side)
+	options := flowEndpointTableOptions(rows, fields)
 	filtered := rows[:0]
 	search := strings.ToLower(request.Search)
 	for _, row := range rows {
 		if !flowEndpointTableMatchesFilters(row, request.Filters) {
 			continue
 		}
-		if search != "" && !strings.Contains(strings.ToLower(flowEndpointTableSearchText(row)), search) {
+		if search != "" && !strings.Contains(strings.ToLower(flowEndpointTableSearchText(row, fields)), search) {
 			continue
 		}
 		filtered = append(filtered, row)
@@ -548,7 +514,7 @@ func composeFlowEndpointReportTable(panels []flowReportPanel, request flowTableR
 	sort.SliceStable(rows, func(i, j int) bool {
 		comparison := flowEndpointTableCompare(rows[i], rows[j], request.SortBy)
 		if comparison == 0 {
-			comparison = strings.Compare(endpointAddress(rows[i].flowTableRow), endpointAddress(rows[j].flowTableRow))
+			comparison = strings.Compare(rows[i].Address, rows[j].Address)
 		}
 		if request.SortDirection == "desc" {
 			return comparison > 0
@@ -579,25 +545,6 @@ func composeFlowEndpointReportTable(panels []flowReportPanel, request flowTableR
 	return panels, nil
 }
 
-func flowEndpointDirectionRows(panels []flowReportPanel, panelID string) map[string]flowTableRow {
-	result := map[string]flowTableRow{}
-	for _, panel := range panels {
-		if panel.ID != panelID || panel.Status != "ready" {
-			continue
-		}
-		var envelope struct {
-			Table flowTablePage `json:"table"`
-		}
-		if json.Unmarshal(panel.Data, &envelope) != nil {
-			return result
-		}
-		for _, row := range envelope.Table.Items {
-			result[endpointAddress(row)] = row
-		}
-	}
-	return result
-}
-
 func flowEndpointCategoryRows(panels []flowReportPanel, panelID string) (map[string]map[string]float64, error) {
 	result := map[string]map[string]float64{}
 	for _, panel := range panels {
@@ -617,7 +564,7 @@ func flowEndpointCategoryRows(panels []flowReportPanel, panelID string) (map[str
 			if result[summary.Address] == nil {
 				result[summary.Address] = map[string]float64{}
 			}
-			result[summary.Address][summary.Category] += summary.Total
+			result[summary.Address][summary.Category] += summary.Bandwidth
 		}
 	}
 	return result, nil
@@ -662,8 +609,17 @@ func endpointAddress(row flowTableRow) string {
 	return row.Label
 }
 
-func endpointDirectionSummary(row flowTableRow) flowEndpointDirectionSummary {
-	return flowEndpointDirectionSummary{Last: row.Last, Average: row.Average, P95: row.P95, Maximum: row.Maximum, Total: row.Total}
+func endpointClassifications(inbound, outbound map[string]float64) []flowEndpointClassification {
+	categories := append(append([]string(nil), flowReportCategories...), flowReportResiduals...)
+	result := make([]flowEndpointClassification, 0, len(categories))
+	for _, category := range categories {
+		inValue, outValue := inbound[category], outbound[category]
+		if inValue == 0 && outValue == 0 {
+			continue
+		}
+		result = append(result, flowEndpointClassification{Category: category, Inbound: inValue, Outbound: outValue})
+	}
+	return result
 }
 
 func endpointCategorySummary(inbound, outbound, inboundTotal, outboundTotal float64) flowEndpointCategorySummary {
@@ -680,33 +636,38 @@ func endpointCategorySummary(inbound, outbound, inboundTotal, outboundTotal floa
 }
 
 func flowEndpointTableValue(row flowEndpointReportRow, field string) string {
-	if _, base := flowTableFields[field]; base {
-		return flowTableValue(row.flowTableRow, field)
-	}
 	switch field {
+	case "dimension":
+		return row.Address
+	case "last":
+		return formatFlowEndpointNumber(row.Bandwidth)
+	case "p95":
+		if row.P95 != nil {
+			return formatFlowEndpointNumber(*row.P95)
+		}
 	case "business":
 		return strings.Join(row.Businesses, ",")
-	case "inbound":
-		return strconv.FormatFloat(row.Inbound.Total, 'g', -1, 64)
-	case "outbound":
-		return strconv.FormatFloat(row.Outbound.Total, 'g', -1, 64)
-	case "residual":
-		return endpointCategoryFilterValue(row.Residual)
-	default:
-		if value, ok := row.Categories[field]; ok {
-			return endpointCategoryFilterValue(value)
+	case "classification":
+		values := make([]string, 0, len(row.Classifications))
+		for _, classification := range row.Classifications {
+			values = append(values, classification.Category+":"+formatFlowEndpointNumber(classification.Inbound)+"/"+formatFlowEndpointNumber(classification.Outbound))
 		}
+		return strings.Join(values, ",")
 	}
 	return ""
 }
 
-func endpointCategoryFilterValue(value flowEndpointCategorySummary) string {
-	return fmt.Sprintf("%g/%g", value.Inbound, value.Outbound)
+func formatFlowEndpointNumber(value float64) string {
+	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
-func flowEndpointTableOptions(rows []flowEndpointReportRow) map[string][]flowTableFilterOption {
-	result := make(map[string][]flowTableFilterOption, len(flowEndpointTableFields))
-	for field := range flowEndpointTableFields {
+func endpointCategoryFilterValue(value flowEndpointCategorySummary) string {
+	return formatFlowEndpointNumber(value.Inbound) + "/" + formatFlowEndpointNumber(value.Outbound)
+}
+
+func flowEndpointTableOptions(rows []flowEndpointReportRow, fields map[string]struct{}) map[string][]flowTableFilterOption {
+	result := make(map[string][]flowTableFilterOption, len(fields))
+	for field := range fields {
 		counts := map[string]int{}
 		for _, row := range rows {
 			counts[flowEndpointTableValue(row, field)]++
@@ -738,9 +699,9 @@ func flowEndpointTableMatchesFilters(row flowEndpointReportRow, filters map[stri
 	return true
 }
 
-func flowEndpointTableSearchText(row flowEndpointReportRow) string {
-	values := make([]string, 0, len(flowEndpointTableFields))
-	for field := range flowEndpointTableFields {
+func flowEndpointTableSearchText(row flowEndpointReportRow, fields map[string]struct{}) string {
+	values := make([]string, 0, len(fields))
+	for field := range fields {
 		values = append(values, flowEndpointTableValue(row, field))
 	}
 	return strings.Join(values, " ")
@@ -748,23 +709,26 @@ func flowEndpointTableSearchText(row flowEndpointReportRow) string {
 
 func flowEndpointTableCompare(left, right flowEndpointReportRow, field string) int {
 	if field == "dimension" {
-		return strings.Compare(left.Label, right.Label)
+		return strings.Compare(left.Address, right.Address)
+	}
+	if field == "last" {
+		return cmpFloat64(left.Bandwidth, right.Bandwidth)
+	}
+	if field == "p95" {
+		var leftValue, rightValue float64
+		if left.P95 != nil {
+			leftValue = *left.P95
+		}
+		if right.P95 != nil {
+			rightValue = *right.P95
+		}
+		return cmpFloat64(leftValue, rightValue)
 	}
 	if field == "business" {
 		return strings.Compare(strings.Join(left.Businesses, ","), strings.Join(right.Businesses, ","))
 	}
-	if value, ok := left.Categories[field]; ok {
-		other := right.Categories[field]
-		return cmpFloat64(value.Inbound+value.Outbound, other.Inbound+other.Outbound)
+	if field == "classification" {
+		return strings.Compare(flowEndpointTableValue(left, field), flowEndpointTableValue(right, field))
 	}
-	if field == "residual" {
-		return cmpFloat64(left.Residual.Inbound+left.Residual.Outbound, right.Residual.Inbound+right.Residual.Outbound)
-	}
-	if field == "inbound" {
-		return cmpFloat64(left.Inbound.Total, right.Inbound.Total)
-	}
-	if field == "outbound" {
-		return cmpFloat64(left.Outbound.Total, right.Outbound.Total)
-	}
-	return flowTableCompare(left.flowTableRow, right.flowTableRow, field)
+	return 0
 }

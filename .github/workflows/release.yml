@@ -11,6 +11,8 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    env:
+      WEB_ARCHIVE: watchdog-web_${{ github.ref_name }}.tar.gz
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,10 +32,22 @@ jobs:
       - name: Build site
         run: npm run --prefix ./frontend build
 
+      - name: Verify site
+        run: |
+          npm run --prefix ./frontend check
+          npm run --prefix ./frontend test
+          npm run --prefix ./frontend typecheck
+
+      - name: Package site
+        run: tar -C frontend/dist -czf "$WEB_ARCHIVE" .
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "^1.22.1"
+          go-version-file: go.mod
+
+      - name: Test Go services
+        run: go test ./...
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -56,3 +70,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TOKEN || secrets.GITHUB_TOKEN }}
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
           IS_FORK: ${{ github.repository_owner != 'cloudcache' }}
+
+      - name: Upload site archive
+        run: gh release upload "$GITHUB_REF_NAME" "$WEB_ARCHIVE" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.TOKEN || secrets.GITHUB_TOKEN }}

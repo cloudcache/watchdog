@@ -1,11 +1,10 @@
 import { t } from "@lingui/core/macro"
-import { useStore } from "@nanostores/react"
 import type React from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { isAdmin, isReadOnlyUser } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { $router, Link, navigate } from "../../router"
+import { Link, navigate, resolveDocumentPage } from "../../router"
 import { buttonVariants } from "../../ui/button"
 
 interface SidebarNavProps extends React.HTMLAttributes<HTMLElement> {
@@ -20,7 +19,7 @@ interface SidebarNavProps extends React.HTMLAttributes<HTMLElement> {
 }
 
 export function SidebarNav({ className, items, ...props }: SidebarNavProps) {
-	const page = useStore($router)
+	const page = resolveDocumentPage()
 
 	return (
 		<>

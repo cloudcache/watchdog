@@ -1,22 +1,20 @@
 import { t } from "@lingui/core/macro"
-import { useStore } from "@nanostores/react"
 import { useEffect, useMemo } from "react"
 import { UserAuthForm } from "@/components/login/auth-form"
 import { Logo } from "../logo"
 import { ModeToggle } from "../mode-toggle"
-import { $router } from "../router"
+import { resolveDocumentPage } from "../router"
 import { useTheme } from "../theme-provider"
 import ForgotPassword from "./forgot-pass-form"
 
 export default function Login() {
-	const page = useStore($router)
 	const { theme } = useTheme()
 
 	useEffect(() => {
 		document.title = [t`Login`, "Watchdog"].join(" / ")
 	}, [])
 
-	const forgotPassword = page?.route === "forgot_password"
+	const forgotPassword = resolveDocumentPage()?.route === "forgot_password"
 	const subtitle = useMemo(
 		() => (forgotPassword ? t`Enter email address to reset password` : t`Please sign in to your account`),
 		[forgotPassword]
