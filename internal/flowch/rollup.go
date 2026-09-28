@@ -20,9 +20,10 @@ import (
 type RollupResolution string
 
 const (
-	RollupOneMinute RollupResolution = "1m"
-	RollupOneHour   RollupResolution = "1h"
-	RollupOneDay    RollupResolution = "1d"
+	RollupOneMinute  RollupResolution = "1m"
+	RollupFiveMinute RollupResolution = "5m"
+	RollupOneHour    RollupResolution = "1h"
+	RollupOneDay     RollupResolution = "1d"
 
 	// LifecycleGenerationFloor reserves the high generation namespace for
 	// retention-policy rollups, which stay authoritative across hot-cache
@@ -75,7 +76,7 @@ type StorageCounters struct {
 
 type RollupRunner struct {
 	executor queryExecutor
-	stats    [3]rollupCounters
+	stats    [4]rollupCounters
 	terminal terminalCounters
 	reaper   reaperCounters
 	now      func() time.Time
@@ -115,9 +116,10 @@ type RollupResolutionStats struct {
 }
 
 type RollupStats struct {
-	OneMinute RollupResolutionStats
-	OneHour   RollupResolutionStats
-	OneDay    RollupResolutionStats
+	OneMinute  RollupResolutionStats
+	FiveMinute RollupResolutionStats
+	OneHour    RollupResolutionStats
+	OneDay     RollupResolutionStats
 	// TerminalPermanentFailures counts buckets abandoned on a non-retryable
 	// (permanent) classification; TerminalExhaustedFailures counts buckets whose
 	// retryable error (e.g. MEMORY_LIMIT) ran out of attempts. Both mean the
@@ -714,6 +716,7 @@ func (r *RollupRunner) Stats() RollupStats {
 		OneMinute:                 snapshotRollupCounters(&r.stats[0]),
 		OneHour:                   snapshotRollupCounters(&r.stats[1]),
 		OneDay:                    snapshotRollupCounters(&r.stats[2]),
+		FiveMinute:                snapshotRollupCounters(&r.stats[3]),
 		TerminalPermanentFailures: r.terminal.permanent.Load(),
 		TerminalExhaustedFailures: r.terminal.exhausted.Load(),
 		ReaperRepairsGap:          r.reaper.repairsGap.Load(),
@@ -787,6 +790,9 @@ func rollupStatsTarget(resolution RollupResolution) (int, time.Duration) {
 	if resolution == RollupOneHour {
 		return 1, time.Hour
 	}
+	if resolution == RollupFiveMinute {
+		return 3, 5 * time.Minute
+	}
 	return 0, time.Minute
 }
 
@@ -807,8 +813,16 @@ func ValidateRollupRequest(request RollupRequest) error {
 		return err
 	}
 	if request.SourceResolution != "" &&
-		!(request.Resolution == RollupOneHour && request.SourceResolution == RollupOneMinute) {
+		!((request.Resolution == RollupOneHour && request.SourceResolution == RollupOneMinute) ||
+			(request.Resolution == RollupFiveMinute && request.SourceResolution == RollupOneMinute)) {
 		return errors.New("rollup source resolution is invalid")
+	}
+	// The five-minute tier is only ever derived from the complete one-minute
+	// tier (design 2026-09-23 §8.2). A cold five-minute-from-raw path is a later
+	// iteration; until then a source is mandatory so a bare "5m" cannot fall
+	// through to the raw scan builder.
+	if request.Resolution == RollupFiveMinute && request.SourceResolution != RollupOneMinute {
+		return errors.New("five-minute rollup must derive from the one-minute tier")
 	}
 	if request.MarkerOnly && (request.SourceResolution != "" || !request.BucketEnd.IsZero() || request.Resolution == RollupOneDay) {
 		return errors.New("marker-only rollup must be one empty minute/hour bucket without a derived source")
@@ -830,10 +844,20 @@ func ValidateRollupRequest(request RollupRequest) error {
 	if !request.BucketEnd.IsZero() {
 		_, endOffset := request.BucketEnd.Zone()
 		end = request.BucketEnd.UTC()
-		if request.Resolution != RollupOneMinute || endOffset != 0 || !end.After(bucket) ||
-			end.Sub(bucket) > time.Hour || end.Truncate(time.Minute) != end ||
-			bucket.Truncate(time.Hour) != end.Add(-time.Nanosecond).Truncate(time.Hour) {
-			return errors.New("minute rollup batch must be UTC-aligned, increasing, at most one hour and hour-local")
+		switch request.Resolution {
+		case RollupOneMinute:
+			if endOffset != 0 || !end.After(bucket) ||
+				end.Sub(bucket) > time.Hour || end.Truncate(time.Minute) != end ||
+				bucket.Truncate(time.Hour) != end.Add(-time.Nanosecond).Truncate(time.Hour) {
+				return errors.New("minute rollup batch must be UTC-aligned, increasing, at most one hour and hour-local")
+			}
+		case RollupFiveMinute:
+			if endOffset != 0 || !end.After(bucket) ||
+				end.Sub(bucket) > 24*time.Hour || end.Truncate(5*time.Minute) != end {
+				return errors.New("five-minute rollup batch must be UTC-aligned, increasing and at most one day")
+			}
+		default:
+			return errors.New("only minute and five-minute rollups support a batch range")
 		}
 	}
 	if request.GeneratedAt.UTC().Before(end) {
@@ -883,6 +907,8 @@ func buildRollupQuery(request RollupRequest) (ch.Query, error) {
 		body = fmt.Sprintf(derivedRollupSQL, table, "flow_aggregate_1h", "flow_aggregate_1h")
 	} else if request.Resolution == RollupOneHour && request.SourceResolution == RollupOneMinute {
 		body = fmt.Sprintf(derivedRollupSQL, table, "flow_aggregate_1m", "flow_aggregate_1m")
+	} else if request.Resolution == RollupFiveMinute && request.SourceResolution == RollupOneMinute {
+		body = fmt.Sprintf(derivedFiveMinuteRollupSQL, table, "flow_aggregate_1m", "flow_aggregate_1m")
 	}
 	query := ch.Query{
 		Body: body,
@@ -957,6 +983,8 @@ func rollupTarget(resolution RollupResolution) (time.Duration, string, error) {
 	switch resolution {
 	case RollupOneMinute:
 		return time.Minute, "flow_aggregate_1m", nil
+	case RollupFiveMinute:
+		return 5 * time.Minute, "flow_aggregate_5m", nil
 	case RollupOneHour:
 		return time.Hour, "flow_aggregate_1h", nil
 	case RollupOneDay:
@@ -1170,3 +1198,66 @@ GROUP BY
   bucket, target_id, device_id, exporter_id, business_direction, category,
   business, dimension_kind, dimension_value, dimension_snapshot_id,
   geo_version, classification_version, generation, generated_at`
+
+// derivedFiveMinuteRollupSQL compacts the complete, marker-published one-minute
+// tier into five-minute buckets. It is the hot path for flow_aggregate_5m: the
+// scheduler calls it only after all source 1m markers exist. Unlike the 1m->1h
+// path it drops the high-cardinality src_ip / dst_ip / remote_port kinds
+// entirely (they remain in raw and the 2-day 1m tier), which is where the 5m
+// query layer's capacity saving comes from; the retained non-endpoint kinds are
+// unfolded in 1m, so their five-minute sums are exact. Run publishes the
+// _generation markers in a separate INSERT after this statement succeeds.
+const derivedFiveMinuteRollupSQL = `INSERT INTO %s (
+  bucket, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind, dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
+  raw_bytes, raw_packets, estimated_bytes, estimated_packets,
+  received_records, unknown_sampling_records, quality_records,
+  generation, generated_at)
+WITH
+  {bucket_start:DateTime('UTC')} AS rollup_start,
+  {bucket_end:DateTime('UTC')} AS rollup_end,
+  {generation:UInt64} AS rollup_generation,
+  {generated_at:DateTime64(3, 'UTC')} AS rollup_generated_at,
+  latest AS (
+    SELECT bucket, max(generation) AS generation
+    FROM %s
+    WHERE bucket >= rollup_start AND bucket < rollup_end
+      AND dimension_kind = '_generation'
+    GROUP BY bucket
+  )
+SELECT
+  bucket, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind, dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
+  sum(raw_bytes) AS raw_bytes,
+  sum(raw_packets) AS raw_packets,
+  sum(estimated_bytes) AS estimated_bytes,
+  sum(estimated_packets) AS estimated_packets,
+  sum(received_records) AS received_records,
+  sum(unknown_sampling_records) AS unknown_sampling_records,
+  sum(quality_records) AS quality_records,
+  generation, generated_at
+FROM (
+  SELECT
+    toStartOfFiveMinutes(source.bucket) AS bucket,
+    source.target_id AS target_id, source.device_id AS device_id, source.exporter_id AS exporter_id,
+    source.business_direction AS business_direction, source.category AS category, source.business AS business,
+    source.dimension_kind AS dimension_kind, source.dimension_value AS dimension_value,
+    source.dimension_snapshot_id AS dimension_snapshot_id, source.geo_version AS geo_version,
+    source.classification_version AS classification_version,
+    source.raw_bytes AS raw_bytes, source.raw_packets AS raw_packets,
+    source.estimated_bytes AS estimated_bytes, source.estimated_packets AS estimated_packets,
+    source.received_records AS received_records, source.unknown_sampling_records AS unknown_sampling_records,
+    source.quality_records AS quality_records,
+    rollup_generation AS generation, rollup_generated_at AS generated_at
+  FROM %s AS source FINAL
+  INNER JOIN latest ON source.bucket = latest.bucket AND source.generation = latest.generation
+  WHERE source.bucket >= rollup_start AND source.bucket < rollup_end
+    AND source.dimension_kind NOT IN ('_generation', 'src_ip', 'dst_ip', 'remote_port')
+)
+GROUP BY
+  bucket, target_id, device_id, exporter_id,
+  business_direction, category, business, dimension_kind, dimension_value,
+  dimension_snapshot_id, geo_version, classification_version,
+  generation, generated_at`

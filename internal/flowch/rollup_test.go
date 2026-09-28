@@ -693,3 +693,62 @@ func parameter(query ch.Query, key string) string {
 	}
 	return ""
 }
+
+func TestBuildFiveMinuteRollupDerivesFromCompleteMinuteAndExcludesEndpoints(t *testing.T) {
+	request := RollupRequest{
+		Resolution: RollupFiveMinute, SourceResolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC),
+		BucketEnd:  time.Date(2026, 9, 24, 2, 0, 0, 0, time.UTC),
+		Generation: 21, GeneratedAt: time.Date(2026, 9, 24, 2, 5, 0, 0, time.UTC),
+	}
+	query, err := buildRollupQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"INSERT INTO flow_aggregate_5m", "FROM flow_aggregate_1m AS source FINAL",
+		"INNER JOIN latest ON source.bucket = latest.bucket",
+		"toStartOfFiveMinutes(source.bucket) AS bucket",
+		"source.dimension_kind NOT IN ('_generation', 'src_ip', 'dst_ip', 'remote_port')",
+	} {
+		if !strings.Contains(query.Body, required) {
+			t.Fatalf("five-minute derived rollup query missing %q", required)
+		}
+	}
+	if strings.Contains(query.Body, "FROM flow_records") || strings.Contains(query.Body, "ARRAY JOIN") {
+		t.Fatal("five-minute derived rollup unexpectedly expanded raw facts")
+	}
+	marker, err := buildRollupMarkerQuery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parameter(marker, "bucket_seconds") != "'300'" {
+		t.Fatalf("five-minute marker bucket_seconds=%s", parameter(marker, "bucket_seconds"))
+	}
+}
+
+func TestValidateFiveMinuteRollupBatchBounds(t *testing.T) {
+	base := RollupRequest{
+		Resolution: RollupFiveMinute, SourceResolution: RollupOneMinute,
+		Bucket:     time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		Generation: 21, GeneratedAt: time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC),
+	}
+	if err := ValidateRollupRequest(base); err != nil {
+		t.Fatalf("single 5m bucket rejected: %v", err)
+	}
+	full := base
+	full.BucketEnd = time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	if err := ValidateRollupRequest(full); err != nil {
+		t.Fatalf("full-day 5m batch rejected: %v", err)
+	}
+	unaligned := base
+	unaligned.BucketEnd = time.Date(2026, 9, 24, 0, 3, 0, 0, time.UTC)
+	if err := ValidateRollupRequest(unaligned); err == nil {
+		t.Fatal("unaligned 5m batch end accepted")
+	}
+	tooLong := base
+	tooLong.BucketEnd = time.Date(2026, 9, 25, 0, 5, 0, 0, time.UTC)
+	if err := ValidateRollupRequest(tooLong); err == nil {
+		t.Fatal("over-one-day 5m batch accepted")
+	}
+}
