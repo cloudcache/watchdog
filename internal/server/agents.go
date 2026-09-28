@@ -599,7 +599,12 @@ func (s *Server) agentHeartbeat(c *gin.Context) {
 		}
 		clockSkew = int(now.Sub(sentAt).Seconds())
 	}
-	_, err = s.db.ExecContext(c.Request.Context(), `UPDATE agents SET row_version=row_version+IF(status='registered',1,0),last_seen_at=NOW(3),status=IF(status='registered','active',status),health=IF(status='revoked',health,'ok'),software_version=IF(?='',software_version,?),api_version=?,capabilities_json=CAST(? AS JSON),clock_skew_seconds=? WHERE id=?`, req.SoftwareVersion, req.SoftwareVersion, apiVersion, capabilitiesForValidation, clockSkew, c.Param("id"))
+	// A heartbeat proves liveness, not correctness: it advances last_seen_at (which
+	// effectiveHealth uses to derive "offline") but must not overwrite health.
+	// Correctness health is owned by processing-run reports (recordAgentStatus:
+	// ok/error) so that a worker that is alive but failing, or alive but never
+	// processing, is not masked green by its 30s heartbeat.
+	_, err = s.db.ExecContext(c.Request.Context(), `UPDATE agents SET row_version=row_version+IF(status='registered',1,0),last_seen_at=NOW(3),status=IF(status='registered','active',status),software_version=IF(?='',software_version,?),api_version=?,capabilities_json=CAST(? AS JSON),clock_skew_seconds=? WHERE id=?`, req.SoftwareVersion, req.SoftwareVersion, apiVersion, capabilitiesForValidation, clockSkew, c.Param("id"))
 	if err != nil {
 		writeSQLError(c, err)
 		return
