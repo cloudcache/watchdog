@@ -110,6 +110,42 @@ func (m *Collector) Handler() http.Handler {
 	})
 }
 
+// CollectorSnapshot is a point-in-time copy of the collector's workload
+// counters, used for periodic agent run reports so the registry reflects real
+// collection throughput rather than liveness alone.
+type CollectorSnapshot struct {
+	SFlowReceived   uint64
+	NetFlowReceived uint64
+	Rejected        uint64
+	Invalid         uint64
+	Oversize        uint64
+	KernelDrops     uint64
+	KafkaRecords    uint64
+	KafkaBytes      uint64
+	KafkaErrors     uint64
+	BufferedRecords int64
+}
+
+// Snapshot returns the current collector workload counters.
+func (m *Collector) Snapshot() CollectorSnapshot {
+	if m == nil {
+		return CollectorSnapshot{}
+	}
+	stats := m.producerStats()
+	return CollectorSnapshot{
+		SFlowReceived:   m.sflowReceived.Load(),
+		NetFlowReceived: m.netflowReceived.Load(),
+		Rejected:        m.rejected.Load(),
+		Invalid:         m.invalid.Load(),
+		Oversize:        m.oversize.Load(),
+		KernelDrops:     m.kernelDrops.Load(),
+		KafkaRecords:    stats.Records,
+		KafkaBytes:      stats.Bytes,
+		KafkaErrors:     stats.Errors,
+		BufferedRecords: stats.BufferedRecords,
+	}
+}
+
 type Worker struct {
 	consumerStats  func() flowstream.ConsumerStats
 	processorStats func() flowworker.ProcessorStats

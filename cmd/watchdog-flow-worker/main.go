@@ -155,6 +155,8 @@ func run(opt options) error {
 	identity := flowworker.VersionWorkerIdentity{
 		WorkerID: strings.TrimSpace(opt.workerID), BootID: uuid.NewString(), SoftwareVersion: "watchdog-flow-worker-v1",
 	}
+	var agentToken string
+	var agentPlanVersion uint64
 	agentRuntime := flowWorkerAgentRuntime(opt, identity.BootID)
 	if agentRuntime.Enabled() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
@@ -179,6 +181,8 @@ func run(opt options) error {
 				return nil
 			}
 		}
+		agentToken = token
+		agentPlanVersion = appliedPlanVersion
 		go agentRuntime.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("flow-worker agent heartbeat: %v", err)
 			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
@@ -303,6 +307,42 @@ func run(opt options) error {
 		versionSyncDone = done
 		go runVersionSyncLoop(runCtx, versionSync, versionCursor, barrierSync, opt.versionRefreshInterval, done)
 	}
+	if agentRuntime.Enabled() && agentToken != "" {
+		previousProcessor := processor.Stats()
+		previousConsumer := consumer.Stats()
+		windowStarted := time.Now()
+		go agentRuntime.RunReports(runCtx, agentToken, time.Minute, func() agentplan.RunReport {
+			pstats := processor.Stats()
+			cstats := consumer.Stats()
+			now := time.Now()
+			report := agentplan.RunReport{
+				StartedAt:  windowStarted,
+				EndedAt:    now,
+				DurationMS: uint64(now.Sub(windowStarted).Milliseconds()),
+				Summary: map[string]any{
+					"plan_version":        agentPlanVersion,
+					"datagrams":           flowCounterDelta(pstats.Datagrams, previousProcessor.Datagrams),
+					"records":             flowCounterDelta(pstats.Records, previousProcessor.Records),
+					"counter_records":     flowCounterDelta(pstats.CounterRecords, previousProcessor.CounterRecords),
+					"template_missing":    flowCounterDelta(pstats.TemplateMissing, previousProcessor.TemplateMissing),
+					"rejected":            flowCounterDelta(pstats.Rejected, previousProcessor.Rejected),
+					"retryable_errors":    flowCounterDelta(pstats.RetryableErrors, previousProcessor.RetryableErrors),
+					"kafka_records":       flowCounterDelta(cstats.Records, previousConsumer.Records),
+					"kafka_bytes":         flowCounterDelta(cstats.Bytes, previousConsumer.Bytes),
+					"kafka_lag_records":   cstats.LagRecords,
+					"kafka_errors":        flowCounterDelta(cstats.Errors, previousConsumer.Errors),
+					"kafka_data_loss":     flowCounterDelta(cstats.DataLoss, previousConsumer.DataLoss),
+					"assigned_partitions": cstats.AssignedPartitions,
+				},
+			}
+			previousProcessor = pstats
+			previousConsumer = cstats
+			windowStarted = now
+			return report
+		}, func(err error) {
+			log.Printf("flow-worker agent run report: %v", err)
+		})
+	}
 	consumerErrCh := make(chan error, 1)
 	go func() { consumerErrCh <- consumer.RunPartitionBatches(runCtx, processor.HandleRecords) }()
 	select {
@@ -329,6 +369,13 @@ func run(opt options) error {
 	default:
 	}
 	return err
+}
+
+func flowCounterDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return 0
+	}
+	return current - previous
 }
 
 type flowWorkerPlanConfig struct {

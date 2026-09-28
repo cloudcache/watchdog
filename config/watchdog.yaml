@@ -6,9 +6,8 @@
 # WATCHDOG_CLICKHOUSE_PASSWORD_FILE, WATCHDOG_ADMIN_PASSWORD) instead of being committed here.
 
 server:
-  listen: "127.0.0.1:8091"          # the single API_URL the frontend points at
-  origins:                          # CORS allowlist for the separate frontend build
-    - "http://127.0.0.1:8090"
+  listen: "127.0.0.1:8091"          # internal API listener; public exposure is web-server owned
+  origins: []                        # optional API allowlist when a deployment intentionally uses separate origins
 
 mysql:                              # the only mutable-management authority
   dsn: "root:@tcp(127.0.0.1:3306)/watchdog?parseTime=true&loc=UTC&charset=utf8mb4"
@@ -108,6 +107,8 @@ billing:
   worker_lease: "30s"                # heartbeat renews this lease while a job is running
   worker_max_attempts: 5
   worker_retry_base: "30s"
+agents:                              # collector/worker join: one shared token, matched constant-time
+  shared_token: ""                  # WATCHDOG_AGENT_SHARED_TOKEN; agents present this to register + authenticate
 
 address:                            # geo/address-library source imports (MMDB/IPDB)
   artifact_dir: "data/address-artifacts"  # where uploaded source databases are stored

@@ -243,6 +243,7 @@ func EnvelopeMetadata(data []byte) Metadata {
 
 type Registration struct {
 	EnrollmentToken string
+	SharedToken     string
 	AgentID         string
 	Name            string
 	Kind            string
@@ -257,11 +258,16 @@ type Registration struct {
 }
 
 func Register(ctx context.Context, baseURL string, client *http.Client, registration Registration) (string, error) {
-	if registration.EnrollmentToken == "" || registration.AgentID == "" || !ValidKind(registration.Kind) || registration.CredentialFile == "" {
-		return "", errors.New("agent enrollment token, identity, kind, and credential file are required")
+	enrollmentToken := strings.TrimSpace(registration.EnrollmentToken)
+	sharedToken := strings.TrimSpace(registration.SharedToken)
+	if (enrollmentToken == "") == (sharedToken == "") || registration.AgentID == "" || !ValidKind(registration.Kind) {
+		return "", errors.New("exactly one agent registration token, identity, and kind are required")
+	}
+	if enrollmentToken != "" && strings.TrimSpace(registration.CredentialFile) == "" {
+		return "", errors.New("agent credential file is required for one-time enrollment")
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"enrollment_token": registration.EnrollmentToken, "id": registration.AgentID,
+		"enrollment_token": enrollmentToken, "token": sharedToken, "id": registration.AgentID,
 		"name": registration.Name, "kind": registration.Kind, "device_id": registration.DeviceID,
 		"role": registration.Role, "mode": registration.Mode, "endpoint": registration.Endpoint,
 		"software_version": registration.SoftwareVersion, "api_version": registration.APIVersion,
@@ -284,6 +290,9 @@ func Register(ctx context.Context, baseURL string, client *http.Client, registra
 	if response.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 		return "", fmt.Errorf("register agent: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if sharedToken != "" {
+		return sharedToken, nil
 	}
 	var result struct {
 		Credential struct {

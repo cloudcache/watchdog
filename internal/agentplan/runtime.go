@@ -129,6 +129,100 @@ func (r RuntimeConfig) RunHeartbeats(ctx context.Context, token string, interval
 	}
 }
 
+// RunReport is one periodic processing summary a streaming collector/worker
+// sends so the registry reflects real workload, not just liveness. Summary
+// carries per-window counters (records in/out, bytes, drops, errors), gauges
+// (Kafka lag, buffered records),
+// current version, per-target counts); the server stores it as
+// agent_runs.summary_json.
+type RunReport struct {
+	Status     string
+	Error      string
+	StartedAt  time.Time
+	EndedAt    time.Time
+	DurationMS uint64
+	Summary    map[string]any
+}
+
+// ReportRun posts one processing summary to the agent status endpoint.
+func (r RuntimeConfig) ReportRun(ctx context.Context, token string, report RunReport) error {
+	status := strings.TrimSpace(report.Status)
+	if status == "" {
+		status = "success"
+	}
+	ended := report.EndedAt
+	if ended.IsZero() {
+		ended = time.Now().UTC()
+	}
+	started := report.StartedAt
+	if started.IsZero() {
+		started = ended
+	}
+	body := map[string]any{
+		"status":      status,
+		"started_at":  started.UTC().Format(time.RFC3339Nano),
+		"ended_at":    ended.UTC().Format(time.RFC3339Nano),
+		"duration_ms": report.DurationMS,
+	}
+	if strings.TrimSpace(report.Error) != "" {
+		body["error"] = report.Error
+	}
+	if len(report.Summary) > 0 {
+		body["summary"] = report.Summary
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(r.BaseURL), "/") + "/api/v1/agents/" + url.PathEscape(r.AgentID) + "/status"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	client := r.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return ErrUnauthorized
+	}
+	if response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		return errors.New("agent status report failed: " + response.Status + ": " + strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// RunReports periodically collects and posts a processing summary until ctx is
+// done. collect snapshots the current counters each interval.
+func (r RuntimeConfig) RunReports(ctx context.Context, token string, interval time.Duration, collect func() RunReport, report func(error)) {
+	if collect == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if err := r.ReportRun(ctx, token, collect()); err != nil && report != nil {
+			report(err)
+		}
+	}
+}
+
 func (r RuntimeConfig) Enabled() bool { return strings.TrimSpace(r.BaseURL) != "" }
 
 // Sync registers the process once when necessary, then fetches, verifies,
@@ -184,6 +278,23 @@ func (r RuntimeConfig) Sync(ctx context.Context, apply ApplyFunc) (SyncResult, s
 		Software: r.SoftwareVersion,
 	}
 	result, err := client.Sync(ctx, apply)
+	if errors.Is(err, ErrUnauthorized) && token != "" {
+		// A configured installation-wide token authenticates only after the agent
+		// row exists. Register idempotently, then retry the original plan fetch.
+		// Per-agent credentials cannot pass this registration endpoint and retain
+		// the same unauthorized failure semantics.
+		token, registerErr := Register(ctx, r.BaseURL, r.HTTPClient, Registration{
+			SharedToken: token, AgentID: r.AgentID, Name: r.Name,
+			Kind: r.Kind, DeviceID: r.DeviceID, Role: r.Role, Mode: r.Mode,
+			Endpoint: r.Endpoint, SoftwareVersion: r.SoftwareVersion,
+			APIVersion: r.APIVersion, Capabilities: r.Capabilities,
+		})
+		if registerErr != nil {
+			return SyncResult{}, "", registerErr
+		}
+		client.Token = token
+		result, err = client.Sync(ctx, apply)
+	}
 	return result, token, err
 }
 

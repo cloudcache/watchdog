@@ -264,3 +264,12 @@ func TestLoadRawDeleteBarrierCanConsumeAfterDurableInstallWhileACKRetries(t *tes
 		t.Fatalf("ACK retry attempts=%d err=%v", ackAttempts, err)
 	}
 }
+
+func TestFlowCounterDeltaHandlesRestart(t *testing.T) {
+	if got := flowCounterDelta(150, 100); got != 50 {
+		t.Fatalf("delta=%d", got)
+	}
+	if got := flowCounterDelta(10, 100); got != 0 {
+		t.Fatalf("reset delta=%d", got)
+	}
+}

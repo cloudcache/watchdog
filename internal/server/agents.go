@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -608,6 +609,18 @@ func (s *Server) agentHeartbeat(c *gin.Context) {
 	})
 }
 
+// agentSharedTokenMatch reports whether the presented token equals the
+// installation-wide shared agent token in constant time. Empty values never
+// match, so an unset shared token disables this path entirely.
+func agentSharedTokenMatch(shared, presented string) bool {
+	shared = strings.TrimSpace(shared)
+	presented = strings.TrimSpace(presented)
+	if shared == "" || presented == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(shared)) == 1
+}
+
 func (s *Server) authenticateAgent(c *gin.Context, agentID string) bool {
 	token := strings.TrimSpace(c.GetHeader("X-Watchdog-Agent-Token"))
 	if token == "" {
@@ -620,6 +633,21 @@ func (s *Server) authenticateAgent(c *gin.Context, agentID string) bool {
 		fail(c, http.StatusUnauthorized, "unauthorized", "agent token or client certificate is required")
 		return false
 	}
+	// Shared-token path: any agent presenting the installation shared token is
+	// authenticated for its own id, provided the row exists (created by register)
+	// and has not been revoked. No per-agent credential lookup is needed.
+	if agentSharedTokenMatch(s.cfg.Agents.SharedToken, token) {
+		var sharedStatus string
+		sharedErr := s.db.QueryRowContext(c.Request.Context(), `SELECT status FROM agents WHERE id=?`, agentID).Scan(&sharedStatus)
+		if sharedErr == nil && sharedStatus != "revoked" {
+			return true
+		}
+		if sharedErr == nil && sharedStatus == "revoked" {
+			fail(c, http.StatusUnauthorized, "unauthorized", "agent is revoked")
+			return false
+		}
+		// Row missing: fall through so an un-registered id still fails cleanly.
+	}
 	var status string
 	err := s.db.QueryRowContext(c.Request.Context(), `SELECT a.status FROM agent_credentials ac JOIN agents a ON a.id=ac.agent_id WHERE ac.agent_id=? AND ((?<>'' AND ac.token_sha256=?) OR (?<>'' AND ac.mtls_fingerprint=?)) AND ac.status='active' AND ac.revoked_at IS NULL AND (ac.expires_at IS NULL OR ac.expires_at>NOW(3))`, agentID, token, sha256hex(token), fingerprint, fingerprint).Scan(&status)
 	if err != nil || status == "revoked" {
@@ -631,15 +659,35 @@ func (s *Server) authenticateAgent(c *gin.Context, agentID string) bool {
 }
 
 type agentRunMutation struct {
-	LegacyAgentID   string `json:"AgentID"`
-	Status          string `json:"status"`
-	Error           string `json:"error"`
-	Seen            bool   `json:"seen"`
-	StartedAt       string `json:"started_at"`
-	LegacyStartedAt string `json:"StartedAt"`
-	EndedAt         string `json:"ended_at"`
-	LegacyEndedAt   string `json:"EndedAt"`
-	DurationMS      uint64 `json:"duration_ms"`
+	LegacyAgentID   string          `json:"AgentID"`
+	Status          string          `json:"status"`
+	Error           string          `json:"error"`
+	Seen            bool            `json:"seen"`
+	StartedAt       string          `json:"started_at"`
+	LegacyStartedAt string          `json:"StartedAt"`
+	EndedAt         string          `json:"ended_at"`
+	LegacyEndedAt   string          `json:"EndedAt"`
+	DurationMS      uint64          `json:"duration_ms"`
+	Summary         json.RawMessage `json:"summary"`
+}
+
+// normalizeAgentRunSummary validates the optional per-window processing summary
+// a streaming collector/worker reports (records in/out, bytes, drops, errors,
+// Kafka lag, current version, per-target counts). It must be a small JSON object
+// so the registry can show real workload without accepting arbitrary blobs.
+func normalizeAgentRunSummary(raw json.RawMessage) (any, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	if len(trimmed) > 8192 {
+		return nil, errors.New("summary must not exceed 8192 bytes")
+	}
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return nil, errors.New("summary must be a JSON object")
+	}
+	return trimmed, nil
 }
 
 func (s *Server) recordAgentStatus(c *gin.Context) {
@@ -680,9 +728,14 @@ func (s *Server) recordAgentStatus(c *gin.Context) {
 	if req.DurationMS == 0 && ended.After(started) {
 		req.DurationMS = uint64(ended.Sub(started).Milliseconds())
 	}
+	summary, err := normalizeAgentRunSummary(req.Summary)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	tx, err := s.db.BeginTx(c.Request.Context(), nil)
 	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_runs (id,agent_id,status,error_text,seen,started_at,ended_at,duration_ms) VALUES (?,?,?,NULLIF(?,''),?,?,?,?)`, newID(), c.Param("id"), req.Status, req.Error, req.Seen, started, ended, req.DurationMS)
+		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_runs (id,agent_id,status,error_text,seen,started_at,ended_at,duration_ms,summary_json) VALUES (?,?,?,NULLIF(?,''),?,?,?,?,?)`, newID(), c.Param("id"), req.Status, req.Error, req.Seen, started, ended, req.DurationMS, summary)
 	}
 	if err == nil {
 		failure := req.Status == "failure"
@@ -746,7 +799,7 @@ func (s *Server) listAgentRuns(c *gin.Context) {
 		return
 	}
 	queryArgs := append(append([]any{}, args...), page.Limit, page.Offset)
-	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT id,status,COALESCE(error_text,''),seen,started_at,ended_at,duration_ms FROM agent_runs`+clause+fmt.Sprintf(" ORDER BY %s %s,id %s LIMIT ? OFFSET ?", page.Sort, page.Order, page.Order), queryArgs...)
+	rows, err := s.db.QueryContext(c.Request.Context(), `SELECT id,status,COALESCE(error_text,''),seen,started_at,ended_at,duration_ms,summary_json FROM agent_runs`+clause+fmt.Sprintf(" ORDER BY %s %s,id %s LIMIT ? OFFSET ?", page.Sort, page.Order, page.Order), queryArgs...)
 	if err != nil {
 		writeSQLError(c, err)
 		return
@@ -758,11 +811,16 @@ func (s *Server) listAgentRuns(c *gin.Context) {
 		var seen bool
 		var started, ended time.Time
 		var duration uint64
-		if err := rows.Scan(&id, &status, &errorText, &seen, &started, &ended, &duration); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&id, &status, &errorText, &seen, &started, &ended, &duration, &summary); err != nil {
 			writeSQLError(c, err)
 			return
 		}
-		items = append(items, gin.H{"id": id, "status": status, "error": errorText, "seen": seen, "started_at": started.UTC().Format(time.RFC3339Nano), "ended_at": ended.UTC().Format(time.RFC3339Nano), "duration_ms": duration})
+		item := gin.H{"id": id, "status": status, "error": errorText, "seen": seen, "started_at": started.UTC().Format(time.RFC3339Nano), "ended_at": ended.UTC().Format(time.RFC3339Nano), "duration_ms": duration}
+		if summary.Valid && strings.TrimSpace(summary.String) != "" {
+			item["summary"] = json.RawMessage(summary.String)
+		}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		writeSQLError(c, err)
@@ -811,6 +869,7 @@ func (s *Server) createEnrollmentToken(c *gin.Context) {
 func (s *Server) enrollAgent(c *gin.Context) {
 	var req struct {
 		EnrollmentToken string          `json:"enrollment_token"`
+		Token           string          `json:"token"`
 		ID              string          `json:"id"`
 		Name            string          `json:"name"`
 		Kind            string          `json:"kind"`
@@ -825,8 +884,8 @@ func (s *Server) enrollAgent(c *gin.Context) {
 	if !decodeStrictBody(c, &req) {
 		return
 	}
-	if req.EnrollmentToken == "" || !validAgentKind(req.Kind) {
-		fail(c, http.StatusBadRequest, "invalid_request", "enrollment_token and valid kind are required")
+	if (req.EnrollmentToken == "" && strings.TrimSpace(req.Token) == "") || !validAgentKind(req.Kind) {
+		fail(c, http.StatusBadRequest, "invalid_request", "a registration token (shared token or enrollment token) and valid kind are required")
 		return
 	}
 	if req.Mode == "" {
@@ -867,6 +926,62 @@ func (s *Server) enrollAgent(c *gin.Context) {
 	}
 	if err := validateAgentCompatibility(req.Kind, apiVersion, json.RawMessage(capabilities)); err != nil {
 		fail(c, http.StatusBadRequest, "incompatible_agent", err.Error())
+		return
+	}
+	// Shared-token registration: the caller presents the installation-wide shared
+	// token; upsert the agent as active with no enrollment token and no per-agent
+	// credential (it keeps authenticating with the shared token). Idempotent
+	// across reboots; a revoked agent stays revoked so disable still holds.
+	if strings.TrimSpace(req.Token) != "" {
+		if !agentSharedTokenMatch(s.cfg.Agents.SharedToken, req.Token) {
+			fail(c, http.StatusUnauthorized, "invalid_registration", "registration token is invalid")
+			return
+		}
+		deviceID := strings.TrimSpace(req.DeviceID)
+		if deviceID != "" {
+			var deviceKind string
+			err := s.db.QueryRowContext(c.Request.Context(), `SELECT kind FROM devices WHERE id=?`, deviceID).Scan(&deviceKind)
+			if errors.Is(err, sql.ErrNoRows) {
+				fail(c, http.StatusBadRequest, "invalid_reference", "referenced device does not exist")
+				return
+			}
+			if err != nil {
+				writeSQLError(c, err)
+				return
+			}
+			want := ""
+			if req.Kind == "system" {
+				want = "host"
+			} else if req.Kind == "snmp" {
+				want = "network"
+			}
+			if want != "" && deviceKind != want {
+				fail(c, http.StatusBadRequest, "invalid_binding", fmt.Sprintf("%s agents require a %s device binding", req.Kind, want))
+				return
+			}
+		}
+		tx, err := s.db.BeginTx(c.Request.Context(), nil)
+		if err == nil {
+			_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agents (id,name,kind,status,health,software_version,api_version,capabilities_json) VALUES (?,?,?,'active','unknown',?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),kind=VALUES(kind),status=IF(status='revoked',status,'active'),software_version=VALUES(software_version),api_version=VALUES(api_version),capabilities_json=VALUES(capabilities_json),row_version=row_version+1,updated_at=NOW(3)`, id, name, req.Kind, req.SoftwareVersion, apiVersion, capabilities)
+		}
+		if err == nil {
+			_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_bindings (id,agent_id,device_id,role,mode,endpoint) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE device_id=VALUES(device_id),role=VALUES(role),mode=VALUES(mode),endpoint=VALUES(endpoint),row_version=row_version+1`, newID(), id, nullableText(deviceID), role, req.Mode, strings.TrimSpace(req.Endpoint))
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else if tx != nil {
+			_ = tx.Rollback()
+		}
+		if err != nil {
+			writeSQLError(c, err)
+			return
+		}
+		r, err := s.readAgent(c.Request.Context(), id)
+		if err != nil {
+			writeSQLError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"agent": r.dto()})
 		return
 	}
 	credential := "wda_" + randomToken()

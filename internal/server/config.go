@@ -23,6 +23,7 @@ type Config struct {
 	Kafka      KafkaConfig      `yaml:"kafka"`
 	Flow       FlowConfig       `yaml:"flow"`
 	AgentPlans AgentPlansConfig `yaml:"agent_plans"`
+	Agents     AgentsConfig     `yaml:"agents"`
 	Address    AddressConfig    `yaml:"address"`
 	SNMP       SNMPConfig       `yaml:"snmp"`
 	Billing    BillingConfig    `yaml:"billing"`
@@ -36,6 +37,14 @@ type AgentPlansConfig struct {
 	SigningKeyID      string        `yaml:"signing_key_id"`
 	SigningPrivateKey string        `yaml:"signing_private_key"`
 	DefaultTTL        time.Duration `yaml:"default_ttl"`
+}
+
+// AgentsConfig holds the single installation-wide shared token that collectors
+// and workers present to join and authenticate. Comms that match the token are
+// admitted; no per-agent enrollment token or credential is minted. Supply it
+// via WATCHDOG_AGENT_SHARED_TOKEN or an owner-readable override; never commit it.
+type AgentsConfig struct {
+	SharedToken string `yaml:"shared_token"`
 }
 
 // ServerConfig — frontend and backend are separate builds, so the server never hosts static files.
@@ -243,7 +252,7 @@ func defaultConfig() Config {
 			Query: FlowQueryConfig{
 				ExecutionTimeout: 2 * time.Minute, SynchronousTimeout: 25 * time.Second,
 				SynchronousMaxRange: time.Hour, PanelConcurrency: 3, AsyncPollInterval: time.Second,
-					AsyncWorkerConcurrency: 1,
+				AsyncWorkerConcurrency: 1,
 				AsyncWorkerPoll:        500 * time.Millisecond, AsyncWorkerLease: 30 * time.Second,
 				AsyncWorkerMaxAttempts: 3, AsyncWorkerRetryBase: 5 * time.Second,
 				AsyncResultDir: "data/flow-query-results", AsyncResultRetention: 24 * time.Hour,
@@ -440,6 +449,9 @@ func applySecretEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("WATCHDOG_ADMIN_PASSWORD"); v != "" {
 		cfg.Admin.Password = v
+	}
+	if v := strings.TrimSpace(os.Getenv("WATCHDOG_AGENT_SHARED_TOKEN")); v != "" {
+		cfg.Agents.SharedToken = v
 	}
 }
 

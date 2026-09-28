@@ -48,3 +48,12 @@ func TestBuildProducerConfigRejectsMisleadingSecurityOptions(t *testing.T) {
 		t.Fatal("SASL without a password file was accepted")
 	}
 }
+
+func TestFlowCounterDeltaHandlesRestart(t *testing.T) {
+	if got := flowCounterDelta(150, 100); got != 50 {
+		t.Fatalf("delta=%d", got)
+	}
+	if got := flowCounterDelta(10, 100); got != 0 {
+		t.Fatalf("reset delta=%d", got)
+	}
+}

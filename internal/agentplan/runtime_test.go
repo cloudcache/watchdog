@@ -65,6 +65,49 @@ func TestRuntimeEnrollmentReplacesBootstrapSecretWithMachineCredential(t *testin
 	}
 }
 
+func TestRuntimeSharedTokenRegistersMissingAgentAndRetries(t *testing.T) {
+	dir := t.TempDir()
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKeyFile := filepath.Join(dir, "agent-plan.pub")
+	if err := WritePublicKey(publicKeyFile, publicKey); err != nil {
+		t.Fatal(err)
+	}
+	registered := false
+	runtime := RuntimeConfig{
+		BaseURL: "http://control-plane.test", AgentID: "snmp-main", Name: "snmp-main", Kind: "snmp",
+		Role: "snmp", Mode: "push", SoftwareVersion: "test", APIVersion: "v1",
+		Capabilities: []string{"snmp.poll/v2"}, Token: "installation-secret",
+		PublicKeyFile: publicKeyFile, LKGFile: filepath.Join(dir, "plan.lkg"), BootID: "boot-1",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) *http.Response {
+			status, body := http.StatusUnauthorized, ""
+			switch {
+			case request.Method == http.MethodPost && request.URL.Path == "/api/v1/agents/register":
+				var payload map[string]any
+				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				if payload["token"] != "installation-secret" || payload["enrollment_token"] != "" {
+					t.Fatalf("registration payload=%v", payload)
+				}
+				registered = true
+				status, body = http.StatusCreated, `{"agent":{"id":"snmp-main"}}`
+			case registered && request.Method == http.MethodGet && request.URL.Path == "/api/v1/agents/snmp-main/plan":
+				status = http.StatusNotFound
+			}
+			return &http.Response{
+				StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request,
+			}
+		})},
+	}
+	_, token, err := runtime.Sync(context.Background(), func(context.Context, Spec) error { return nil })
+	if !errors.Is(err, ErrNoPlan) || token != "installation-secret" || !registered {
+		t.Fatalf("registered=%v token=%q err=%v", registered, token, err)
+	}
+}
+
 func TestDecodeConfigIsStrict(t *testing.T) {
 	spec := Spec{Config: json.RawMessage(`{"interval_seconds":30}`)}
 	var value struct {

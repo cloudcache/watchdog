@@ -81,6 +81,8 @@ func run(opt options) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	agentLifecycle := make(chan error, 1)
+	var agentToken string
+	var agentPlanVersion uint64
 	runtimeConfig := flowCollectAgentRuntime(opt)
 	if runtimeConfig.Enabled() {
 		result, token, err := runtimeConfig.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
@@ -105,6 +107,8 @@ func run(opt options) error {
 				return nil
 			}
 		}
+		agentToken = token
+		agentPlanVersion = appliedPlanVersion
 		go runtimeConfig.RunHeartbeats(ctx, token, 30*time.Second, appliedPlanVersion, func(err error) {
 			log.Printf("flow-collect agent heartbeat: %v", err)
 			if errors.Is(err, agentplan.ErrUnauthorized) || errors.Is(err, agentplan.ErrPlanChanged) {
@@ -241,6 +245,38 @@ func run(opt options) error {
 		}
 	}
 	log.Printf("flow-collect started: collector=%s revision=%d listeners=%d sockets_per_listener=%d topic=%s-v1", plan.CollectorID, plan.Revision, running/opt.sockets, opt.sockets, producerConfig.Kafka.Topic)
+	if runtimeConfig.Enabled() && agentToken != "" {
+		previous := runtimeMetrics.Snapshot()
+		windowStarted := time.Now()
+		go runtimeConfig.RunReports(runCtx, agentToken, time.Minute, func() agentplan.RunReport {
+			snap := runtimeMetrics.Snapshot()
+			now := time.Now()
+			report := agentplan.RunReport{
+				StartedAt:  windowStarted,
+				EndedAt:    now,
+				DurationMS: uint64(now.Sub(windowStarted).Milliseconds()),
+				Summary: map[string]any{
+					"plan_version":     agentPlanVersion,
+					"plan_revision":    plan.Revision,
+					"sflow_received":   flowCounterDelta(snap.SFlowReceived, previous.SFlowReceived),
+					"netflow_received": flowCounterDelta(snap.NetFlowReceived, previous.NetFlowReceived),
+					"rejected":         flowCounterDelta(snap.Rejected, previous.Rejected),
+					"invalid":          flowCounterDelta(snap.Invalid, previous.Invalid),
+					"oversize":         flowCounterDelta(snap.Oversize, previous.Oversize),
+					"kernel_drops":     flowCounterDelta(snap.KernelDrops, previous.KernelDrops),
+					"kafka_records":    flowCounterDelta(snap.KafkaRecords, previous.KafkaRecords),
+					"kafka_bytes":      flowCounterDelta(snap.KafkaBytes, previous.KafkaBytes),
+					"kafka_errors":     flowCounterDelta(snap.KafkaErrors, previous.KafkaErrors),
+					"kafka_buffered":   snap.BufferedRecords,
+				},
+			}
+			previous = snap
+			windowStarted = now
+			return report
+		}, func(err error) {
+			log.Printf("flow-collect agent run report: %v", err)
+		})
+	}
 	var first error
 	receiverResults := 0
 	select {
@@ -278,6 +314,13 @@ func run(opt options) error {
 	default:
 	}
 	return first
+}
+
+func flowCounterDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return 0
+	}
+	return current - previous
 }
 
 type flowCollectPlanConfig struct {
