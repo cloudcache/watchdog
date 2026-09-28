@@ -30,6 +30,40 @@ management APIs still start; `/api/v1/health` reports `503 degraded` with
 idempotent ClickHouse migrations and wires the telemetry services. Kafka is
 used only by the independent Flow collector/worker processes.
 
+### ClickHouse storage tiers, capacity and retention
+
+The embedded migrations create one raw fact table and a pyramid of
+generation-marked aggregates, all applied automatically on install/startup:
+
+| Table | Role | Partition | DDL TTL |
+|---|---|---|---|
+| `flow_records` | raw facts (per-flow, endpoints) | by day | none — lifecycle-managed |
+| `flow_aggregate_1m` | recent minute cache | by day | 2 days |
+| `flow_aggregate_5m` | mid-range non-endpoint queries | by day | 90 days |
+| `flow_interface_traffic_5m` | billing / interface evidence | by month | none — evidence, state-machine deleted |
+| `flow_aggregate_1h` / `flow_aggregate_1d` | long-range trends + raw-delete conservation | by month | none — lifecycle-managed |
+
+`flow_records` also carries a `flow_event_time_minmax` skip index so a sub-hour
+query prunes within the containing hour instead of scanning it whole.
+
+**Capacity caveat — read before production.** Raw has **no automatic retention**.
+It is removed only by the Flow lifecycle state machine, which is fail-closed and
+does nothing until an operator publishes a retention policy. With no policy, raw
+grows at roughly 15 GiB/day per exporter (≈62 compressed bytes/row) and must be
+reclaimed by hand. The aggregate tiers are small (order 1 GB total) and are not
+the capacity driver — raw is. Two prerequisites for a stable footprint:
+
+1. **Keep raw off the OS root disk.** ClickHouse stores under
+   `/var/lib/clickhouse` on the root filesystem by default; a full root wedges
+   writes — and even `DROP PARTITION` fails, because ClickHouse runs as non-root
+   and cannot use the ext4 reserved blocks. Put cold partitions on the largest
+   disk with a storage policy (steps in
+   `docs/watchdog-5m-atomic-tier-design-2026-09-23.md` §0).
+2. **Publish a retention policy** so raw ages out by conservation instead of
+   manual drops. Until then, monitor disk and Kafka lag: a root-disk fill that
+   outlasts Kafka retention (default 6h) permanently loses the un-drained flow
+   window.
+
 ## 2. Start the independent backend and frontend
 
 MySQL itself must be reachable, but the `watchdog` database may be absent or
@@ -47,17 +81,21 @@ npm --prefix frontend run dev
 ```
 
 The frontend listens on `127.0.0.1:8090`; the API listens on
-`127.0.0.1:8091`. The browser reaches the API on the frontend's own origin:
-the Vite dev server proxies `/api/` to `127.0.0.1:8091` (`vite.config.ts`),
-so no CORS entry is needed. `server.origins` only matters for a split-origin
-setup in which `frontend/public/watchdog-config.js` names an explicit
-`API_URL`.
+`127.0.0.1:8091`. `frontend/public/watchdog-config.js` names the API origin
+explicitly. The API `server.origins` must admit the frontend origin.
 
 For a deployment, build the frontend (`npm --prefix frontend run build`) and
-serve `frontend/dist` with nginx using `deploy/nginx/watchdog.conf`: it proxies
-`/api/` to the API on loopback, answers deep links with `index.html`, and marks
-`index.html` / `watchdog-config.js` as `no-cache` so a redeploy never leaves
-open tabs on stale bundles. The backend itself never hosts static files.
+serve `frontend/dist` with nginx using `deploy/nginx/watchdog.conf`. The build
+creates a real HTML document for every fixed page and an explicit Nginx mapping
+for each dynamic detail page. Navigation performs full browser document loads;
+unknown paths and `/api/` return real errors instead of a frontend fallback.
+HTML documents and `watchdog-config.js` are `no-store`; hashed assets remain
+immutable. The backend itself never hosts static files. Keep the production runtime configuration at
+`/var/www/watchdog-runtime/watchdog-config.js` as shown by the nginx config, rather than
+inside a versioned frontend release. This prevents a static deployment from
+silently resetting `API_URL`. Keep this public runtime directory root-owned and
+world-readable; do not expose `/etc/watchdog`, which also contains protected
+service configuration and secret paths.
 
 ## 3. First installation and login
 

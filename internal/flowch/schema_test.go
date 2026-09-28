@@ -30,6 +30,7 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"016_flow_historical_reclassification.sql", "017_flow_reclassification_counter_totals.sql",
 		"018_sflow_interface_counters.sql", "019_flow_estimated_bytes_scale.sql",
 		"020_flow_hot_rollup_and_skip_indexes.sql",
+		"021_flow_atomic_5m.sql", "022_flow_records_event_time_index.sql",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("unexpected ClickHouse migrations: %v", paths)
@@ -49,8 +50,8 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		sql.WriteByte('\n')
 	}
 	allSQL := sql.String()
-	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 14 {
-		t.Fatalf("ClickHouse table count=%d, want 14", count)
+	if count := strings.Count(allSQL, "CREATE TABLE IF NOT EXISTS watchdog_flow."); count != 16 {
+		t.Fatalf("ClickHouse table count=%d, want 16", count)
 	}
 	for _, required := range []string{
 		"flow_records", "flow_aggregate_1m", "flow_aggregate_1h", "flow_aggregate_1d", "flow_ingest_batches", "flow_vpn_candidates",
@@ -78,6 +79,9 @@ func TestFlowSchemaMigrationKeepsOneCanonicalContract(t *testing.T) {
 		"flow_reclassified_records", "flow_reclassification_generations", "reclassification_generation", "raw_bytes Decimal(39, 0)",
 		"sflow_interface_counters", "counter_record_count UInt64", "if_in_octets UInt64", "if_out_octets UInt64",
 		"estimated_bytes_scale_ppm UInt32 DEFAULT 1000000",
+		"flow_interface_traffic_5m", "flow_aggregate_5m", "flow_event_time_minmax",
+		"observed_records", "known_records", "classification_versions   Array(UInt32)",
+		"TTL bucket + INTERVAL 90 DAY DELETE",
 	} {
 		if !strings.Contains(allSQL, required) {
 			t.Fatalf("ClickHouse migration is missing %q", required)

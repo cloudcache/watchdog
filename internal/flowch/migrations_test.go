@@ -17,7 +17,7 @@ func TestLoadMigrationsReadsCanonicalSetAndExactChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 20 || migrations[0].Name != "001_flow_schema.sql" || migrations[11].Name != "012_snmp_telemetry.sql" || migrations[12].Name != "013_flow_vpn_candidate_features.sql" || migrations[13].Name != "014_snmp_events.sql" || migrations[14].Name != "015_flow_raw_delete_quarantine.sql" || migrations[15].Name != "016_flow_historical_reclassification.sql" || migrations[16].Name != "017_flow_reclassification_counter_totals.sql" || migrations[17].Name != "018_sflow_interface_counters.sql" || migrations[18].Name != "019_flow_estimated_bytes_scale.sql" || migrations[19].Name != "020_flow_hot_rollup_and_skip_indexes.sql" {
+	if len(migrations) != 22 || migrations[0].Name != "001_flow_schema.sql" || migrations[11].Name != "012_snmp_telemetry.sql" || migrations[12].Name != "013_flow_vpn_candidate_features.sql" || migrations[13].Name != "014_snmp_events.sql" || migrations[14].Name != "015_flow_raw_delete_quarantine.sql" || migrations[15].Name != "016_flow_historical_reclassification.sql" || migrations[16].Name != "017_flow_reclassification_counter_totals.sql" || migrations[17].Name != "018_sflow_interface_counters.sql" || migrations[18].Name != "019_flow_estimated_bytes_scale.sql" || migrations[19].Name != "020_flow_hot_rollup_and_skip_indexes.sql" || migrations[20].Name != "021_flow_atomic_5m.sql" || migrations[21].Name != "022_flow_records_event_time_index.sql" {
 		t.Fatalf("migrations=%+v", migrations)
 	}
 	for _, migration := range migrations {
