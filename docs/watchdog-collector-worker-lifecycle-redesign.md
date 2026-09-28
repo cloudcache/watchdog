@@ -1,5 +1,20 @@
 # Collector / Worker Lifecycle — Review & Redesign
 
+> **SUPERSEDED for the agent-lifecycle half (2026-09-28).** Item 2's proposals
+> below (persistent install/kind-scoped *registration token* table, a `pending →
+> approve` gate, keeping one-time enrollment as legacy) were **not** the shipped
+> design. What shipped instead is a **single global shared token**
+> (`agents.shared_token` / `WATCHDOG_AGENT_SHARED_TOKEN`): agents self-register
+> idempotently with it and are authenticated by it; the one-time enrollment
+> tokens **and** per-agent credentials were removed outright (migration `0050`
+> drops `agent_enrollment_tokens` + `agent_credentials`), `activate-agent.sh` and
+> the UI now provision the shared-token file, heartbeats no longer write health
+> (derived from run reports + staleness), and streaming collectors/workers report
+> per-window workload into `agent_runs.summary_json`. Read the "current state"
+> audit below as history; for the implemented model see §5.3 of
+> `watchdog-kiss-architecture.md` and migration `0050`. Item 1 (SNMP auto-discover loop)
+> is unaffected and shipped as described.
+
 Status: **review + proposed redesign (no code yet)**. Owner: platform.
 Scope: close two runtime loops that the UI opens but never connects to the
 data plane —

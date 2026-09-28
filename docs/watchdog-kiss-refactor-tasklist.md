@@ -213,6 +213,8 @@
 
 > **KISS-04D 部署契约补齐（2026-09-18）**：仓库现提供四类统一 systemd unit 与 `deploy/systemd/activate-agent.sh`。本机 enrollment 的主流程只显示一次性 token 和一条激活命令；命令携带非秘密的计划公钥，脚本静默读取 token、创建受保护文件、安装 unit、enable 并 restart。文件路径和 Registry 参数仅保留在高级/自动化入口。Flow worker 的 Agent 控制面使用独立 `-agent-control-plane-url`，不得因登记 Agent 而把既有 bootstrap enrichment 错切到远程版本。注册成功后 runtime 删除 enrollment 文件、只保留 mode 0600 machine credential。它不把 `systemctl`/Docker socket/root 交给 Gin，也不绕过 Flow worker 的 publication 前置。此项在生产三进程真正登记、worker 发布物就绪并完成 ACK 前仍保持未勾选。
 
+> **KISS-04 简化修订（2026-09-28，Stage 2）**：上面 KISS-04B/C/D 描述的一次性 enrollment token + per-agent 凭据 + 凭据轮换机制**已被整体移除**，改为**单一全局共享 token**（`agents.shared_token` / `WATCHDOG_AGENT_SHARED_TOKEN`）。即：`authenticateAgent` 只按共享 token 匹配 + 存活非吊销 agent 行放行（无 `agent_credentials`/mTLS）；`register` 只认共享 token 幂等 upsert 不发凭据；删除 `createEnrollmentToken`/`rotateAgentCredential` 端点；迁移 `0050` DROP `agent_enrollment_tokens`+`agent_credentials`；四类二进制去 `-agent-enrollment-token-file`；`activate-agent.sh` 与前端改为写共享 token 文件（前端删除 enrollment/rotate UI）；心跳不再回写 health（改由 run 上报 + staleness 派生）。因此上面历史条目中"一次性 token / machine credential / 凭据轮换"等表述均为当时事实，现以本条为准。已提交，真实 MySQL8 验证。当前模型见 `docs/watchdog-kiss-architecture.md` §5.3。
+
 ### KISS-05 现有 Geo/AddressSnap 链单域化
 
 - [x] **设计**：冻结“实现不重写、只去 tenant/owner”的边界；现有 MMDB/IPDB import、MySQL 业务表/字段、CRUD/list、job payload、WADS v1、object store、download/LKG/ACK/GC 均不变。(边界已冻结 + 全链去 tenant 清单已产出；结构决策见下方进度)

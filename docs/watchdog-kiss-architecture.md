@@ -192,22 +192,23 @@ SNMP 手工发现入口固定为 `POST /api/v1/devices/:id/snmp/discover`。服�
 
 Agent 固定使用以下生命周期：
 
-`enrollment token -> registered -> active -> draining -> revoked`
+`register (共享 token) -> active -> draining -> revoked`（管理端手工创建的行从 `registered` 起，首次通信自动转 `active`）
+
+安装侧只配置**一个**全局共享 token（`agents.shared_token` / 环境变量 `WATCHDOG_AGENT_SHARED_TOKEN`），所有采集器/worker 的配置文件直接写入该 token。进程首次同步时凭该 token 幂等注册（创建/更新 `agents` 行），此后所有机器请求都用同一 token 鉴权——不再有一次性 enrollment token，也不再有 per-agent 凭据或 mTLS fingerprint（2026-09-28 Stage 2 移除，见迁移 `deploy/schema/mysql/0050_drop_agent_enrollment_credentials.sql`）。
 
 最小模型：
 
 - `agents`：kind、name、software/API version、capabilities、health、last_seen、desired/acked plan version；
-- `agent_credentials`：单次 enrollment、token hash 或 mTLS fingerprint、轮换和吊销；
 - `agent_bindings`：agent 与 device、collector endpoint 或 worker role 的关系；
 - `agent_plans`：不可变版本、schema version、payload、签名、创建者；
 - `agent_plan_acks`：downloaded/installed/failed 和错误；
-- `agent_runs`：需要追溯的 discovery/probe 执行摘要。
+- `agent_runs`：discovery/probe 执行摘要，以及流式采集器/worker 每窗上报的处理量（records/bytes/drops/errors/Kafka lag/版本，存 `summary_json`）。
 
 capability 是版本化字符串与有界 JSON 参数，例如 `snmp.poll/v2`、`flow.receive.sflow/v1`、`flow.write.clickhouse/v2`。控制面只有一个 `AgentKindAdapter` 代码接口负责 validate/plan/status；不为每个 agent kind 注册一套 dataset、resource、target 和菜单。
 
-注册/CRUD 第一纵向切片固定以下约束：agent kind 只有 `system/snmp/flow_collect/flow_worker/probe`；API version 当前只接受 `v1`，且 capability 必须包含与 kind 对应的版本化前缀。enrollment token 是一次性的，并固定允许的 kind 与可选 `device_id`；没有 `device.viewAll` 的管理者只能为自己有权访问的具体设备签发 token，不能签发可绑定任意设备的 token。`system` 只能绑定 host device，`snmp` 只能绑定 network device；collector/worker 可不绑定具体设备。machine token 仅在创建或轮换响应显示一次，MySQL 只保存 SHA-256；mTLS 只保存证书 SHA-256 fingerprint。
+注册/CRUD 固定以下约束：agent kind 只有 `system/snmp/flow_collect/flow_worker/probe`；API version 当前只接受 `v1`，且 capability 必须包含与 kind 对应的版本化前缀。注册只认全局共享 token（常量时间比对）；`system` 只能绑定 host device，`snmp` 只能绑定 network device；collector/worker 可不绑定具体设备。管理端创建 agent 只建行，不签发任何 token/凭据（提交 `token`/`mtls_fingerprint` 返回 `shared_token_only`）；共享 token 由运维带外配置到进程侧，MySQL 不保存它。
 
-`row_version` 表示管理配置版本：创建、编辑、凭证轮换、吊销以及首次 `registered -> active` 转换会改变它；稳定 heartbeat 和 run 上报不会每分钟制造配置冲突。轮换和吊销在同一事务内锁定 agent、复核版本并更新凭证；旧 credential 在新 credential 生效前已吊销。生产 machine API 只有 Gin `POST /api/v1/agents/register` 与 `/api/v1/agents/:id/{heartbeat,status,errors}`。历史 system plan/sample 暂留原实现，直到 KISS-03 把其输入输出逐项迁入 Gin+ClickHouse 后才删除。
+`row_version` 表示管理配置版本：创建、编辑、吊销以及首次 `registered -> active` 转换会改变它；稳定 heartbeat 和 run 上报不会每分钟制造配置冲突。心跳只推进 `last_seen`（存活），不再回写 health；health 由处理结果上报（ok/error）与 `last_seen` 陈旧度（派生 offline）共同决定，因此存活但在报错或空转的进程不会被心跳粉饰成健康。生产 machine API 只有 Gin `POST /api/v1/agents/register` 与 `/api/v1/agents/:id/{heartbeat,status,errors}`；吊销后共享 token 对该 id 立即失效。历史 system plan/sample 暂留原实现，直到 KISS-03 把其输入输出逐项迁入 Gin+ClickHouse 后才删除。
 
 现有 fleet rollout 的复杂状态机不作为基础能力。批量下发先由一个 `operation_job` 对选定 agent 逐个创建 plan；只有出现真实的灰度发布需求和故障证据后，才增加 canary 数据模型。
 
@@ -282,7 +283,7 @@ SNMP 不负责 ASN/IP/地域流向分类；Flow 单独即可回答这些问题�
 | auth/RBAC | `users`, `sessions`, `roles`, `permissions`, `user_roles`, `role_permissions`, `user_device_permissions`, `user_port_permissions`, `user_billing_permissions`, `user_device_group_permissions`, `user_preferences` |
 | operations | `operation_jobs`, `audit_logs`, `idempotency_records`, `export_tasks`, `watchdog_installation`, `settings`（全局配置：保留期/阈值/默认口径等） |
 | inventory | `devices`, `ports`, `interface_addresses`, `bgp_sessions`, `sensors`, `physical_entities`, `vlans`, `lag_groups`, `snmp_profiles`, `locations`, `device_groups`, `device_group_members`, optional `custom_mibs` |
-| agents | `agents`, `agent_credentials`, `agent_bindings`, `agent_plans`, `agent_plan_acks`, `agent_runs` |
+| agents | `agents`, `agent_bindings`, `agent_plans`, `agent_plan_acks`, `agent_runs`（`agent_credentials`/`agent_enrollment_tokens` 于 2026-09-28 Stage 2 移除，改用全局共享 token） |
 | address | 保留现有 `address_*`, `geo_dict`, `geo_lines`, `isp_operator*`, `dimension_snapshot*`, `flow_enrichment_publication*` 业务表和字段；仅删除 tenant/owner 包装 |
 | flow control | `flow_classification_profiles`, `flow_vpn_rules`, `flow_vpn_findings`, `flow_saved_filters`, `flow_storage_policy` |
 | presentation | `saved_charts`, `chart_items`, `dashboards` |
@@ -314,7 +315,7 @@ KISS-03 按真实数据源分片迁移，不为延期功能预建通用抽象。
 | `tenants`, `tenant_modules`, tenant header/context/grant | 删除，不 PIN 常量 tenant |
 | `targets` + `network_devices` | 合并为 `devices` |
 | `target_agents` + `collector_bindings` | 合并为 `agent_bindings` |
-| collector enrollment/service principal/ownership/rollout/signing/trust 多套表 | 收敛为 agent credential/plan/ack；真实需要的签名 key 作为单一平台 key 管理 |
+| collector enrollment/service principal/ownership/rollout/signing/trust 多套表 | 收敛为全局共享 token + plan/ack；真实需要的签名 key 作为单一平台 key 管理 |
 | `ModuleRegistry/ResourceRegistry/TargetKindRegistry` | 删除；领域路由和固定权限 |
 | `DatasetRegistry/QueryProviderRegistry/query_dataset_policies` | 删除；两个 typed CH query service + 代码配置预算 |
 | VictoriaMetrics client/provider/export/delete-series/config | 删除；CH telemetry service |
@@ -333,8 +334,8 @@ HTTP API 只按领域暴露：
 | `/api/v1/devices/{id}/...` | device、port、IP、BGP、health、switching、inventory、events |
 | `/api/v1/snmp/profiles` | SNMP profile CRUD；列表不返回 security，详情仅授权设备管理员读取 |
 | `/api/v1/agents`, `/api/v1/agents/{id}` | agent 管理 CRUD、binding 与 run 列表（用户 session + `agent.view/manage`） |
-| `/api/v1/agents/enrollment-tokens`, `/api/v1/agents/register` | 管理员签发固定 kind/可选 device scope 的一次性 enrollment secret；agent 消费后仅返回一次 machine token |
-| `/api/v1/agents/{id}/{heartbeat,status,errors}` | agent token/Bearer 认证的运行面入口，不接受用户 session 代替 machine credential |
+| `/api/v1/agents/register` | agent 用全局共享 token 幂等自注册；不签发也不返回任何 per-agent 凭据 |
+| `/api/v1/agents/{id}/{heartbeat,status,errors}` | 共享 token（`X-Watchdog-Agent-Token`/Bearer）认证的运行面入口，不接受用户 session 代替 |
 | `/api/v1/address-library/...` | import、draft、preview、publish、rollback、status |
 | `/api/v1/flow/query` | Explorer typed query |
 | `/api/v1/flow/reports/{overview,dimensions,source,destination,overseas,vpn}` | 固定运营报表 |
