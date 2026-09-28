@@ -34,6 +34,7 @@ type AgentRunRecord = {
 	ended_at?: string
 	DurationMS?: number
 	duration_ms?: number
+	summary?: Record<string, unknown>
 }
 
 type AgentRunsProps = {
@@ -117,6 +118,7 @@ export default memo(({ id }: AgentRunsProps) => {
 				started: formatDate(run.StartedAt ?? run.started_at),
 				ended: formatDate(run.EndedAt ?? run.ended_at),
 				duration: formatDuration(run.DurationMS ?? run.duration_ms ?? 0),
+				workload: formatWorkload(run.summary),
 				error: run.Error ?? run.error ?? "",
 			})),
 		[runs, t]
@@ -127,6 +129,7 @@ export default memo(({ id }: AgentRunsProps) => {
 			{ field: "started", title: t`Started`, width: 190 },
 			{ field: "ended", title: t`Ended`, width: 190 },
 			{ field: "duration", title: t`Duration`, width: 110 },
+			{ field: "workload", title: t`Workload`, width: 460 },
 			{ field: "seen", title: t`Seen`, width: 90 },
 			{ field: "error", title: t`Error`, width: 420 },
 			{ field: "id", title: "ID", width: 180 },
@@ -283,4 +286,22 @@ function formatDuration(value: number) {
 		return `${value} ms`
 	}
 	return `${(value / 1000).toFixed(1)} s`
+}
+
+// formatWorkload renders a run's processing summary (agent_runs.summary_json) as a
+// compact key=value line. Keys differ by agent kind (worker: records/kafka_lag_records,
+// collector: sflow_received/netflow_received, snmp: samples/failed), so it renders every
+// reported counter generically rather than hard-coding one shape.
+function formatWorkload(summary?: Record<string, unknown>) {
+	if (!summary || typeof summary !== "object") {
+		return ""
+	}
+	const parts: string[] = []
+	for (const [key, value] of Object.entries(summary)) {
+		if (value === null || value === undefined) {
+			continue
+		}
+		parts.push(`${key}=${typeof value === "number" ? value.toLocaleString() : String(value)}`)
+	}
+	return parts.join(" · ")
 }

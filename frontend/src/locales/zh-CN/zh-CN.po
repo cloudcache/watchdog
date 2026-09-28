@@ -7707,6 +7707,10 @@ msgid "Worker installation status"
 msgstr "工作进程安装状态"
 
 #: src/components/routes/agent-runs.tsx
+msgid "Workload"
+msgstr "工作负载"
+
+#: src/components/routes/agent-runs.tsx
 #: src/components/routes/agent-runs.tsx
 msgid "yes"
 msgstr "是"
