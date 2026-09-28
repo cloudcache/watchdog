@@ -6,13 +6,13 @@ usage() {
 usage:
   activate-agent.sh KIND AGENT_ID [CONTROL_PLANE_URL]
   activate-agent.sh KIND AGENT_ID --plan-public-key BASE64 [CONTROL_PLANE_URL]
-  activate-agent.sh KIND AGENT_ID ENROLLMENT_TOKEN_FILE PUBLIC_KEY_FILE [CONTROL_PLANE_URL]
+  activate-agent.sh KIND AGENT_ID SHARED_TOKEN_FILE PUBLIC_KEY_FILE [CONTROL_PLANE_URL]
 
 KIND is one of: system, snmp, flow_collect, flow_worker.
-The short form prompts for the one-time token without echoing it. It reuses an
-installed Watchdog plan public key, or prompts for the public key on a new host.
-The long form is retained for non-interactive automation. Secrets are never
-passed as command-line values.
+The short form prompts for the installation-wide shared agent token without
+echoing it. It reuses an installed Watchdog plan public key, or prompts for the
+public key on a new host. The long form is retained for non-interactive
+automation. Secrets are never passed as command-line values.
 EOF
 	exit 2
 }
@@ -31,13 +31,13 @@ interactive_bootstrap() {
 	control_plane_url=$1
 	public_key=${2:-}
 	temp_root=$(mktemp -d)
-	enrollment_source="$temp_root/enrollment"
+	token_source="$temp_root/token"
 	public_key_source="$temp_root/agent-plan.pub"
-	IFS= read -r -s -p "One-time enrollment token: " enrollment_token
+	IFS= read -r -s -p "Installation shared agent token: " shared_token
 	printf '\n'
-	[[ -n $enrollment_token ]] || { echo "enrollment token is empty" >&2; exit 2; }
-	printf '%s\n' "$enrollment_token" >"$enrollment_source"
-	unset enrollment_token
+	[[ -n $shared_token ]] || { echo "shared token is empty" >&2; exit 2; }
+	printf '%s\n' "$shared_token" >"$token_source"
+	unset shared_token
 	if [[ -n $public_key ]]; then
 		printf '%s\n' "$public_key" >"$public_key_source"
 		unset public_key
@@ -65,7 +65,7 @@ case $# in
 			control_plane_url=${5:-http://127.0.0.1:8091}
 			interactive_bootstrap "$control_plane_url" "$4"
 		else
-			enrollment_source=$3
+			token_source=$3
 			public_key_source=$4
 			control_plane_url=${5:-http://127.0.0.1:8091}
 		fi
@@ -81,7 +81,7 @@ esac
 	echo "control-plane URL must be an http(s) URL without whitespace" >&2
 	exit 2
 }
-[[ -s $enrollment_source ]] || { echo "enrollment token file is empty or missing" >&2; exit 2; }
+[[ -s $token_source ]] || { echo "shared token file is empty or missing" >&2; exit 2; }
 [[ -s $public_key_source ]] || { echo "agent plan public key file is empty or missing" >&2; exit 2; }
 
 case $kind in
@@ -104,7 +104,7 @@ case $kind in
 		service=watchdog-flow-worker
 		# Agent lifecycle and Flow enrichment publication delivery are separate
 		# contracts. Do not switch a working bootstrap worker into remote
-		# enrichment mode merely by enrolling it in the Agent registry.
+		# enrichment mode merely by registering it in the Agent registry.
 		control_flag=-agent-control-plane-url
 		identity_flag=-worker-id
 		[[ -s /etc/watchdog/flow/worker.env ]] || {
@@ -122,21 +122,20 @@ getent passwd watchdog >/dev/null || { echo "watchdog user does not exist" >&2; 
 
 state_dir="/var/lib/watchdog/agents/$agent_id"
 config_dir=/etc/watchdog/agents
-enrollment_target="$state_dir/enrollment"
-credential_target="$state_dir/credential"
+token_target="$state_dir/token"
 lkg_target="$state_dir/plan.lkg"
 env_target="$config_dir/$service.env"
 
 install -d -m 0750 -o watchdog -g watchdog "$state_dir"
 install -d -m 0755 -o root -g root "$config_dir"
-install -m 0600 -o watchdog -g watchdog "$enrollment_source" "$enrollment_target"
+install -m 0600 -o watchdog -g watchdog "$token_source" "$token_target"
 if [[ $(readlink -f "$public_key_source") != $(readlink -f "$config_dir/agent-plan.pub" 2>/dev/null || true) ]]; then
 	install -m 0644 -o root -g root "$public_key_source" "$config_dir/agent-plan.pub"
 fi
 
 env_tmp=$(mktemp "$config_dir/.${service}.env.XXXXXX")
-printf 'WATCHDOG_AGENT_ARGS="%s %s %s %s -agent-token-file %s -agent-enrollment-token-file %s -agent-plan-public-key %s -agent-plan-lkg %s"\n' \
-	"$control_flag" "$control_plane_url" "$identity_flag" "$agent_id" "$credential_target" "$enrollment_target" \
+printf 'WATCHDOG_AGENT_ARGS="%s %s %s %s -agent-token-file %s -agent-plan-public-key %s -agent-plan-lkg %s"\n' \
+	"$control_flag" "$control_plane_url" "$identity_flag" "$agent_id" "$token_target" \
 	"$config_dir/agent-plan.pub" "$lkg_target" >"$env_tmp"
 chmod 0644 "$env_tmp"
 chown root:root "$env_tmp"

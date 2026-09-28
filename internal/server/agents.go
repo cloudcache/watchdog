@@ -224,14 +224,8 @@ func (s *Server) createAgent(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "invalid_request", "invalid agent kind, status, or mode")
 		return
 	}
-	token := strings.TrimSpace(valueOr(req.Token, ""))
-	fingerprint := normalizeFingerprint(valueOr(req.MTLSFingerprint, ""))
-	if req.MTLSFingerprint != nil && strings.TrimSpace(*req.MTLSFingerprint) != "" && fingerprint == "" {
-		fail(c, http.StatusBadRequest, "invalid_request", "mtls_fingerprint must be a SHA-256 fingerprint")
-		return
-	}
-	if token == "" && fingerprint == "" {
-		fail(c, http.StatusBadRequest, "invalid_request", "token or mTLS fingerprint is required")
+	if req.Token != nil || req.MTLSFingerprint != nil {
+		fail(c, http.StatusBadRequest, "shared_token_only", "agents authenticate with the installation shared token; per-agent credentials are not used")
 		return
 	}
 	id := strings.TrimSpace(req.ID)
@@ -264,12 +258,6 @@ func (s *Server) createAgent(c *gin.Context) {
 	if err == nil {
 		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agents (id,name,kind,status,health,software_version,api_version,capabilities_json,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?)`, id, valueOr(req.Name, id), kind, status, "unknown", valueOr(req.SoftwareVersion, ""), apiVersion, capabilities, principalUserID(c), principalUserID(c))
 	}
-	if err == nil && token != "" {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_credentials (id,agent_id,auth_type,token_sha256) VALUES (?,?,'token',?)`, newID(), id, sha256hex(token))
-	}
-	if err == nil && fingerprint != "" {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_credentials (id,agent_id,auth_type,mtls_fingerprint) VALUES (?,?,'mtls',?)`, newID(), id, fingerprint)
-	}
 	if err == nil {
 		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_bindings (id,agent_id,device_id,role,mode,endpoint) VALUES (?,?,?,?,?,?)`, newID(), id, nullableString(deviceID), valueOr(req.Role, kind), mode, valueOr(req.Endpoint, ""))
 	}
@@ -299,7 +287,7 @@ func (s *Server) updateAgent(c *gin.Context) {
 		return
 	}
 	if req.Token != nil || req.MTLSFingerprint != nil {
-		fail(c, http.StatusBadRequest, "use_credential_rotation", "use the credential rotation operation to replace agent credentials")
+		fail(c, http.StatusBadRequest, "shared_token_only", "agents authenticate with the installation shared token; per-agent credentials are not used")
 		return
 	}
 	old, err := s.readAgent(c.Request.Context(), c.Param("id"))
@@ -332,7 +320,7 @@ func (s *Server) updateAgent(c *gin.Context) {
 		return
 	}
 	if old.Status != "revoked" && status == "revoked" {
-		fail(c, http.StatusConflict, "use_revoke", "use the revoke operation so credentials are revoked atomically")
+		fail(c, http.StatusConflict, "use_revoke", "use the revoke operation to revoke an agent")
 		return
 	}
 	capabilities, err := normalizeCapabilities(req.Capabilities, true)
@@ -413,98 +401,6 @@ func (s *Server) deleteAgent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) rotateAgentCredential(c *gin.Context) {
-	var req struct {
-		AuthType         string `json:"auth_type"`
-		MTLSFingerprint  string `json:"mtls_fingerprint"`
-		ExpiresInSeconds int64  `json:"expires_in_seconds"`
-	}
-	if c.Request.ContentLength > 0 {
-		if !decodeStrictBody(c, &req) {
-			return
-		}
-	}
-	if req.AuthType == "" {
-		req.AuthType = "token"
-	}
-	if req.AuthType != "token" && req.AuthType != "mtls" {
-		fail(c, http.StatusBadRequest, "invalid_request", "auth_type must be token or mtls")
-		return
-	}
-	fingerprint := normalizeFingerprint(req.MTLSFingerprint)
-	if req.AuthType == "mtls" && fingerprint == "" {
-		fail(c, http.StatusBadRequest, "invalid_request", "a SHA-256 mTLS fingerprint is required")
-		return
-	}
-	if req.ExpiresInSeconds < 0 || req.ExpiresInSeconds > 365*86400 {
-		fail(c, http.StatusBadRequest, "invalid_request", "expires_in_seconds must be 0..31536000")
-		return
-	}
-	agent, err := s.readAgent(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	if !s.requireAgentAccess(c, agent) || !checkVersion(c, agent.RowVersion, "agent") {
-		return
-	}
-	if agent.Status == "revoked" {
-		fail(c, http.StatusConflict, "agent_revoked", "revoked agents cannot receive a new credential")
-		return
-	}
-	token := ""
-	credentialID := newID()
-	var tokenHash any
-	var fingerprintValue any
-	if req.AuthType == "token" {
-		token = "wda_" + randomToken()
-		tokenHash = sha256hex(token)
-	} else {
-		fingerprintValue = fingerprint
-	}
-	tx, err := s.db.BeginTx(c.Request.Context(), nil)
-	if err == nil {
-		var status string
-		var rowVersion uint64
-		err = tx.QueryRowContext(c.Request.Context(), `SELECT status,row_version FROM agents WHERE id=? FOR UPDATE`, agent.ID).Scan(&status, &rowVersion)
-		if err == nil && rowVersion != agent.RowVersion {
-			err = errVersionConflict
-		}
-		if err == nil && status == "revoked" {
-			err = errAgentRevoked
-		}
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agent_credentials SET status='revoked',revoked_at=NOW(3) WHERE agent_id=? AND auth_type=? AND status='active'`, c.Param("id"), req.AuthType)
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_credentials (id,agent_id,auth_type,token_sha256,mtls_fingerprint,expires_at) VALUES (?,?,?,?,?,IF(?=0,NULL,DATE_ADD(NOW(3),INTERVAL ? SECOND)))`, credentialID, c.Param("id"), req.AuthType, tokenHash, fingerprintValue, req.ExpiresInSeconds, req.ExpiresInSeconds)
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agents SET row_version=row_version+1,updated_by=? WHERE id=? AND row_version=?`, principalUserID(c), agent.ID, agent.RowVersion)
-	}
-	if err == nil {
-		err = tx.Commit()
-	} else if tx != nil {
-		_ = tx.Rollback()
-	}
-	if err != nil {
-		if errors.Is(err, errAgentRevoked) {
-			fail(c, http.StatusConflict, "agent_revoked", "revoked agents cannot receive a new credential")
-			return
-		}
-		writeSQLError(c, err)
-		return
-	}
-	s.audit(c.Request.Context(), currentPrincipal(c).UserID, "agent.credential.rotate", "agent", agent.ID)
-	response := gin.H{"id": credentialID, "auth_type": req.AuthType}
-	if token != "" {
-		response["token"] = token
-	}
-	c.Header("ETag", etag(agent.RowVersion+1))
-	c.JSON(http.StatusCreated, response)
-}
-
 func (s *Server) revokeAgent(c *gin.Context) {
 	agent, err := s.readAgent(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -523,9 +419,6 @@ func (s *Server) revokeAgent(c *gin.Context) {
 	if err == nil {
 		var status string
 		err = tx.QueryRowContext(c.Request.Context(), `SELECT status FROM agents WHERE id=? AND row_version=? FOR UPDATE`, agent.ID, agent.RowVersion).Scan(&status)
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agent_credentials SET status='revoked',revoked_at=COALESCE(revoked_at,NOW(3)) WHERE agent_id=? AND status='active'`, agent.ID)
 	}
 	if err == nil {
 		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agents SET status='revoked',health='revoked',row_version=row_version+1,updated_by=? WHERE id=? AND row_version=?`, principalUserID(c), agent.ID, agent.RowVersion)
@@ -626,6 +519,10 @@ func agentSharedTokenMatch(shared, presented string) bool {
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(shared)) == 1
 }
 
+// authenticateAgent authorises a machine request for its own agent id using the
+// single installation-wide shared token. There are no per-agent credentials or
+// mTLS fingerprints: any agent presenting the shared token is authenticated for
+// its id, provided the row exists (created by register) and is not revoked.
 func (s *Server) authenticateAgent(c *gin.Context, agentID string) bool {
 	token := strings.TrimSpace(c.GetHeader("X-Watchdog-Agent-Token"))
 	if token == "" {
@@ -633,33 +530,19 @@ func (s *Server) authenticateAgent(c *gin.Context, agentID string) bool {
 			token = strings.TrimSpace(strings.TrimPrefix(value, "Bearer "))
 		}
 	}
-	fingerprint := requestCertificateFingerprint(c)
-	if token == "" && fingerprint == "" {
-		fail(c, http.StatusUnauthorized, "unauthorized", "agent token or client certificate is required")
+	if token == "" {
+		fail(c, http.StatusUnauthorized, "unauthorized", "agent token is required")
 		return false
 	}
-	// Shared-token path: any agent presenting the installation shared token is
-	// authenticated for its own id, provided the row exists (created by register)
-	// and has not been revoked. No per-agent credential lookup is needed.
-	if agentSharedTokenMatch(s.cfg.Agents.SharedToken, token) {
-		var sharedStatus string
-		sharedErr := s.db.QueryRowContext(c.Request.Context(), `SELECT status FROM agents WHERE id=?`, agentID).Scan(&sharedStatus)
-		if sharedErr == nil && sharedStatus != "revoked" {
-			return true
-		}
-		if sharedErr == nil && sharedStatus == "revoked" {
-			fail(c, http.StatusUnauthorized, "unauthorized", "agent is revoked")
-			return false
-		}
-		// Row missing: fall through so an un-registered id still fails cleanly.
+	if !agentSharedTokenMatch(s.cfg.Agents.SharedToken, token) {
+		fail(c, http.StatusUnauthorized, "unauthorized", "invalid agent token")
+		return false
 	}
 	var status string
-	err := s.db.QueryRowContext(c.Request.Context(), `SELECT a.status FROM agent_credentials ac JOIN agents a ON a.id=ac.agent_id WHERE ac.agent_id=? AND ((?<>'' AND ac.token_sha256=?) OR (?<>'' AND ac.mtls_fingerprint=?)) AND ac.status='active' AND ac.revoked_at IS NULL AND (ac.expires_at IS NULL OR ac.expires_at>NOW(3))`, agentID, token, sha256hex(token), fingerprint, fingerprint).Scan(&status)
-	if err != nil || status == "revoked" {
-		fail(c, http.StatusUnauthorized, "unauthorized", "invalid or revoked agent credential")
+	if err := s.db.QueryRowContext(c.Request.Context(), `SELECT status FROM agents WHERE id=?`, agentID).Scan(&status); err != nil || status == "revoked" {
+		fail(c, http.StatusUnauthorized, "unauthorized", "agent is unknown or revoked")
 		return false
 	}
-	_, _ = s.db.ExecContext(c.Request.Context(), `UPDATE agent_credentials SET last_used_at=NOW(3) WHERE agent_id=? AND ((?<>'' AND token_sha256=?) OR (?<>'' AND mtls_fingerprint=?))`, agentID, token, sha256hex(token), fingerprint, fingerprint)
 	return true
 }
 
@@ -834,46 +717,8 @@ func (s *Server) listAgentRuns(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total})
 }
 
-func (s *Server) createEnrollmentToken(c *gin.Context) {
-	var req struct {
-		Kind             string `json:"kind"`
-		DeviceID         string `json:"device_id"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
-	}
-	if c.Request.ContentLength > 0 {
-		if !decodeStrictBody(c, &req) {
-			return
-		}
-	}
-	if !validAgentKind(req.Kind) {
-		fail(c, http.StatusBadRequest, "invalid_request", "a valid agent kind is required")
-		return
-	}
-	if !s.validateAgentBindingDeviceForKind(c, req.DeviceID, req.Kind) {
-		return
-	}
-	if strings.TrimSpace(req.DeviceID) == "" && !currentPrincipal(c).can("device.viewAll") {
-		fail(c, http.StatusForbidden, "forbidden", "unbound enrollment tokens require device.viewAll")
-		return
-	}
-	if req.ExpiresInSeconds <= 0 {
-		req.ExpiresInSeconds = 900
-	}
-	if req.ExpiresInSeconds > 86400 {
-		req.ExpiresInSeconds = 86400
-	}
-	id, token := newID(), "wde_"+randomToken()
-	_, err := s.db.ExecContext(c.Request.Context(), `INSERT INTO agent_enrollment_tokens (id,token_sha256,allowed_kind,device_id,expires_at,created_by) VALUES (?,?,?,?,DATE_ADD(NOW(3),INTERVAL ? SECOND),?)`, id, sha256hex(token), req.Kind, nullableText(req.DeviceID), req.ExpiresInSeconds, principalUserID(c))
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"id": id, "token": token, "device_id": strings.TrimSpace(req.DeviceID), "expires_in_seconds": req.ExpiresInSeconds})
-}
-
 func (s *Server) enrollAgent(c *gin.Context) {
 	var req struct {
-		EnrollmentToken string          `json:"enrollment_token"`
 		Token           string          `json:"token"`
 		ID              string          `json:"id"`
 		Name            string          `json:"name"`
@@ -889,8 +734,8 @@ func (s *Server) enrollAgent(c *gin.Context) {
 	if !decodeStrictBody(c, &req) {
 		return
 	}
-	if (req.EnrollmentToken == "" && strings.TrimSpace(req.Token) == "") || !validAgentKind(req.Kind) {
-		fail(c, http.StatusBadRequest, "invalid_request", "a registration token (shared token or enrollment token) and valid kind are required")
+	if strings.TrimSpace(req.Token) == "" || !validAgentKind(req.Kind) {
+		fail(c, http.StatusBadRequest, "invalid_request", "the installation shared token and a valid kind are required")
 		return
 	}
 	if req.Mode == "" {
@@ -934,14 +779,14 @@ func (s *Server) enrollAgent(c *gin.Context) {
 		return
 	}
 	// Shared-token registration: the caller presents the installation-wide shared
-	// token; upsert the agent as active with no enrollment token and no per-agent
-	// credential (it keeps authenticating with the shared token). Idempotent
-	// across reboots; a revoked agent stays revoked so disable still holds.
-	if strings.TrimSpace(req.Token) != "" {
-		if !agentSharedTokenMatch(s.cfg.Agents.SharedToken, req.Token) {
-			fail(c, http.StatusUnauthorized, "invalid_registration", "registration token is invalid")
-			return
-		}
+	// token; upsert the agent as active with no per-agent credential (it keeps
+	// authenticating with the shared token). Idempotent across reboots; a revoked
+	// agent stays revoked so disable still holds.
+	if !agentSharedTokenMatch(s.cfg.Agents.SharedToken, req.Token) {
+		fail(c, http.StatusUnauthorized, "invalid_registration", "registration token is invalid")
+		return
+	}
+	{
 		deviceID := strings.TrimSpace(req.DeviceID)
 		if deviceID != "" {
 			var deviceKind string
@@ -989,58 +834,6 @@ func (s *Server) enrollAgent(c *gin.Context) {
 		c.JSON(http.StatusCreated, gin.H{"agent": r.dto()})
 		return
 	}
-	credential := "wda_" + randomToken()
-	tx, err := s.db.BeginTx(c.Request.Context(), nil)
-	var enrollmentID, allowedKind string
-	var allowedDeviceID, createdBy sql.NullString
-	if err == nil {
-		err = tx.QueryRowContext(c.Request.Context(), `SELECT id,allowed_kind,device_id,created_by FROM agent_enrollment_tokens WHERE token_sha256=? AND consumed_at IS NULL AND expires_at>NOW(3) FOR UPDATE`, sha256hex(req.EnrollmentToken)).Scan(&enrollmentID, &allowedKind, &allowedDeviceID, &createdBy)
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		_ = tx.Rollback()
-		fail(c, http.StatusUnauthorized, "invalid_enrollment", "enrollment token is invalid, expired, or already used")
-		return
-	}
-	if err == nil && allowedKind != "" && allowedKind != req.Kind {
-		_ = tx.Rollback()
-		fail(c, http.StatusBadRequest, "invalid_enrollment", "enrollment token does not allow this agent kind")
-		return
-	}
-	if err == nil && strings.TrimSpace(req.DeviceID) != allowedDeviceID.String {
-		_ = tx.Rollback()
-		fail(c, http.StatusBadRequest, "invalid_enrollment", "enrollment token does not allow this device binding")
-		return
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agent_enrollment_tokens SET consumed_at=NOW(3) WHERE id=? AND consumed_at IS NULL`, enrollmentID)
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agents (id,name,kind,status,health,software_version,api_version,capabilities_json,created_by,updated_by) VALUES (?,?,?,'registered','unknown',?,?,?,?,?)`, id, name, req.Kind, req.SoftwareVersion, apiVersion, capabilities, nullStringValue(createdBy), nullStringValue(createdBy))
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_credentials (id,agent_id,auth_type,token_sha256) VALUES (?,?,'token',?)`, newID(), id, sha256hex(credential))
-	}
-	if err == nil {
-		_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_bindings (id,agent_id,device_id,role,mode,endpoint) VALUES (?,?,?,?,?,?)`, newID(), id, nullableText(req.DeviceID), role, req.Mode, strings.TrimSpace(req.Endpoint))
-	}
-	if err == nil {
-		err = tx.Commit()
-	} else if tx != nil {
-		_ = tx.Rollback()
-	}
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	if createdBy.Valid {
-		s.audit(c.Request.Context(), createdBy.String, "agent.enroll", "agent", id)
-	}
-	r, err := s.readAgent(c.Request.Context(), id)
-	if err != nil {
-		writeSQLError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"agent": r.dto(), "credential": gin.H{"token": credential}})
 }
 
 func validAgentKind(v string) bool {
@@ -1069,14 +862,6 @@ func normalizeAgentStatus(value string) string {
 	default:
 		return strings.TrimSpace(value)
 	}
-}
-
-func normalizeFingerprint(value string) string {
-	value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), ":", ""))
-	if !validSHA256(value) {
-		return ""
-	}
-	return value
 }
 
 func validSHA256(value string) bool {
@@ -1198,13 +983,6 @@ func (s *Server) validateAgentBindingDeviceForKind(c *gin.Context, deviceID, age
 	return true
 }
 
-func requestCertificateFingerprint(c *gin.Context) string {
-	if c.Request.TLS == nil || len(c.Request.TLS.PeerCertificates) == 0 {
-		return ""
-	}
-	digest := sha256.Sum256(c.Request.TLS.PeerCertificates[0].Raw)
-	return hex.EncodeToString(digest[:])
-}
 func validAgentMode(v string) bool { return v == "push" || v == "pull" }
 func normalizeCapabilities(v json.RawMessage, keepExistingWhenEmpty bool) (string, error) {
 	if len(v) == 0 {

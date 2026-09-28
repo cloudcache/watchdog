@@ -34,7 +34,7 @@ type options struct {
 	saslPasswordFile, sflowListen, netflowListen  string
 	metricsListen                                 string
 	agentControlURL, agentID, agentTokenFile      string
-	agentEnrollmentFile, agentPublicKey, agentLKG string
+	agentPublicKey, agentLKG string
 	queueSize, sockets, receiveBuffer, maxUDP     int
 	kafkaTLS, check, agentPlanCheck               bool
 }
@@ -65,7 +65,6 @@ func main() {
 	flag.StringVar(&opt.agentControlURL, "control-plane-url", "", "Watchdog API base URL for agent management")
 	flag.StringVar(&opt.agentID, "agent-id", "watchdog-flow-collect", "registered flow_collect agent ID")
 	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_collect machine token")
-	flag.StringVar(&opt.agentEnrollmentFile, "agent-enrollment-token-file", "", "one-time enrollment token file")
 	flag.StringVar(&opt.agentPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	flag.StringVar(&opt.agentLKG, "agent-plan-lkg", "", "durable agent plan LKG file")
 	flag.BoolVar(&opt.agentPlanCheck, "agent-plan-check", false, "register/sync/apply the agent plan, then exit")
@@ -365,7 +364,7 @@ func flowCollectAgentRuntime(opt options) agentplan.RuntimeConfig {
 		BaseURL: opt.agentControlURL, AgentID: strings.TrimSpace(opt.agentID), Name: strings.TrimSpace(opt.agentID),
 		Kind: "flow_collect", Role: "flow_collect", Mode: "push", SoftwareVersion: "watchdog-flow-collect-v1",
 		APIVersion: "v1", Capabilities: []string{"flow.receive.netflow/v1", "flow.receive.sflow/v1"},
-		TokenFile: opt.agentTokenFile, EnrollmentFile: opt.agentEnrollmentFile,
+		TokenFile:     opt.agentTokenFile,
 		PublicKeyFile: opt.agentPublicKey, LKGFile: opt.agentLKG, BootID: uuid.NewString(),
 	}
 }

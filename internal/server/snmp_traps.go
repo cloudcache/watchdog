@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -24,10 +23,11 @@ type snmpTrapRequest struct {
 
 const snmpTrapAgentContextKey = "wd_snmp_trap_agent"
 
-// authenticateSNMPTrapCaller preserves the historical trap URL for both the
-// UDP forwarding process and administrator diagnostics. A machine token is
-// resolved globally because the historical URL does not carry an agent ID;
-// token and mTLS fingerprints are unique in the registry.
+// authenticateSNMPTrapCaller preserves the historical trap URL for both the UDP
+// forwarding process and administrator diagnostics. A collector authenticates
+// with the installation-wide shared token; the URL does not carry an agent ID,
+// and under one shared token the token cannot identify a specific agent, so the
+// target device is resolved from the trap source IP instead.
 func (s *Server) authenticateSNMPTrapCaller(c *gin.Context) {
 	token := strings.TrimSpace(c.GetHeader("X-Watchdog-Agent-Token"))
 	if token == "" {
@@ -35,29 +35,13 @@ func (s *Server) authenticateSNMPTrapCaller(c *gin.Context) {
 			token = strings.TrimSpace(strings.TrimPrefix(value, "Bearer "))
 		}
 	}
-	fingerprint := requestCertificateFingerprint(c)
-	if token != "" || fingerprint != "" {
-		var credentialID, agentID, kind, status string
-		credentialQuery := `SELECT ac.id,a.id,a.kind,a.status
-			FROM agent_credentials ac JOIN agents a ON a.id=ac.agent_id
-			WHERE ac.token_sha256=? AND ac.status='active' AND ac.revoked_at IS NULL
-			AND (ac.expires_at IS NULL OR ac.expires_at>NOW(3))`
-		credentialValue := sha256hex(token)
-		if token == "" {
-			credentialQuery = `SELECT ac.id,a.id,a.kind,a.status
-				FROM agent_credentials ac JOIN agents a ON a.id=ac.agent_id
-				WHERE ac.mtls_fingerprint=? AND ac.status='active' AND ac.revoked_at IS NULL
-				AND (ac.expires_at IS NULL OR ac.expires_at>NOW(3))`
-			credentialValue = fingerprint
-		}
-		err := s.db.QueryRowContext(c.Request.Context(), credentialQuery, credentialValue).Scan(&credentialID, &agentID, &kind, &status)
-		if err != nil || kind != "snmp" || status == "revoked" {
-			fail(c, http.StatusUnauthorized, "unauthorized", "valid SNMP agent credential required")
+	if token != "" {
+		if !agentSharedTokenMatch(s.cfg.Agents.SharedToken, token) {
+			fail(c, http.StatusUnauthorized, "unauthorized", "valid SNMP agent token required")
 			c.Abort()
 			return
 		}
-		_, _ = s.db.ExecContext(c.Request.Context(), `UPDATE agent_credentials SET last_used_at=NOW(3) WHERE id=?`, credentialID)
-		c.Set(snmpTrapAgentContextKey, agentID)
+		c.Set(snmpTrapAgentContextKey, true)
 		c.Next()
 		return
 	}
@@ -144,26 +128,12 @@ func (s *Server) receiveSNMPTrap(c *gin.Context) {
 }
 
 func (s *Server) requireSNMPTrapDeviceAccess(c *gin.Context, deviceID string) bool {
-	value, machine := c.Get(snmpTrapAgentContextKey)
-	if !machine {
-		return s.requireDeviceAccess(c, deviceID)
+	if _, machine := c.Get(snmpTrapAgentContextKey); machine {
+		// A shared-token collector submits traps for whichever device the source
+		// IP resolves to; there is no per-agent device binding left to enforce.
+		return true
 	}
-	agentID, ok := value.(string)
-	if !ok || agentID == "" {
-		fail(c, http.StatusUnauthorized, "unauthorized", "invalid SNMP agent identity")
-		return false
-	}
-	var boundDevice sql.NullString
-	err := s.db.QueryRowContext(c.Request.Context(), `SELECT device_id FROM agent_bindings WHERE agent_id=?`, agentID).Scan(&boundDevice)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		writeSQLError(c, err)
-		return false
-	}
-	if boundDevice.Valid && boundDevice.String != "" && boundDevice.String != deviceID {
-		fail(c, http.StatusForbidden, "forbidden", "SNMP agent is not bound to this device")
-		return false
-	}
-	return true
+	return s.requireDeviceAccess(c, deviceID)
 }
 
 func normalizeTrapSource(value string) string {

@@ -190,7 +190,6 @@ func (s *Server) newRouter() *gin.Engine {
 	agents.POST("/plan-rollouts", s.requirePermission("agent.manage"), s.enqueueAgentPlanRollout)
 	agents.GET("/plan-rollouts/:job_id", s.requirePermission("agent.view"), s.getAgentPlanRollout)
 	agents.POST("/plan-rollouts/:job_id/cancel", s.requirePermission("agent.manage"), s.cancelAgentPlanRollout)
-	agents.POST("/enrollment-tokens", s.requirePermission("agent.manage"), s.createEnrollmentToken)
 	agents.GET("/:id", s.requirePermission("agent.view"), s.getAgent)
 	agents.PATCH("/:id", s.requirePermission("agent.manage"), s.updateAgent)
 	agents.DELETE("/:id", s.requirePermission("agent.manage"), s.deleteAgent)
@@ -198,7 +197,6 @@ func (s *Server) newRouter() *gin.Engine {
 	agents.GET("/:id/plans", s.requirePermission("agent.view"), s.listAgentPlans)
 	agents.POST("/:id/plans", s.requirePermission("agent.manage"), s.createAgentPlan)
 	agents.GET("/:id/plans/:version", s.requirePermission("agent.view"), s.getAgentPlan)
-	agents.POST("/:id/credentials/rotate", s.requirePermission("agent.manage"), s.rotateAgentCredential)
 	agents.POST("/:id/revoke", s.requirePermission("agent.manage"), s.revokeAgent)
 
 	// A Flow device is an inventory device with one or more exporter bindings.

@@ -24,9 +24,11 @@ func TestAgentProcessesRegisterApplyLKGAndRevocation(t *testing.T) {
 		t.Skip("WATCHDOG_AGENT_PROCESS_TEST_MYSQL_DSN is not set")
 	}
 	temporary := t.TempDir()
+	const sharedAgentToken = "process-shared-secret"
 	s, err := New(Config{
-		MySQL: MySQLConfig{DSN: dsn},
-		Admin: AdminConfig{Username: "process-test-admin", Password: "process-test-password"},
+		MySQL:  MySQLConfig{DSN: dsn},
+		Admin:  AdminConfig{Username: "process-test-admin", Password: "process-test-password"},
+		Agents: AgentsConfig{SharedToken: sharedAgentToken},
 		AgentPlans: AgentPlansConfig{
 			SigningKeyID: "process-test-key", SigningPrivateKey: filepath.Join(temporary, "private.pem"),
 			DefaultTTL: 24 * time.Hour,
@@ -83,26 +85,14 @@ func TestAgentProcessesRegisterApplyLKGAndRevocation(t *testing.T) {
 		process := &processes[index]
 		process.Binary = binaries[process.Command]
 		process.TokenFile = filepath.Join(temporary, process.AgentID+".token")
-		process.EnrollmentFile = filepath.Join(temporary, process.AgentID+".enroll")
 		process.LKGFile = filepath.Join(temporary, process.AgentID+".lkg")
-		enrollment := requestJSON(t, s, http.MethodPost, "/api/v1/agents/enrollment-tokens", map[string]any{
-			"kind": process.Kind, "expires_in_seconds": 300,
-		}, auth, cookies...)
-		var issued struct {
-			Token string `json:"token"`
-		}
-		decodeJSON(t, enrollment, &issued)
-		if enrollment.Code != http.StatusCreated || issued.Token == "" {
-			t.Fatalf("enrollment %s: status=%d body=%s", process.Command, enrollment.Code, enrollment.Body.String())
-		}
-		if err := os.WriteFile(process.EnrollmentFile, []byte(issued.Token+"\n"), 0o600); err != nil {
+		// The operator provisions the installation-wide shared token; the process
+		// registers itself idempotently on first sync with no per-agent credential.
+		if err := os.WriteFile(process.TokenFile, []byte(sharedAgentToken+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if output, err := runAgentProcess(t, *process, controlPlane.URL, publicKeyFile); err == nil || !strings.Contains(string(output), "no desired plan") {
 			t.Fatalf("%s did not register before reporting no plan: err=%v\n%s", process.Command, err, output)
-		}
-		if _, err := os.Stat(process.TokenFile); err != nil {
-			t.Fatalf("%s credential was not persisted: %v", process.Command, err)
 		}
 		created := requestJSON(t, s, http.MethodPost, "/api/v1/agents/"+process.AgentID+"/plans", map[string]any{
 			"required_capabilities": []string{process.Capability}, "config": process.Config,
@@ -147,7 +137,7 @@ func TestAgentProcessesRegisterApplyLKGAndRevocation(t *testing.T) {
 
 type agentProcessFixture struct {
 	Command, Binary, AgentID, Kind, Capability string
-	TokenFile, EnrollmentFile, LKGFile         string
+	TokenFile, LKGFile                         string
 	Config                                     map[string]any
 }
 
@@ -155,7 +145,6 @@ func runAgentProcess(t *testing.T, process agentProcessFixture, controlPlane, pu
 	t.Helper()
 	arguments := []string{
 		"-agent-id", process.AgentID, "-agent-token-file", process.TokenFile,
-		"-agent-enrollment-token-file", process.EnrollmentFile,
 		"-agent-plan-public-key", publicKey, "-agent-plan-lkg", process.LKGFile,
 		"-agent-plan-check",
 	}

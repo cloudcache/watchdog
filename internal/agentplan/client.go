@@ -242,7 +242,6 @@ func EnvelopeMetadata(data []byte) Metadata {
 }
 
 type Registration struct {
-	EnrollmentToken string
 	SharedToken     string
 	AgentID         string
 	Name            string
@@ -254,20 +253,18 @@ type Registration struct {
 	SoftwareVersion string
 	APIVersion      string
 	Capabilities    []string
-	CredentialFile  string
 }
 
+// Register idempotently records the agent with the installation-wide shared
+// token and returns that same token for the caller's in-memory client. There are
+// no per-agent credentials: the shared token is what every later request uses.
 func Register(ctx context.Context, baseURL string, client *http.Client, registration Registration) (string, error) {
-	enrollmentToken := strings.TrimSpace(registration.EnrollmentToken)
 	sharedToken := strings.TrimSpace(registration.SharedToken)
-	if (enrollmentToken == "") == (sharedToken == "") || registration.AgentID == "" || !ValidKind(registration.Kind) {
-		return "", errors.New("exactly one agent registration token, identity, and kind are required")
-	}
-	if enrollmentToken != "" && strings.TrimSpace(registration.CredentialFile) == "" {
-		return "", errors.New("agent credential file is required for one-time enrollment")
+	if sharedToken == "" || registration.AgentID == "" || !ValidKind(registration.Kind) {
+		return "", errors.New("the installation shared token, identity, and kind are required")
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"enrollment_token": enrollmentToken, "token": sharedToken, "id": registration.AgentID,
+		"token": sharedToken, "id": registration.AgentID,
 		"name": registration.Name, "kind": registration.Kind, "device_id": registration.DeviceID,
 		"role": registration.Role, "mode": registration.Mode, "endpoint": registration.Endpoint,
 		"software_version": registration.SoftwareVersion, "api_version": registration.APIVersion,
@@ -291,22 +288,7 @@ func Register(ctx context.Context, baseURL string, client *http.Client, registra
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 		return "", fmt.Errorf("register agent: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if sharedToken != "" {
-		return sharedToken, nil
-	}
-	var result struct {
-		Credential struct {
-			Token string `json:"token"`
-		} `json:"credential"`
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 64<<10))
-	if err := decoder.Decode(&result); err != nil || result.Credential.Token == "" {
-		return "", errors.New("register agent response did not contain a credential")
-	}
-	if err := atomicWriteFile(registration.CredentialFile, []byte(result.Credential.Token+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	return result.Credential.Token, nil
+	return sharedToken, nil
 }
 
 func ReadSecretFile(path string) (string, error) {

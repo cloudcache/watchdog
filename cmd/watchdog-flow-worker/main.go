@@ -54,7 +54,7 @@ type options struct {
 	planPublicKey, workerID                                       string
 	controlPlaneURL, agentControlPlaneURL, agentTokenFile         string
 	versionLKGDir                                                 string
-	agentEnrollmentFile, agentPlanPublicKey, agentPlanLKG         string
+	agentPlanPublicKey, agentPlanLKG                              string
 	controlPlaneCAFile, controlPlaneCertFile, controlPlaneKeyFile string
 	controlPlaneServerName                                        string
 	controlPlaneTimeout, versionRefreshInterval                   time.Duration
@@ -89,8 +89,7 @@ func main() {
 	flag.StringVar(&opt.workerID, "worker-id", "watchdog-flow-worker", "stable worker instance identity")
 	flag.StringVar(&opt.controlPlaneURL, "control-plane-url", "", "Watchdog API base URL for signed enrichment publications")
 	flag.StringVar(&opt.agentControlPlaneURL, "agent-control-plane-url", "", "Watchdog API base URL for agent registration, plan, ACK, and health")
-	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_worker machine token")
-	flag.StringVar(&opt.agentEnrollmentFile, "agent-enrollment-token-file", "", "one-time enrollment token file")
+	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the installation-wide shared agent token")
 	flag.StringVar(&opt.agentPlanPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	flag.StringVar(&opt.agentPlanLKG, "agent-plan-lkg", "", "durable agent plan LKG file")
 	flag.BoolVar(&opt.agentPlanCheck, "agent-plan-check", false, "register/sync/apply the agent plan, then exit")
@@ -434,7 +433,7 @@ func applyFlowWorkerAgentPlan(opt *options, spec agentplan.Spec) error {
 }
 
 func flowWorkerAgentRuntime(opt options, bootID string) agentplan.RuntimeConfig {
-	if strings.TrimSpace(opt.agentPlanPublicKey) == "" && strings.TrimSpace(opt.agentPlanLKG) == "" && strings.TrimSpace(opt.agentEnrollmentFile) == "" && !opt.agentPlanCheck {
+	if strings.TrimSpace(opt.agentPlanPublicKey) == "" && strings.TrimSpace(opt.agentPlanLKG) == "" && strings.TrimSpace(opt.agentTokenFile) == "" && !opt.agentPlanCheck {
 		return agentplan.RuntimeConfig{}
 	}
 	agentControlPlaneURL := strings.TrimSpace(opt.agentControlPlaneURL)
@@ -447,8 +446,8 @@ func flowWorkerAgentRuntime(opt options, bootID string) agentplan.RuntimeConfig 
 		BaseURL: agentControlPlaneURL, AgentID: strings.TrimSpace(opt.workerID), Name: strings.TrimSpace(opt.workerID),
 		Kind: "flow_worker", Role: "flow_worker", Mode: "push", SoftwareVersion: "watchdog-flow-worker-v1",
 		APIVersion: "v1", Capabilities: []string{"flow.write.clickhouse/v1"}, TokenFile: opt.agentTokenFile,
-		EnrollmentFile: opt.agentEnrollmentFile, PublicKeyFile: opt.agentPlanPublicKey,
-		LKGFile: opt.agentPlanLKG, BootID: bootID,
+		PublicKeyFile: opt.agentPlanPublicKey,
+		LKGFile:       opt.agentPlanLKG, BootID: bootID,
 	}
 }
 

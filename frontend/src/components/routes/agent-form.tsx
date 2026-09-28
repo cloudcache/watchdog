@@ -1,11 +1,10 @@
 import { Trans, useLingui } from "@lingui/react/macro"
 import { getPagePath } from "@/lib/page-path"
-import { ArrowLeftIcon, BracesIcon, KeyRoundIcon, PlugZapIcon, SaveIcon, ShieldOffIcon, Trash2Icon } from "lucide-react"
+import { ArrowLeftIcon, BracesIcon, PlugZapIcon, SaveIcon, ShieldOffIcon, Trash2Icon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { $router, Link, navigate } from "@/components/router"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { InputCopy } from "@/components/ui/input-copy"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
@@ -44,7 +43,6 @@ type FormState = {
 	mode: string
 	endpoint: string
 	status: string
-	token: string
 }
 
 export default memo(({ id }: AgentFormProps) => {
@@ -58,12 +56,10 @@ export default memo(({ id }: AgentFormProps) => {
 		mode: "push",
 		endpoint: "",
 		status: "registered",
-		token: "",
 	}))
 	const [loading, setLoading] = useState(true)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState("")
-	const [oneTimeToken, setOneTimeToken] = useState("")
 	// Weak ETag from the last load, echoed as If-Match on save (optimistic
 	// concurrency): a concurrent edit is rejected (412), not overwritten.
 	const etagRef = useRef("")
@@ -94,7 +90,6 @@ export default memo(({ id }: AgentFormProps) => {
 				mode: agent.mode ?? "push",
 				endpoint: agent.endpoint ?? "",
 				status: agent.status ?? "registered",
-				token: "",
 			})
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t`Failed to load agent`)
@@ -119,7 +114,6 @@ export default memo(({ id }: AgentFormProps) => {
 				mode: form.mode,
 				endpoint: form.endpoint.trim(),
 				status: form.status,
-				token: isEditing ? undefined : form.token,
 				api_version: "v1",
 				capabilities: agentCapabilities(form.agentType),
 			}
@@ -136,30 +130,8 @@ export default memo(({ id }: AgentFormProps) => {
 		}
 	}
 
-	const rotateToken = async () => {
-		if (!id || !window.confirm(t`Rotate this agent token? The current token will stop working immediately.`)) return
-		setSaving(true)
-		setError("")
-		setOneTimeToken("")
-		try {
-			const result = await api.send<{ token: string }>(`/api/v1/agents/${id}/credentials/rotate`, {
-				method: "POST",
-				headers: etagRef.current ? { "If-Match": etagRef.current } : undefined,
-				body: { auth_type: "token" },
-				onResponse: (response) => {
-					etagRef.current = response.headers.get("ETag") ?? etagRef.current
-				},
-			})
-			setOneTimeToken(result.token)
-		} catch (err) {
-			setError(err instanceof Error ? err.message : t`Failed to rotate agent token`)
-		} finally {
-			setSaving(false)
-		}
-	}
-
 	const revokeAgent = async () => {
-		if (!id || !window.confirm(t`Revoke this agent and all of its credentials?`)) return
+		if (!id || !window.confirm(t`Revoke this agent?`)) return
 		setSaving(true)
 		setError("")
 		try {
@@ -196,7 +168,7 @@ export default memo(({ id }: AgentFormProps) => {
 
 	const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }))
 	const targetOptions = targets.filter((target) => targetKind(target) === agentTargetKind(form.agentType))
-	const canSave = form.id.trim() && (isEditing || form.token.trim())
+	const canSave = Boolean(form.id.trim())
 
 	return (
 		<div className="grid gap-4">
@@ -228,15 +200,6 @@ export default memo(({ id }: AgentFormProps) => {
 							<Button
 								size="sm"
 								variant="outline"
-								onClick={rotateToken}
-								disabled={loading || saving || form.status === "revoked"}
-							>
-								<KeyRoundIcon className="me-2 h-4 w-4" />
-								<Trans>Rotate token</Trans>
-							</Button>
-							<Button
-								size="sm"
-								variant="outline"
 								onClick={revokeAgent}
 								disabled={loading || saving || form.status === "revoked"}
 							>
@@ -257,17 +220,6 @@ export default memo(({ id }: AgentFormProps) => {
 			</div>
 
 			{error ? <div className="rounded-md border border-border p-3 text-sm text-destructive">{error}</div> : null}
-			{oneTimeToken ? (
-				<div className="grid gap-2 rounded-md border border-border p-3">
-					<div className="text-sm font-medium">
-						<Trans>New agent token</Trans>
-					</div>
-					<div className="text-xs text-muted-foreground">
-						<Trans>Copy it now. It will not be shown again.</Trans>
-					</div>
-					<InputCopy id="rotated-agent-token" name="rotated-agent-token" value={oneTimeToken} />
-				</div>
-			) : null}
 
 			<div className="grid gap-4 rounded-md border border-border p-4">
 				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -351,16 +303,6 @@ export default memo(({ id }: AgentFormProps) => {
 							</SelectContent>
 						</Select>
 					</Field>
-					{!isEditing ? (
-						<Field label={t`Initial token`}>
-							<Input
-								type="password"
-								value={form.token}
-								onChange={(event) => update({ token: event.target.value })}
-								disabled={loading}
-							/>
-						</Field>
-					) : null}
 				</div>
 			</div>
 		</div>

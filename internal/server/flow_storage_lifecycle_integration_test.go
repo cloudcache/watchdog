@@ -554,12 +554,10 @@ func TestFlowRawDeleteReadinessUsesMySQLEvidenceWithoutMutatingState(t *testing.
 	}
 	s.jobs = opjob.NewStore(db)
 	workerID, workerToken := "flow_worker_delete_gate", "wda_flow_delete_gate_secret"
+	// Flow workers authenticate with the installation shared token.
+	s.cfg.Agents.SharedToken = workerToken
 	if _, err := db.ExecContext(ctx, `INSERT INTO agents (id,name,kind,status,health,api_version,capabilities_json)
 		VALUES (?,?,'flow_worker','active','ok','v1',JSON_ARRAY('flow.write.clickhouse/v1'))`, workerID, "Flow delete gate worker"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO agent_credentials (id,agent_id,auth_type,token_sha256)
-		VALUES (?,?,'token',?)`, newID(), workerID, sha256hex(workerToken)); err != nil {
 		t.Fatal(err)
 	}
 	pendingResponse := flowLifecycleRequest(t, s.executeFlowRawDelete, admin, http.MethodPost,

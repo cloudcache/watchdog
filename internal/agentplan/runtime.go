@@ -30,7 +30,6 @@ type RuntimeConfig struct {
 	Capabilities    []string
 	Token           string
 	TokenFile       string
-	EnrollmentFile  string
 	PublicKeyFile   string
 	LKGFile         string
 	BootID          string
@@ -250,26 +249,7 @@ func (r RuntimeConfig) Sync(ctx context.Context, apply ApplyFunc) (SyncResult, s
 		}
 	}
 	if token == "" {
-		enrollmentToken, readErr := ReadSecretFile(r.EnrollmentFile)
-		if readErr != nil {
-			return SyncResult{}, "", readErr
-		}
-		token, err = Register(ctx, r.BaseURL, r.HTTPClient, Registration{
-			EnrollmentToken: enrollmentToken, AgentID: r.AgentID, Name: r.Name,
-			Kind: r.Kind, DeviceID: r.DeviceID, Role: r.Role, Mode: r.Mode,
-			Endpoint: r.Endpoint, SoftwareVersion: r.SoftwareVersion,
-			APIVersion: r.APIVersion, Capabilities: r.Capabilities,
-			CredentialFile: r.TokenFile,
-		})
-		if err != nil {
-			return SyncResult{}, "", err
-		}
-		// The enrollment secret is single-use. Once the durable machine
-		// credential has been installed, keeping the bootstrap secret serves no
-		// recovery purpose and only leaves misleading deployment state behind.
-		if err := os.Remove(r.EnrollmentFile); err != nil && !os.IsNotExist(err) {
-			return SyncResult{}, "", err
-		}
+		return SyncResult{}, "", errors.New("the installation shared token is required (set token or token file)")
 	}
 	client := Client{
 		BaseURL: r.BaseURL, AgentID: r.AgentID, Token: token, HTTPClient: r.HTTPClient,

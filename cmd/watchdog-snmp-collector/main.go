@@ -29,7 +29,6 @@ func main() {
 	controlPlaneURL := flag.String("control-plane-url", "", "Watchdog API base URL for agent management")
 	agentID := flag.String("agent-id", "watchdog-snmp-collector", "registered SNMP agent ID")
 	agentTokenFile := flag.String("agent-token-file", "", "file containing the SNMP agent machine token")
-	agentEnrollmentFile := flag.String("agent-enrollment-token-file", "", "one-time enrollment token file")
 	agentPlanPublicKey := flag.String("agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	agentPlanLKG := flag.String("agent-plan-lkg", "", "durable agent plan LKG file")
 	agentPlanCheck := flag.Bool("agent-plan-check", false, "register/sync/apply the agent plan, then exit")
@@ -49,7 +48,7 @@ func main() {
 	}
 	if *agentPlanCheck {
 		resolvedInterval, resolvedLimit := time.Minute, 100
-		agentRuntime := snmpAgentRuntime(*controlPlaneURL, *agentID, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
+		agentRuntime := snmpAgentRuntime(*controlPlaneURL, *agentID, *agentTokenFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
 		if !agentRuntime.Enabled() {
 			log.Fatal("agent plan public key, LKG, and control-plane URL are required")
 		}
@@ -85,7 +84,7 @@ func main() {
 	}
 	var agentToken string
 	var agentPlanVersion uint64
-	agentRuntime := snmpAgentRuntime(*controlPlaneURL, *agentID, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
+	agentRuntime := snmpAgentRuntime(*controlPlaneURL, *agentID, *agentTokenFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
 	if agentRuntime.Enabled() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applySNMPAgentPlan(&resolvedInterval, &resolvedLimit, spec)
@@ -221,14 +220,14 @@ func applySNMPAgentPlan(interval *time.Duration, limit *int, spec agentplan.Spec
 	return nil
 }
 
-func snmpAgentRuntime(baseURL, agentID, tokenFile, enrollmentFile, publicKey, lkg, bootID string) agentplan.RuntimeConfig {
-	if strings.TrimSpace(publicKey) == "" && strings.TrimSpace(lkg) == "" && strings.TrimSpace(enrollmentFile) == "" {
+func snmpAgentRuntime(baseURL, agentID, tokenFile, publicKey, lkg, bootID string) agentplan.RuntimeConfig {
+	if strings.TrimSpace(publicKey) == "" && strings.TrimSpace(lkg) == "" && strings.TrimSpace(tokenFile) == "" {
 		return agentplan.RuntimeConfig{}
 	}
 	return agentplan.RuntimeConfig{
 		BaseURL: baseURL, AgentID: strings.TrimSpace(agentID), Name: strings.TrimSpace(agentID), Kind: "snmp",
 		Role: "snmp", Mode: "push", SoftwareVersion: "watchdog-snmp-collector-v1", APIVersion: "v1",
-		Capabilities: []string{"snmp.poll/v2"}, TokenFile: tokenFile, EnrollmentFile: enrollmentFile,
+		Capabilities:  []string{"snmp.poll/v2"}, TokenFile: tokenFile,
 		PublicKeyFile: publicKey, LKGFile: lkg, BootID: bootID,
 	}
 }

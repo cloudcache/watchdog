@@ -231,6 +231,7 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 	if clickHouseAddress == "" {
 		clickHouseAddress = "127.0.0.1:9000"
 	}
+	const cleanStackToken = "clean-stack-shared-secret"
 	cfg := Config{
 		MySQL: MySQLConfig{DSN: dsn},
 		ClickHouse: ClickHouseConfig{
@@ -240,6 +241,7 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 		Flow:    FlowConfig{Export: FlowExportConfig{Dir: root + "/flow-exports"}},
 		SNMP:    SNMPConfig{ExportDir: root + "/snmp-exports"},
 		Billing: BillingConfig{ExportDir: root + "/billing-exports"},
+		Agents:  AgentsConfig{SharedToken: cleanStackToken},
 	}
 
 	s, err := New(cfg)
@@ -266,35 +268,22 @@ func TestInstalledRuntimeStartsClickHouseWorkers(t *testing.T) {
 	}
 	cookies := login.Result().Cookies()
 	csrf := cookieValue(cookies, csrfCookie)
-	enrollment := requestJSON(t, s, http.MethodPost, "/api/v1/agents/enrollment-tokens", map[string]any{
-		"kind": "snmp", "expires_in_seconds": 300,
-	}, map[string]string{"X-CSRF-Token": csrf}, cookies...)
-	var enrollmentBody struct {
-		Token string `json:"token"`
-	}
-	decodeJSON(t, enrollment, &enrollmentBody)
-	if enrollment.Code != http.StatusCreated || enrollmentBody.Token == "" {
-		t.Fatalf("clean-stack enrollment: code=%d body=%s", enrollment.Code, enrollment.Body.String())
-	}
 	registered := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
-		"id": "clean_stack_snmp", "enrollment_token": enrollmentBody.Token, "name": "Clean stack SNMP", "kind": "snmp",
+		"id": "clean_stack_snmp", "token": cleanStackToken, "name": "Clean stack SNMP", "kind": "snmp",
 		"capabilities": []string{"snmp.poll/v2"},
 	}, nil)
 	var registeredBody struct {
 		Agent struct {
 			ID string `json:"id"`
 		} `json:"agent"`
-		Credential struct {
-			Token string `json:"token"`
-		} `json:"credential"`
 	}
 	decodeJSON(t, registered, &registeredBody)
-	if registered.Code != http.StatusCreated || registeredBody.Agent.ID != "clean_stack_snmp" || registeredBody.Credential.Token == "" {
+	if registered.Code != http.StatusCreated || registeredBody.Agent.ID != "clean_stack_snmp" {
 		t.Fatalf("clean-stack register: code=%d body=%s", registered.Code, registered.Body.String())
 	}
 	heartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/clean_stack_snmp/heartbeat", map[string]any{
 		"software_version": "clean-stack", "capabilities": []string{"snmp.poll/v2"},
-	}, map[string]string{"X-Watchdog-Agent-Token": registeredBody.Credential.Token})
+	}, map[string]string{"X-Watchdog-Agent-Token": cleanStackToken})
 	if heartbeat.Code != http.StatusAccepted {
 		t.Fatalf("clean-stack heartbeat: code=%d body=%s", heartbeat.Code, heartbeat.Body.String())
 	}

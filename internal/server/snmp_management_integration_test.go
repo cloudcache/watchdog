@@ -163,15 +163,9 @@ func TestSNMPManagementPolicyMIBAndTrapLifecycle(t *testing.T) {
 		t.Fatalf("trap did not update port: status=%q err=%v", operStatus, err)
 	}
 
-	trapAgentID, trapToken := "snmp_trap_agent_test", "wda_snmp_trap_test_secret"
-	if _, err := db.Exec(`INSERT INTO agents (id,name,kind,status,health,api_version,capabilities_json)
-		VALUES (?,?,'snmp','active','ok','v1',JSON_ARRAY('snmp.poll/v2'))`, trapAgentID, "SNMP trap listener"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO agent_credentials (id,agent_id,auth_type,token_sha256) VALUES (?,?,'token',?)`,
-		newID(), trapAgentID, sha256hex(trapToken)); err != nil {
-		t.Fatal(err)
-	}
+	// A collector authenticates trap submission with the installation shared token.
+	trapToken := "wda_snmp_trap_test_secret"
+	s.cfg.Agents.SharedToken = trapToken
 	router := gin.New()
 	router.POST("/api/v1/snmp/traps", s.authenticateSNMPTrapCaller, s.receiveSNMPTrap)
 	machineBody, _ := json.Marshal(map[string]any{

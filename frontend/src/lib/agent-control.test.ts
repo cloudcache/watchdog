@@ -24,8 +24,9 @@ test("registry arguments keep lifecycle and domain configuration separate", () =
 		"-worker-id",
 		"flow-worker-a",
 	])
-	assert.ok(args.includes("-agent-enrollment-token-file"))
-	assert.ok(args.includes("/var/lib/watchdog/agents/flow-worker-a/enrollment"))
+	assert.ok(args.includes("-agent-token-file"))
+	assert.ok(args.includes("/var/lib/watchdog/agents/flow-worker-a/token"))
+	assert.ok(!args.includes("-agent-enrollment-token-file"))
 	assert.ok(!args.includes("-bootstrap-plan"))
 	assert.equal(agentServiceName("flow_worker"), "watchdog-flow-worker")
 })

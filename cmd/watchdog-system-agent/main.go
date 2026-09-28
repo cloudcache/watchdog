@@ -25,7 +25,6 @@ func main() {
 	agentID := flag.String("agent-id", "", "Watchdog system agent ID")
 	agentToken := flag.String("agent-token", "", "Watchdog system agent token")
 	agentTokenFile := flag.String("agent-token-file", "", "file containing the system agent machine token")
-	agentEnrollmentFile := flag.String("agent-enrollment-token-file", "", "one-time enrollment token file")
 	agentPlanPublicKey := flag.String("agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	agentPlanLKG := flag.String("agent-plan-lkg", "", "durable agent plan LKG file")
 	agentPlanCheck := flag.Bool("agent-plan-check", false, "register/sync/apply the agent plan, then exit")
@@ -56,7 +55,7 @@ func main() {
 	if *interval > 0 {
 		agentCfg.Interval = *interval
 	}
-	agentRuntime := systemAgentRuntime(agentCfg.HubURL, agentCfg.AgentID, agentCfg.Token, *agentTokenFile, *agentEnrollmentFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
+	agentRuntime := systemAgentRuntime(agentCfg.HubURL, agentCfg.AgentID, agentCfg.Token, *agentTokenFile, *agentPlanPublicKey, *agentPlanLKG, uuid.NewString())
 	if agentRuntime.Enabled() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
 			return applySystemAgentPlan(&agentCfg.Interval, rootPath, spec)
@@ -149,15 +148,15 @@ func applySystemAgentPlan(interval *time.Duration, rootPath *string, spec agentp
 	return nil
 }
 
-func systemAgentRuntime(baseURL, agentID, token, tokenFile, enrollmentFile, publicKey, lkg, bootID string) agentplan.RuntimeConfig {
-	if strings.TrimSpace(publicKey) == "" && strings.TrimSpace(lkg) == "" && strings.TrimSpace(enrollmentFile) == "" {
+func systemAgentRuntime(baseURL, agentID, token, tokenFile, publicKey, lkg, bootID string) agentplan.RuntimeConfig {
+	if strings.TrimSpace(publicKey) == "" && strings.TrimSpace(lkg) == "" && strings.TrimSpace(tokenFile) == "" && strings.TrimSpace(token) == "" {
 		return agentplan.RuntimeConfig{}
 	}
 	return agentplan.RuntimeConfig{
 		BaseURL: baseURL, AgentID: strings.TrimSpace(agentID), Name: strings.TrimSpace(agentID), Kind: "system",
 		Role: "system", Mode: "push", SoftwareVersion: "watchdog-system-agent-v1", APIVersion: "v1",
-		Capabilities: []string{"system.samples/v1"}, Token: token, TokenFile: tokenFile,
-		EnrollmentFile: enrollmentFile, PublicKeyFile: publicKey, LKGFile: lkg, BootID: bootID,
+		Capabilities:  []string{"system.samples/v1"}, Token: token, TokenFile: tokenFile,
+		PublicKeyFile: publicKey, LKGFile: lkg, BootID: bootID,
 	}
 }
 
