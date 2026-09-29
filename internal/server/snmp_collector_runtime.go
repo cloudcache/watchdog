@@ -117,17 +117,46 @@ func (r *SNMPCollectorRuntime) RunDue(ctx context.Context, limit int) (snmpdomai
 	if err != nil {
 		return result, err
 	}
-	now := time.Now().UTC()
-	closed := now.Truncate(5 * time.Minute).Add(-5 * time.Minute)
 	r.rollupMu.Lock()
 	defer r.rollupMu.Unlock()
-	if closed.After(r.lastRollup) {
-		if err := r.store.RebuildClosedInterfaceBucket(ctx, closed, now, uint64(now.UnixMilli())); err != nil {
-			return result, err
+	return result, r.rebuildClosedInterfaceBuckets(ctx, time.Now().UTC())
+}
+
+const (
+	// snmpInterfaceBackfillWindow bounds how far back a starting collector
+	// rebuilds five-minute interface buckets a stopped collector left unpublished.
+	snmpInterfaceBackfillWindow = 24 * time.Hour
+	// snmpInterfaceBucketsPerPass bounds the rollup work added to one poll pass.
+	snmpInterfaceBucketsPerPass = 12
+)
+
+// rebuildClosedInterfaceBuckets publishes every closed five-minute interface
+// bucket after the last one this process rebuilt, oldest first and at most
+// snmpInterfaceBucketsPerPass per pass, so a failed or overlong poll pass never
+// leaves a billing bucket unpublished. A starting process resumes after the
+// newest bucket any collector published within snmpInterfaceBackfillWindow,
+// which rebuilds the partially sampled bucket a stopped collector left behind.
+func (r *SNMPCollectorRuntime) rebuildClosedInterfaceBuckets(ctx context.Context, now time.Time) error {
+	closed := now.Truncate(5 * time.Minute).Add(-5 * time.Minute)
+	if r.lastRollup.IsZero() {
+		start := closed.Add(-5 * time.Minute)
+		latest, err := r.store.LatestPublishedInterfaceBucket(ctx, closed.Add(-snmpInterfaceBackfillWindow))
+		if err != nil {
+			return err
 		}
-		r.lastRollup = closed
+		if !latest.IsZero() && latest.Before(start) {
+			start = latest
+		}
+		r.lastRollup = start
 	}
-	return result, nil
+	for rebuilt := 0; rebuilt < snmpInterfaceBucketsPerPass && closed.After(r.lastRollup); rebuilt++ {
+		bucket := r.lastRollup.Add(5 * time.Minute)
+		if err := r.store.RebuildClosedInterfaceBucket(ctx, bucket, now, uint64(now.UnixMilli())); err != nil {
+			return err
+		}
+		r.lastRollup = bucket
+	}
+	return nil
 }
 
 func (r *SNMPCollectorRuntime) RunLoop(ctx context.Context, interval time.Duration, limit int, onCycle func(snmpdomain.PollRunnerResult, error)) error {

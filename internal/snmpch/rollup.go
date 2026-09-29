@@ -7,9 +7,35 @@ import (
 	"time"
 
 	"github.com/ClickHouse/ch-go"
+	"github.com/ClickHouse/ch-go/proto"
 )
 
 const interfaceBucket = 5 * time.Minute
+
+// LatestPublishedInterfaceBucket returns the newest five-minute interface bucket
+// at or after since that any collector has published, or the zero time when
+// there is none. A starting collector resumes its rebuilds after it.
+func (s *Store) LatestPublishedInterfaceBucket(ctx context.Context, since time.Time) (time.Time, error) {
+	if s == nil || s.exec == nil {
+		return time.Time{}, errors.New("SNMP ClickHouse store is not initialized")
+	}
+	var latest proto.ColInt64
+	query := ch.Query{
+		Body: `SELECT toInt64(toUnixTimestamp(max(bucket_start))) AS latest
+FROM snmp_interface_traffic_5m
+WHERE row_kind='generation' AND bucket_start>=fromUnixTimestamp64Milli({since_ms:Int64})`,
+		Parameters: ch.Parameters(map[string]any{"since_ms": since.UTC().UnixMilli()}),
+		Result:     proto.Results{{Name: "latest", Data: &latest}},
+	}
+	if err := s.exec.Do(ctx, query); err != nil {
+		return time.Time{}, fmt.Errorf("read latest SNMP interface rollup: %w", err)
+	}
+	// max() over no rows is the epoch, not NULL.
+	if latest.Rows() != 1 || latest[0] <= 0 {
+		return time.Time{}, nil
+	}
+	return time.Unix(latest[0], 0).UTC(), nil
+}
 
 // RebuildClosedInterfaceBucket derives one immutable five-minute interface
 // traffic generation from raw counters. Values are written before the marker;
