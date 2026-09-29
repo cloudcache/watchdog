@@ -28,11 +28,17 @@ func main() {
 	limit := flag.Int("limit", 0, "maximum due recipes to poll (overrides config)")
 	controlPlaneURL := flag.String("control-plane-url", "", "Watchdog API base URL for agent management")
 	agentID := flag.String("agent-id", "watchdog-snmp-collector", "registered SNMP agent ID")
-	agentTokenFile := flag.String("agent-token-file", "", "file containing the SNMP agent machine token")
+	agentTokenFile := flag.String("agent-token-file", "", "file containing the installation-wide shared agent token")
+	// Accepted but ignored so environment files written by the pre-shared-token
+	// activate-agent.sh do not stop the upgraded binary at flag parsing.
+	deprecatedEnrollmentFile := flag.String("agent-enrollment-token-file", "", "deprecated and ignored; agents authenticate with the shared token in -agent-token-file")
 	agentPlanPublicKey := flag.String("agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	agentPlanLKG := flag.String("agent-plan-lkg", "", "durable agent plan LKG file")
 	agentPlanCheck := flag.Bool("agent-plan-check", false, "register/sync/apply the agent plan, then exit")
 	flag.Parse()
+	if strings.TrimSpace(*deprecatedEnrollmentFile) != "" {
+		log.Printf("-agent-enrollment-token-file is deprecated and ignored: agents authenticate with the installation shared token in -agent-token-file; re-run deploy/systemd/activate-agent.sh to refresh the environment file")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -90,7 +96,7 @@ func main() {
 			return applySNMPAgentPlan(&resolvedInterval, &resolvedLimit, spec)
 		})
 		if errors.Is(err, agentplan.ErrUnauthorized) {
-			log.Printf("SNMP agent credential is revoked; stopping without restart")
+			log.Printf("SNMP agent token was rejected (agent revoked, or the token does not match the server's agents.shared_token); stopping without restart")
 			return
 		}
 		if err != nil && !errors.Is(err, agentplan.ErrNoPlan) {
@@ -127,11 +133,12 @@ func main() {
 	// reportPoll records one SNMP poll pass as an agent run so the registry and
 	// UI reflect real collection workload (recipes, devices, samples, failures),
 	// not liveness alone. It is a no-op unless the agent runtime is configured.
-	reportPoll := func(res snmpdomain.PollRunnerResult, runErr error) {
+	reportPoll := func(res snmpdomain.PollRunnerResult, runErr error, ended time.Time) {
 		if !agentRuntime.Enabled() || agentToken == "" {
 			return
 		}
 		report := agentplan.RunReport{
+			EndedAt: ended,
 			Summary: map[string]any{
 				"plan_version": agentPlanVersion,
 				"recipes":      res.RecipeCount,
@@ -163,7 +170,7 @@ func main() {
 	}
 	if *poll && !*loop {
 		result, err := runtime.RunDue(ctx, resolvedLimit)
-		reportPoll(result, err)
+		reportPoll(result, err, time.Now().UTC())
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -176,11 +183,31 @@ func main() {
 			}
 		}
 		if *poll {
+			// Report passes from one goroutine, in pass order, without blocking the
+			// next poll tick: a slow control plane drops reports instead of delaying
+			// collection, and the server never receives an older pass after a newer
+			// one. Each report carries the time its pass ended, not the send time.
+			type passReport struct {
+				result snmpdomain.PollRunnerResult
+				err    error
+				ended  time.Time
+			}
+			reports := make(chan passReport, 16)
+			go func() {
+				for r := range reports {
+					reportPoll(r.result, r.err, r.ended)
+				}
+			}()
 			if err := runtime.RunLoop(ctx, resolvedInterval, resolvedLimit, func(res snmpdomain.PollRunnerResult, cycleErr error) {
-				go reportPoll(res, cycleErr)
+				select {
+				case reports <- passReport{result: res, err: cycleErr, ended: time.Now().UTC()}:
+				default:
+					log.Printf("SNMP agent run report queue is full; dropping one pass report")
+				}
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("poll scheduler stopped: %v", err)
 			}
+			close(reports)
 		} else {
 			<-ctx.Done()
 		}

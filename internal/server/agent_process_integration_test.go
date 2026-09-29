@@ -115,8 +115,13 @@ func TestAgentProcessesRegisterApplyLKGAndRevocation(t *testing.T) {
 
 	unavailable.Store(true)
 	for _, process := range processes {
-		if output, err := runAgentProcess(t, process, controlPlane.URL, publicKeyFile); err != nil {
-			t.Fatalf("%s offline LKG: %v\n%s", process.Command, err, output)
+		// Environment files written by the enrollment-era activate script still
+		// pass -agent-enrollment-token-file; it must be ignored, not fatal.
+		legacy := process
+		legacy.ExtraArgs = []string{"-agent-enrollment-token-file", filepath.Join(temporary, "enrollment.token")}
+		output, err := runAgentProcess(t, legacy, controlPlane.URL, publicKeyFile)
+		if err != nil || !strings.Contains(string(output), "deprecated and ignored") {
+			t.Fatalf("%s offline LKG with the legacy enrollment flag: %v\n%s", process.Command, err, output)
 		}
 	}
 	unavailable.Store(false)
@@ -139,6 +144,7 @@ type agentProcessFixture struct {
 	Command, Binary, AgentID, Kind, Capability string
 	TokenFile, LKGFile                         string
 	Config                                     map[string]any
+	ExtraArgs                                  []string
 }
 
 func runAgentProcess(t *testing.T, process agentProcessFixture, controlPlane, publicKey string) ([]byte, error) {
@@ -157,6 +163,7 @@ func runAgentProcess(t *testing.T, process agentProcessFixture, controlPlane, pu
 		arguments = append(arguments, "-control-plane-url", controlPlane, "-worker-id", process.AgentID)
 		arguments = removeFlagPair(arguments, "-agent-id")
 	}
+	arguments = append(arguments, process.ExtraArgs...)
 	command := exec.CommandContext(t.Context(), process.Binary, arguments...)
 	return command.CombinedOutput()
 }

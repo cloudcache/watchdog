@@ -261,8 +261,8 @@ func (r RuntimeConfig) Sync(ctx context.Context, apply ApplyFunc) (SyncResult, s
 	if errors.Is(err, ErrUnauthorized) && token != "" {
 		// A configured installation-wide token authenticates only after the agent
 		// row exists. Register idempotently, then retry the original plan fetch.
-		// Per-agent credentials cannot pass this registration endpoint and retain
-		// the same unauthorized failure semantics.
+		// A token the server rejects at registration also surfaces as
+		// ErrUnauthorized, so callers stop instead of crash-looping.
 		token, registerErr := Register(ctx, r.BaseURL, r.HTTPClient, Registration{
 			SharedToken: token, AgentID: r.AgentID, Name: r.Name,
 			Kind: r.Kind, DeviceID: r.DeviceID, Role: r.Role, Mode: r.Mode,

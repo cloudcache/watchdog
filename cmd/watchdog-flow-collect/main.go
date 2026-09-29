@@ -64,12 +64,18 @@ func main() {
 	flag.IntVar(&opt.maxUDP, "max-datagram-bytes", 65535, "maximum accepted UDP datagram size")
 	flag.StringVar(&opt.agentControlURL, "control-plane-url", "", "Watchdog API base URL for agent management")
 	flag.StringVar(&opt.agentID, "agent-id", "watchdog-flow-collect", "registered flow_collect agent ID")
-	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the flow_collect machine token")
+	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the installation-wide shared agent token")
+	// Accepted but ignored so environment files written by the pre-shared-token
+	// activate-agent.sh do not stop the upgraded binary at flag parsing.
+	deprecatedEnrollmentFile := flag.String("agent-enrollment-token-file", "", "deprecated and ignored; agents authenticate with the shared token in -agent-token-file")
 	flag.StringVar(&opt.agentPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	flag.StringVar(&opt.agentLKG, "agent-plan-lkg", "", "durable agent plan LKG file")
 	flag.BoolVar(&opt.agentPlanCheck, "agent-plan-check", false, "register/sync/apply the agent plan, then exit")
 	flag.BoolVar(&opt.check, "check", false, "validate configuration and signed plan, then exit")
 	flag.Parse()
+	if strings.TrimSpace(*deprecatedEnrollmentFile) != "" {
+		log.Printf("-agent-enrollment-token-file is deprecated and ignored: agents authenticate with the installation shared token in -agent-token-file; re-run deploy/systemd/activate-agent.sh to refresh the environment file")
+	}
 
 	if err := run(opt); err != nil {
 		log.Fatal(err)
@@ -88,7 +94,7 @@ func run(opt options) error {
 			return applyFlowCollectAgentPlan(&opt, spec)
 		})
 		if errors.Is(err, agentplan.ErrUnauthorized) && !opt.agentPlanCheck {
-			log.Printf("flow-collect agent credential is revoked; stopping without restart")
+			log.Printf("flow-collect agent token was rejected (agent revoked, or the token does not match the server's agents.shared_token); stopping without restart")
 			return nil
 		}
 		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || opt.agentPlanCheck) {

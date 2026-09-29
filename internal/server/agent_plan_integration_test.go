@@ -21,9 +21,13 @@ func TestAgentPlanAPI(t *testing.T) {
 	if dsn == "" {
 		t.Skip("WATCHDOG_AGENT_PLAN_TEST_MYSQL_DSN is not set")
 	}
+	// Agents authenticate with the installation shared token; the admin create
+	// call makes the row and never issues a per-agent credential.
+	const agentToken = "agent-plan-test-secret"
 	s, err := New(Config{
-		MySQL: MySQLConfig{DSN: dsn},
-		Admin: AdminConfig{Username: "plan-test-admin", Password: "plan-test-password"},
+		MySQL:  MySQLConfig{DSN: dsn},
+		Admin:  AdminConfig{Username: "plan-test-admin", Password: "plan-test-password"},
+		Agents: AgentsConfig{SharedToken: agentToken},
 		AgentPlans: AgentPlansConfig{
 			SigningKeyID: "plan-test-key", SigningPrivateKey: filepath.Join(t.TempDir(), "agent-plan.pem"),
 			DefaultTTL: 24 * time.Hour,
@@ -42,10 +46,9 @@ func TestAgentPlanAPI(t *testing.T) {
 	}
 	cookies := login.Result().Cookies()
 	auth := map[string]string{"X-CSRF-Token": cookieValue(cookies, csrfCookie)}
-	const agentToken = "agent-plan-test-secret"
 	createdAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
 		"id": "agent_plan_test", "name": "Plan test", "kind": "snmp", "mode": "push",
-		"token": agentToken, "api_version": "v1", "capabilities": []string{"snmp.poll/v2"},
+		"api_version": "v1", "capabilities": []string{"snmp.poll/v2"},
 	}, auth, cookies...)
 	if createdAgent.Code != http.StatusCreated || strings.Contains(createdAgent.Body.String(), agentToken) {
 		t.Fatalf("create agent: status=%d body=%s", createdAgent.Code, createdAgent.Body.String())
@@ -150,7 +153,7 @@ func createRolloutAgent(t *testing.T, s *Server, cookies []*http.Cookie, auth ma
 	t.Helper()
 	response := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
 		"id": "agent_rollout_test", "name": "Rollout test", "kind": "snmp", "mode": "push",
-		"token": "rollout-secret", "api_version": "v1", "capabilities": []string{"snmp.poll/v2"},
+		"api_version": "v1", "capabilities": []string{"snmp.poll/v2"},
 	}, auth, cookies...)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create rollout agent: status=%d body=%s", response.Code, response.Body.String())

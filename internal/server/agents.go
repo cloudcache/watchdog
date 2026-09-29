@@ -627,7 +627,13 @@ func (s *Server) recordAgentStatus(c *gin.Context) {
 	}
 	if err == nil {
 		failure := req.Status == "failure"
-		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agents SET row_version=row_version+IF(status='registered',1,0),last_seen_at=NOW(3),last_run_at=?,last_success_at=IF(?,last_success_at,?),last_error=IF(?,NULLIF(?,''),NULL),run_count=run_count+1,failure_count=failure_count+IF(?,1,0),health=IF(?,'error','ok'),status=IF(status='registered','active',status) WHERE id=?`, ended, failure, ended, failure, req.Error, failure, failure, c.Param("id"))
+		// Reports can arrive out of order (retries, concurrent senders), so the
+		// latest-state columns only move forward in run time: an older report is
+		// still counted but cannot overwrite health/last_run_at from a newer one.
+		// MySQL evaluates SET left to right with updated values, so every column
+		// compared against the old last_run_at is assigned before last_run_at.
+		_, err = tx.ExecContext(c.Request.Context(), `UPDATE agents SET row_version=row_version+IF(status='registered',1,0),last_seen_at=NOW(3),health=IF(last_run_at IS NULL OR last_run_at<=?,IF(?,'error','ok'),health),last_error=IF(last_run_at IS NULL OR last_run_at<=?,IF(?,NULLIF(?,''),NULL),last_error),last_success_at=IF(?,last_success_at,IF(last_success_at IS NULL OR last_success_at<?,?,last_success_at)),last_run_at=IF(last_run_at IS NULL OR last_run_at<?,?,last_run_at),run_count=run_count+1,failure_count=failure_count+IF(?,1,0),status=IF(status='registered','active',status) WHERE id=?`,
+			ended, failure, ended, failure, req.Error, failure, ended, ended, ended, ended, failure, c.Param("id"))
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -810,23 +816,66 @@ func (s *Server) enrollAgent(c *gin.Context) {
 				return
 			}
 		}
-		tx, err := s.db.BeginTx(c.Request.Context(), nil)
-		if err == nil {
-			_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agents (id,name,kind,status,health,software_version,api_version,capabilities_json) VALUES (?,?,?,'active','unknown',?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),kind=VALUES(kind),status=IF(status='revoked',status,'active'),software_version=VALUES(software_version),api_version=VALUES(api_version),capabilities_json=VALUES(capabilities_json),row_version=row_version+1,updated_at=NOW(3)`, id, name, req.Kind, req.SoftwareVersion, apiVersion, capabilities)
+		ctx := c.Request.Context()
+		endpoint := strings.TrimSpace(req.Endpoint)
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			writeSQLError(c, err)
+			return
 		}
-		if err == nil {
-			_, err = tx.ExecContext(c.Request.Context(), `INSERT INTO agent_bindings (id,agent_id,device_id,role,mode,endpoint) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE device_id=VALUES(device_id),role=VALUES(role),mode=VALUES(mode),endpoint=VALUES(endpoint),row_version=row_version+1`, newID(), id, nullableText(deviceID), role, req.Mode, strings.TrimSpace(req.Endpoint))
+		var existingKind string
+		err = tx.QueryRowContext(ctx, `SELECT kind FROM agents WHERE id=? FOR UPDATE`, id).Scan(&existingKind)
+		created := errors.Is(err, sql.ErrNoRows)
+		if err != nil && !created {
+			_ = tx.Rollback()
+			writeSQLError(c, err)
+			return
+		}
+		if !created && existingKind != req.Kind {
+			_ = tx.Rollback()
+			fail(c, http.StatusConflict, "immutable_kind", "agent kind cannot be changed after registration")
+			return
+		}
+		bindingChanged := false
+		if created {
+			_, err = tx.ExecContext(ctx, `INSERT INTO agents (id,name,kind,status,health,software_version,api_version,capabilities_json) VALUES (?,?,?,'active','unknown',?,?,?)`, id, name, req.Kind, req.SoftwareVersion, apiVersion, capabilities)
+			if err == nil {
+				_, err = tx.ExecContext(ctx, `INSERT INTO agent_bindings (id,agent_id,device_id,role,mode,endpoint) VALUES (?,?,?,?,?,?)`, newID(), id, nullableText(deviceID), role, req.Mode, endpoint)
+			}
+		} else {
+			// Re-registration refreshes only process-reported facts. Name, status,
+			// kind and bindings are management-owned once the row exists: a restart
+			// must not rename, reactivate a draining/revoked agent, or unbind it.
+			// Like a heartbeat, it bumps row_version only on registered->active.
+			_, err = tx.ExecContext(ctx, `UPDATE agents SET row_version=row_version+IF(status='registered',1,0),status=IF(status='registered','active',status),software_version=IF(?='',software_version,?),api_version=?,capabilities_json=CAST(? AS JSON) WHERE id=?`, req.SoftwareVersion, req.SoftwareVersion, apiVersion, capabilities, id)
+			if err == nil {
+				// Fill only binding fields that are still empty; never overwrite a
+				// device binding or endpoint an administrator already set.
+				var result sql.Result
+				result, err = tx.ExecContext(ctx, `INSERT INTO agent_bindings (id,agent_id,device_id,role,mode,endpoint) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE row_version=row_version+IF((device_id IS NULL AND VALUES(device_id) IS NOT NULL) OR (endpoint='' AND VALUES(endpoint)<>''),1,0),device_id=COALESCE(device_id,VALUES(device_id)),endpoint=IF(endpoint='',VALUES(endpoint),endpoint)`, newID(), id, nullableText(deviceID), role, req.Mode, endpoint)
+				if err == nil {
+					affected, _ := result.RowsAffected()
+					bindingChanged = affected > 0
+				}
+			}
 		}
 		if err == nil {
 			err = tx.Commit()
-		} else if tx != nil {
+		} else {
 			_ = tx.Rollback()
 		}
 		if err != nil {
 			writeSQLError(c, err)
 			return
 		}
-		r, err := s.readAgent(c.Request.Context(), id)
+		// Machine self-registration has no user principal; record it so identity
+		// creation and binding changes stay traceable. Plain restarts are not logged.
+		if created {
+			s.audit(ctx, "", "agent.register", "agent", id)
+		} else if bindingChanged {
+			s.audit(ctx, "", "agent.register.bind", "agent", id)
+		}
+		r, err := s.readAgent(ctx, id)
 		if err != nil {
 			writeSQLError(c, err)
 			return

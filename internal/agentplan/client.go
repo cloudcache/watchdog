@@ -284,6 +284,12 @@ func Register(ctx context.Context, baseURL string, client *http.Client, registra
 		return "", err
 	}
 	defer response.Body.Close()
+	// A rejected token (not the installation shared token, or the server has
+	// none configured) is terminal like a revocation: surfacing ErrUnauthorized
+	// lets the process stop cleanly instead of crash-looping under systemd.
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return "", ErrUnauthorized
+	}
 	if response.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 		return "", fmt.Errorf("register agent: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))

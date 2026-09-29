@@ -1454,10 +1454,13 @@ func (s *Server) authenticateFlowWorker(c *gin.Context) bool {
 	if !s.authenticateAgent(c, c.Param("id")) {
 		return false
 	}
+	// A draining worker is still processing and must keep reading its current
+	// feed and acknowledging it; only revoked (rejected above) is cut off.
+	// Publication targeting excludes draining workers separately.
 	var kind, status string
 	if err := s.db.QueryRowContext(c.Request.Context(), `SELECT kind,status FROM agents WHERE id=?`, c.Param("id")).Scan(&kind, &status); err != nil ||
-		kind != "flow_worker" || (status != "registered" && status != "active") {
-		fail(c, http.StatusUnauthorized, "unauthorized", "credential does not belong to an active Flow worker")
+		kind != "flow_worker" || (status != "registered" && status != "active" && status != "draining") {
+		fail(c, http.StatusUnauthorized, "unauthorized", "credential does not belong to a Flow worker")
 		return false
 	}
 	return true

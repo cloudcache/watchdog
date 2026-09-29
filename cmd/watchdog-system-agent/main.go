@@ -24,7 +24,10 @@ func main() {
 	hubURL := flag.String("hub-url", "", "Watchdog Hub URL")
 	agentID := flag.String("agent-id", "", "Watchdog system agent ID")
 	agentToken := flag.String("agent-token", "", "Watchdog system agent token")
-	agentTokenFile := flag.String("agent-token-file", "", "file containing the system agent machine token")
+	agentTokenFile := flag.String("agent-token-file", "", "file containing the installation-wide shared agent token")
+	// Accepted but ignored so environment files written by the pre-shared-token
+	// activate-agent.sh do not stop the upgraded binary at flag parsing.
+	deprecatedEnrollmentFile := flag.String("agent-enrollment-token-file", "", "deprecated and ignored; agents authenticate with the shared token in -agent-token-file")
 	agentPlanPublicKey := flag.String("agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	agentPlanLKG := flag.String("agent-plan-lkg", "", "durable agent plan LKG file")
 	agentPlanCheck := flag.Bool("agent-plan-check", false, "register/sync/apply the agent plan, then exit")
@@ -32,6 +35,9 @@ func main() {
 	rootPath := flag.String("root-path", "/", "root filesystem path for disk usage")
 	once := flag.Bool("once", false, "collect once and exit")
 	flag.Parse()
+	if strings.TrimSpace(*deprecatedEnrollmentFile) != "" {
+		log.Printf("-agent-enrollment-token-file is deprecated and ignored: agents authenticate with the installation shared token in -agent-token-file; re-run deploy/systemd/activate-agent.sh to refresh the environment file")
+	}
 	if *interval < 0 {
 		log.Fatal("interval must not be negative")
 	}
@@ -61,7 +67,7 @@ func main() {
 			return applySystemAgentPlan(&agentCfg.Interval, rootPath, spec)
 		})
 		if errors.Is(err, agentplan.ErrUnauthorized) && !*agentPlanCheck {
-			log.Printf("system agent credential is revoked; stopping without restart")
+			log.Printf("system agent token was rejected (agent revoked, or the token does not match the server's agents.shared_token); stopping without restart")
 			return
 		}
 		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || *agentPlanCheck) {

@@ -29,9 +29,12 @@ func TestVPNRuleSetPublicationWorkerACK(t *testing.T) {
 	dropTestDatabase(t, baseDSN, parsed.DBName)
 	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
 	root := t.TempDir()
+	// The Flow worker authenticates with the installation shared token.
+	const workerToken = "flow-worker-vpn-secret"
 	s, err := New(Config{
 		MySQL:   MySQLConfig{DSN: parsed.FormatDSN()},
 		Admin:   AdminConfig{Username: "vpn-publish-admin", Password: "vpn-publish-password"},
+		Agents:  AgentsConfig{SharedToken: workerToken},
 		Address: AddressConfig{ArtifactDir: filepath.Join(root, "artifacts"), SnapshotDir: filepath.Join(root, "snapshots")},
 	})
 	if err != nil {
@@ -119,9 +122,8 @@ func TestVPNRuleSetPublicationWorkerACK(t *testing.T) {
 	}
 
 	const workerID = "flow_worker_vpn_it"
-	const workerToken = "flow-worker-vpn-secret"
 	agent := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
-		"id": workerID, "name": "VPN publication worker", "kind": "flow_worker", "mode": "push", "token": workerToken,
+		"id": workerID, "name": "VPN publication worker", "kind": "flow_worker", "mode": "push",
 		"api_version": "v1", "capabilities": []string{"flow.write.clickhouse/v1"},
 	}, mutation, cookies...)
 	if agent.Code != http.StatusCreated {

@@ -90,6 +90,9 @@ func main() {
 	flag.StringVar(&opt.controlPlaneURL, "control-plane-url", "", "Watchdog API base URL for signed enrichment publications")
 	flag.StringVar(&opt.agentControlPlaneURL, "agent-control-plane-url", "", "Watchdog API base URL for agent registration, plan, ACK, and health")
 	flag.StringVar(&opt.agentTokenFile, "agent-token-file", "", "file containing the installation-wide shared agent token")
+	// Accepted but ignored so environment files written by the pre-shared-token
+	// activate-agent.sh do not stop the upgraded binary at flag parsing.
+	deprecatedEnrollmentFile := flag.String("agent-enrollment-token-file", "", "deprecated and ignored; agents authenticate with the shared token in -agent-token-file")
 	flag.StringVar(&opt.agentPlanPublicKey, "agent-plan-public-key", "", "agent plan Ed25519 public key file")
 	flag.StringVar(&opt.agentPlanLKG, "agent-plan-lkg", "", "durable agent plan LKG file")
 	flag.BoolVar(&opt.agentPlanCheck, "agent-plan-check", false, "register/sync/apply the agent plan, then exit")
@@ -141,6 +144,9 @@ func main() {
 	flag.StringVar(&opt.metricsListen, "metrics-listen", "127.0.0.1:9091", "Prometheus metrics listen address; empty disables it")
 	flag.BoolVar(&opt.check, "check", false, "validate configuration and bootstrap artifacts without connecting, then exit")
 	flag.Parse()
+	if strings.TrimSpace(*deprecatedEnrollmentFile) != "" {
+		log.Printf("-agent-enrollment-token-file is deprecated and ignored: agents authenticate with the installation shared token in -agent-token-file; re-run deploy/systemd/activate-agent.sh to refresh the environment file")
+	}
 
 	if err := run(opt); err != nil {
 		log.Fatal(err)
@@ -162,7 +168,7 @@ func run(opt options) error {
 			return applyFlowWorkerAgentPlan(&opt, spec)
 		})
 		if errors.Is(err, agentplan.ErrUnauthorized) && !opt.agentPlanCheck {
-			log.Printf("flow-worker agent credential is revoked; stopping without restart")
+			log.Printf("flow-worker agent token was rejected (agent revoked, or the token does not match the server's agents.shared_token); stopping without restart")
 			return nil
 		}
 		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || opt.agentPlanCheck) {

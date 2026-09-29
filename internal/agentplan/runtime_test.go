@@ -57,6 +57,38 @@ func TestRuntimeSharedTokenRegistersMissingAgentAndRetries(t *testing.T) {
 	}
 }
 
+func TestRuntimeRejectedSharedTokenIsUnauthorized(t *testing.T) {
+	dir := t.TempDir()
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKeyFile := filepath.Join(dir, "agent-plan.pub")
+	if err := WritePublicKey(publicKeyFile, publicKey); err != nil {
+		t.Fatal(err)
+	}
+	registerCalls := 0
+	runtime := RuntimeConfig{
+		BaseURL: "http://control-plane.test", AgentID: "snmp-main", Name: "snmp-main", Kind: "snmp",
+		Role: "snmp", Mode: "push", SoftwareVersion: "test", APIVersion: "v1",
+		Capabilities: []string{"snmp.poll/v2"}, Token: "stale-or-wrong-token",
+		PublicKeyFile: publicKeyFile, LKGFile: filepath.Join(dir, "plan.lkg"), BootID: "boot-1",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) *http.Response {
+			if request.URL.Path == "/api/v1/agents/register" {
+				registerCalls++
+			}
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized, Header: make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{"error":"invalid_token"}`)), Request: request,
+			}
+		})},
+	}
+	_, _, err = runtime.Sync(context.Background(), func(context.Context, Spec) error { return nil })
+	if !errors.Is(err, ErrUnauthorized) || registerCalls != 1 {
+		t.Fatalf("registerCalls=%d err=%v", registerCalls, err)
+	}
+}
+
 func TestDecodeConfigIsStrict(t *testing.T) {
 	spec := Spec{Config: json.RawMessage(`{"interval_seconds":30}`)}
 	var value struct {

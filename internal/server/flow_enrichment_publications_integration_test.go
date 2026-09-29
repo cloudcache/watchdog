@@ -41,9 +41,12 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	t.Cleanup(func() { dropTestDatabase(t, baseDSN, parsed.DBName) })
 
 	root := t.TempDir()
+	// Every machine caller presents the installation shared token.
+	const workerToken = "flow-worker-it-secret"
 	cfg := Config{
-		MySQL: MySQLConfig{DSN: dsn},
-		Admin: AdminConfig{Username: "flow-enrichment-admin", Password: "flow-enrichment-password"},
+		MySQL:  MySQLConfig{DSN: dsn},
+		Admin:  AdminConfig{Username: "flow-enrichment-admin", Password: "flow-enrichment-password"},
+		Agents: AgentsConfig{SharedToken: workerToken},
 		AgentPlans: AgentPlansConfig{
 			SigningKeyID: "flow-enrichment-key", SigningPrivateKey: filepath.Join(root, "agent-plan.pem"),
 			DefaultTTL: 24 * time.Hour,
@@ -79,25 +82,39 @@ func TestFlowEnrichmentPublicationGinWorkerIntegration(t *testing.T) {
 	adminHeaders := map[string]string{"X-CSRF-Token": cookieValue(cookies, csrfCookie)}
 
 	const workerID = "flow_worker_it"
-	const workerToken = "flow-worker-it-secret"
 	createdAgent := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
 		"id": workerID, "name": "Flow worker integration", "kind": "flow_worker", "mode": "push",
-		"status": "active", "token": workerToken, "api_version": "v1", "capabilities": []string{"flow.write.clickhouse/v1"},
+		"status": "active", "api_version": "v1", "capabilities": []string{"flow.write.clickhouse/v1"},
 	}, adminHeaders, cookies...)
 	if createdAgent.Code != http.StatusCreated {
 		t.Fatalf("create flow worker: status=%d body=%s", createdAgent.Code, createdAgent.Body.String())
 	}
-	const wrongKindToken = "snmp-worker-it-secret"
 	wrongKind := requestJSON(t, s, http.MethodPost, "/api/v1/agents", map[string]any{
 		"id": "snmp_worker_it", "name": "SNMP worker integration", "kind": "snmp", "mode": "push",
-		"token": wrongKindToken, "api_version": "v1", "capabilities": []string{"snmp.poll/v2"},
+		"api_version": "v1", "capabilities": []string{"snmp.poll/v2"},
 	}, adminHeaders, cookies...)
 	if wrongKind.Code != http.StatusCreated {
 		t.Fatalf("create wrong-kind agent: status=%d body=%s", wrongKind.Code, wrongKind.Body.String())
 	}
-	wrongKindPull := machineRequest(t, s, http.MethodGet, "/api/v1/flow-workers/snmp_worker_it/trust-bundle", wrongKindToken, nil)
+	// The shared token authenticates the SNMP agent's id, but Flow worker
+	// endpoints additionally require kind=flow_worker.
+	wrongKindPull := machineRequest(t, s, http.MethodGet, "/api/v1/flow-workers/snmp_worker_it/trust-bundle", workerToken, nil)
 	if wrongKindPull.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong-kind agent can pull Flow enrichment: status=%d body=%s", wrongKindPull.Code, wrongKindPull.Body.String())
+	}
+	// A draining worker is still processing and keeps reading its feed; only
+	// revocation cuts it off.
+	for _, step := range []struct {
+		status string
+		want   int
+	}{{"draining", http.StatusOK}, {"revoked", http.StatusUnauthorized}, {"active", http.StatusOK}} {
+		if _, err := s.db.Exec(`UPDATE agents SET status=? WHERE id=?`, step.status, workerID); err != nil {
+			t.Fatal(err)
+		}
+		pull := machineRequest(t, s, http.MethodGet, "/api/v1/flow-workers/"+workerID+"/trust-bundle", workerToken, nil)
+		if pull.Code != step.want {
+			t.Fatalf("%s worker trust-bundle pull: status=%d want=%d body=%s", step.status, pull.Code, step.want, pull.Body.String())
+		}
 	}
 
 	effectiveFrom := time.Now().UTC().Truncate(time.Minute).Add(-5 * time.Minute)

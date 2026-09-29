@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -319,6 +320,26 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	if badRunsQuery.Code != http.StatusBadRequest {
 		t.Fatalf("runs accepted unknown query: status=%d body=%s", badRunsQuery.Code, badRunsQuery.Body.String())
 	}
+	// Run reports can arrive out of order: an older failure is counted but cannot
+	// overwrite the health or last run time of the newer success.
+	var lastRunBefore time.Time
+	if err := s.db.QueryRow(`SELECT last_run_at FROM agents WHERE id='agent_api_test'`).Scan(&lastRunBefore); err != nil {
+		t.Fatal(err)
+	}
+	staleFailure := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/status", map[string]any{
+		"status": "failure", "error": "stale pass", "ended_at": time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano),
+	}, map[string]string{"X-Watchdog-Agent-Token": agentToken})
+	var staleHealth string
+	var lastRunAfter time.Time
+	var failureCount uint64
+	if err := s.db.QueryRow(`SELECT health,last_run_at,failure_count FROM agents WHERE id='agent_api_test'`).
+		Scan(&staleHealth, &lastRunAfter, &failureCount); err != nil {
+		t.Fatal(err)
+	}
+	if staleFailure.Code != http.StatusAccepted || staleHealth != "ok" || !lastRunAfter.Equal(lastRunBefore) || failureCount != 1 {
+		t.Fatalf("stale failure report: status=%d health=%q last_run before=%s after=%s failures=%d",
+			staleFailure.Code, staleHealth, lastRunBefore, lastRunAfter, failureCount)
+	}
 
 	// Shared-token registration replaces one-time enrollment tokens: the wrong token
 	// is rejected, a system agent bound to a network device is rejected, the correct
@@ -351,6 +372,26 @@ func TestDeviceAndAgentAPI(t *testing.T) {
 	}, nil)
 	if reRegistered.Code != http.StatusCreated {
 		t.Fatalf("shared-token register is not idempotent: status=%d body=%s", reRegistered.Code, reRegistered.Body.String())
+	}
+	// Anyone holding the shared token can call register, so an existing row's
+	// kind and management-owned binding cannot be changed through it.
+	kindChange := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
+		"id": "system_agent_api_test", "token": agentToken, "name": "system-agent", "kind": "snmp",
+		"capabilities": []string{"snmp.poll/v2"},
+	}, nil)
+	if kindChange.Code != http.StatusConflict || !strings.Contains(kindChange.Body.String(), "immutable_kind") {
+		t.Fatalf("re-register changed the agent kind: status=%d body=%s", kindChange.Code, kindChange.Body.String())
+	}
+	unbound := requestJSON(t, s, http.MethodPost, "/api/v1/agents/register", map[string]any{
+		"id": "system_agent_api_test", "token": agentToken, "name": "system-agent", "kind": "system",
+		"capabilities": []string{"system.samples/v1"},
+	}, nil)
+	var boundDevice sql.NullString
+	if err := s.db.QueryRow(`SELECT device_id FROM agent_bindings WHERE agent_id='system_agent_api_test'`).Scan(&boundDevice); err != nil {
+		t.Fatal(err)
+	}
+	if unbound.Code != http.StatusCreated || boundDevice.String != systemDevice.ID {
+		t.Fatalf("re-register without device_id dropped the binding: status=%d device=%q body=%s", unbound.Code, boundDevice.String, unbound.Body.String())
 	}
 	badHeartbeat := requestJSON(t, s, http.MethodPost, "/api/v1/agents/agent_api_test/heartbeat", nil,
 		map[string]string{"X-Watchdog-Agent-Token": "wrong"})
