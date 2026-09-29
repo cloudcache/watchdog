@@ -1,5 +1,7 @@
 # 运行预算、硬上限与异步任务审计
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 2 · 部分修复 1 · 未修复 8 · 作废 0（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 > 2026-09-17 审计基线。目标是区分“协议/安全不变量”和“部署运行预算”，避免把计费口径写成程序上限，也避免通过无限放大查询参数掩盖同步接口设计错误。
 
 ## 1. 四类限制
@@ -73,3 +75,18 @@
 ## 6. 不应异步化的路径
 
 普通页面折线和端口 hover 应保持短小的同步有界查询：它们需要即时交互，并且通过服务端步进、预算和最终降采样即可稳定完成。超长范围、跨大量端口、明细全量和证据导出才转 operation job。把每次 hover 都改成后台任务会增加状态、轮询和垃圾清理，却不能解决错误的点数/中间行语义。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 2 · 部分修复 1 · 未修复 8 · 作废 0（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L14 | CH budgets had no configuration entry | 已修复 | `b8182d8eb` `config.go:210-214,` `watchdog.yaml:91-95` \| |
+| L18 | max_data_points doubled as intermediate row cap | 已修复 | `b8182d8eb` \| |
+| L49 | billing account reader temporary hard limit | 部分修复 | configurable + `store.go:29-32` HardMaxPeriodDuration；KISS-07C not done |
+| L50 | billing CH reader 120000 buckets / 400 days in one block | 未修复 | `flowch/billing.go:18`; `store.go:32` \| |
+| L62 | internal readers not incremental | 未修复 | `tasklist.md:292` KISS-07C still pending \| |
+| L66 | KISS-07C six completion conditions | 未修复 | no slicing or checkpoint in billing；6 items |

@@ -1,5 +1,7 @@
 # 旧平台重构清单归档映射
 
+> **与代码的差异（2026-09-28 复核）**：本文有 2 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > 状态：2026-09-16 已归档。当前平台实施的唯一入口是 [Watchdog KISS Tasklist](watchdog-kiss-refactor-tasklist.md)；Flow 实施状态只看 [Flow Tasklist](flow-module-tasklist.md)。本文只核销旧 [平台重构 Tasklist](platform-refactor-tasklist.md) 中仍显示为未完成的条目，不产生新的实施路线。
 
 ## 归档规则
@@ -25,3 +27,12 @@
 | PLAT-04C4 `运营商发布身份` | Flow 继续 | 运营商稳定 `isp_id`、ASN 集合、发布/回滚与查询标签属于 Flow 地址维度契约，在 Flow tasklist 继续验收。 |
 
 旧清单中已经勾选的条目只作为历史提交证据，不代表其 PB/tenant/VM 架构仍然有效；与 KISS 目标冲突的描述一律以 KISS 架构和本映射为准。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **:17** — “KISS-04 完成注册/凭证/rollout”已过时：enrollment、轮换与 per-agent 凭证已在 Stage 2 删除（`aa870f65d`、`0050`），改为全局共享 token 自注册，应改为“注册 = 共享 token 自注册；enrollment/rotation/凭证归入删除旧路线”。另：A2f 一行写“删除旧路线”，但 VPN 实际经 `NewScopedPublisher` 复用同一 scoped 核心；PLAT-04C4 实际已在代码中完成。
+- **:21** — PLAT-WEB-01 现状是 nginx 同源反代 `/api/`（`API_URL` 为空串）+ MPA（每个固定页是真实 HTML，无前端 history fallback），分域部署时才配置 `API_URL`。

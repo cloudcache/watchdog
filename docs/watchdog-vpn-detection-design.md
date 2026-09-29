@@ -1,5 +1,7 @@
 # Watchdog VPN/代理 Flow 检测与被动探测设计 (KISS-06 风险感知)
 
+> **与代码的差异（2026-09-28 复核）**：本文有 5 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 状态：设计冻结草案（2026-09-09）。本文只做**设计**，不含实现。落地按 §10 分阶段，每阶段守 8 门。
 
 ## 0. 目标
@@ -234,3 +236,15 @@ actions: [
 
 ---
 关联：`watchdog-kiss06-flow-design.md`（flow 单域化 + 查询收敛）、`watchdog-flow-module-design.md`（六维分类+地址库）、memory `watchdog-kiss06-flow-detenant`（VPN rules 已建 / findings 推迟原因）。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **状态与 §5.3（:3,167）**：已实现——按窗口事件时间安装已发布并激活的不可变 rule-set（version = snapshot ID，写 ACK）；阈值属于 rule-set policy，FlowVPNConfig 的阈值字段已无引用；规则经 `/flow/vpn/rule-sets` 预览/发布/审批/激活（`e5578b292`）。
+- **路径（:25）**：`internal/watchdog/flow_vpn_management.go` 已删除，现为 `internal/server/flow_vpn_findings.go`、`flow_vpn_findings_api.go`。
+- **候选列（:150-152,224）**：实际为 `013_flow_vpn_candidate_features.sql`，只加了 local_prefix_id 与 packet_bytes_p50；其余列推迟。
+- **finding 列（:158）**：实际为 JSON 列 `family_hints`（`0019`）。
+- **推迟项（:83,108-117）**：Match 的 P95/周期/扇出、rules.actions_json、probe_policies、Kafka probe topic 均未实现。

@@ -1,5 +1,7 @@
 # Flow 解码快路径设计与性能基线
 
+> **与代码的差异（2026-09-28 复核）**：本文有 2 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > 采集→Kafka→**解码**→分类→ClickHouse 链路中「解码」段的设计文档。
 > 覆盖:zero-copy 信封解析、NetFlow v5 定长快解码器、sFlow v5 framing 快解码器、
 > 零分配纪律、差分正确性门禁、**性能基线与瓶颈地图**(供进一步审计)。
@@ -337,3 +339,12 @@ CPU profile(`-cpuprofile`,`go tool pprof -top`)显示换精简 struct **之后**
 - `1646540a` sFlow SampledHeader 定长 5 元组抓包快解析器(无标签 Ethernet/IPv4-6/TCP-UDP 零拷贝零分配,VLAN/options 回落);修 fixture `OriginalLength` bug;真帧 48µs/1039allocs → 1.37µs/0(35×)
 - `adcd9fbc` sFlow TLV 批量读(`(*[N]byte)` 数组指针省逐字段边界检查);sFlow IPv4 −47%(→781ns/19.7×)、Header −29%(→971ns/50×),均零分配
 - 关联可靠性条目见 `flow-reliability-remediation.md` F15/F15b/F15c/F15d/F15e。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **counter（:41,124,144）**：快路径已把 generic interface counter 解码为 DecodedBatch.CounterRecords 并写入 `sflow_interface_counters`；走 GoFlow2 回落路径时该 datagram 的 counter 会丢失。
+- **§7 门禁（:207-217）**：新增 FuzzParseRawFlowInto、FuzzDecodeNetFlowV5Fast、FuzzDecodeSFlowV5Fast 与 counter 解码测试（`4e9dd9bba`）。

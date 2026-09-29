@@ -1,5 +1,7 @@
 # Watchdog Flow 数据生命周期复核与 5m 原子层变更计划
 
+> **与代码的差异（2026-09-28 复核）**：本文有 7 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > 日期：2026-09-24  
 > 基线：`docs/watchdog-5m-atomic-tier-design-2026-09-23.md` 与当前工作树  
 > 范围：Flow 从接收、Kafka、解码/分类、ClickHouse 原始事实、聚合、查询、账单、迟到/重放、对账、保留/删除、备份恢复到发布运维的完整生命周期  
@@ -500,56 +502,56 @@ flow-collect ──RawFlow──► Kafka
 - [x] operation job lease/checkpoint/retry/cancel/takeover 可供 5m hot/cold/repair 复用。
 - [x] raw 日分区的 policy、迟到窗口、守恒、水位、备份、批准和删除 receipt 门禁。
 - [x] 外部备份隔离恢复、schema/manifest/counters 校验的 restore-drill 实现。
-- [ ] **运行确认**：以上能力在目标部署中的 migration、配置、scheduler 和最近成功记录仍须由 readiness 验证；源码存在不等于已启用。
+- [ ] **运行确认**：以上能力在目标部署中的 migration、配置、scheduler 和最近成功记录仍须由 readiness 验证；源码存在不等于已启用。（2026-09-28 复核：部分完成 — 线上已证 Kafka lag 0、摄入恢复，hot rollup 已启用；reconciliation 仍 enabled:false，policy 0 条（靠人工 DROP），无 readiness；`config/watchdog.yaml:52,67`）
 
 ### FL5M-00 设计冻结与基线
 
-- [ ] **设计**：冻结两张 5m 表职责、字段、主键、row kind、generation/marker、provenance、observed/known、空桶和迟到语义。
-- [ ] **设计**：冻结 raw/1m/5m/1h/1d 的产品默认 retention、允许范围、在线变更语义和约 50 个目标分区预算；5m 默认 90 天、1h 默认 360 天均为可配置 policy 值。
-- [ ] **设计**：冻结图表查询层 TTL 与账单证据删除的边界；补 billing/audit/dispute/legal hold，保证静态 TTL 不越过证据保护。
-- [ ] **设计**：冻结查询路由矩阵、端点禁用规则、fallback 和 incomplete 响应契约。
-- [ ] **设计**：冻结 raw 删除中“1h 数值守恒权威 + 5m 覆盖前置”的组合规则。
-- [ ] **基线**：采集当前 raw/1m/1h/1d 行数、part、压缩率、query_log read rows/bytes、P50/P95/P99、磁盘日增长和账单耗时。
-- [ ] **容量预算**：用最近 7 天实际 ingest 量计算 raw 天数、5m 90 天、1h 360 天和 backfill 临时空间；输出高水位、预留空间与预计耗尽日期。
-- [ ] **验收预算**：冻结 24h/7d/30d 查询与 30 天账单的 source tier、最大 read amplification、P95/P99、内存和并发阈值；固定硬件前先记录相对基线，不伪造绝对 SLA。
-- [ ] **变更测试**：确认不改变 collector、Kafka payload、Worker decode/classification 和 raw identity。
-- [ ] **已提交门禁**：独立 ADR/设计提交经数据面、账单和运维 reviewer 确认后，方可开始 DDL。
+- [ ] **设计**：冻结两张 5m 表职责、字段、主键、row kind、generation/marker、provenance、observed/known、空桶和迟到语义。（2026-09-28 复核：部分完成 — 021 已冻结字段、主键、row_kind、provenance、observed/known；未定义 5m 如何跟随 1m 迟到 repair，也未定义 interface 空桶语义；`423d820e2`; `deploy/migration/clickhouse/021_flow_atomic_5m.sql:13-68`）
+- [ ] **设计**：冻结 raw/1m/5m/1h/1d 的产品默认 retention、允许范围、在线变更语义和约 50 个目标分区预算；5m 默认 90 天、1h 默认 360 天均为可配置 policy 值。（2026-09-28 复核：部分完成 — §11.2-B/H 已定 1m 2d、5m 90d TTL、1h 360d=archive_retention_seconds；raw 默认值与允许范围未冻结；`deploy/migration/clickhouse/021_flow_atomic_5m.sql:67-68`; `deploy/schema/mysql/0033_flow_storage_lifecycle.sql:3-16`）
+- [x] **设计**：冻结图表查询层 TTL 与账单证据删除的边界；补 billing/audit/dispute/legal hold，保证静态 TTL 不越过证据保护。（2026-09-28 复核：作废 — 被 §11.2-A/B 取代：1m/5m 用 DDL TTL，1h/1d/interface 5m 走归档月状态机，hold/dispute 已删除；`317e5664a`）
+- [ ] **设计**：冻结查询路由矩阵、端点禁用规则、fallback 和 incomplete 响应契约。（2026-09-28 复核：部分完成 — 路由矩阵、端点定义、raw 尾段 fallback 已冻结（§4.8/§11.2-C）；incomplete 响应字段在 §4.8 与 §11.1 之间未统一；`317e5664a`）
+- [x] **设计**：冻结 raw 删除中“1h 数值守恒权威 + 5m 覆盖前置”的组合规则。（2026-09-28 复核：已完成 — `317e5664a`；规则已冻结（§4.6-C/§11.1 FL5M-10）；five_minute_coverage_missing blocker 的实现见 §11.4 L758（未做））
+- [ ] **基线**：采集当前 raw/1m/1h/1d 行数、part、压缩率、query_log read rows/bytes、P50/P95/P99、磁盘日增长和账单耗时。（2026-09-28 复核：部分完成 — 09-23 生产快照已有 raw/1m/1h 行数、B/row、日增与耗时；缺各层 part 数与 P95/P99，切流前重采未做）
+- [ ] **容量预算**：用最近 7 天实际 ingest 量计算 raw 天数、5m 90 天、1h 360 天和 backfill 临时空间；输出高水位、预留空间与预计耗尽日期。（2026-09-28 复核：部分完成 — 已有 62 B/row≈15.5 GiB/天、3/7/15 天 raw 容量、聚合层 1–2 GB；缺 7 天实测基数、backfill 临时空间、高水位与耗尽日期；`docs/watchdog-release-readiness-2026-09-28.md:45-55`）
+- [x] **验收预算**：冻结 24h/7d/30d 查询与 30 天账单的 source tier、最大 read amplification、P95/P99、内存和并发阈值；固定硬件前先记录相对基线，不伪造绝对 SLA。（2026-09-28 复核：作废 — §11.1 FL5M-00 移出“验收预算冻结”，验收口径改由 §11.4 L763 承担）
+- [x] **变更测试**：确认不改变 collector、Kafka payload、Worker decode/classification 和 raw identity。（2026-09-28 复核：已完成 — `423d820e2`, `c1385cd3b`, `d6c38b62e`；三个 5m 提交均未触及 flowstream/flowworker/collector/native.go；022 只加 skip index（diff 核对，无专门测试））
+- [x] **已提交门禁**：独立 ADR/设计提交经数据面、账单和运维 reviewer 确认后，方可开始 DDL。（2026-09-28 复核：作废 — §11.1 FL5M-00 移出独立 ADR 评审流程；DDL 已在 423d820e2 落地；`423d820e2`）
 
 ### FL5M-01 ClickHouse 5m schema
 
-- [ ] **DDL**：新增 `021_flow_atomic_5m.sql`，创建 `flow_interface_traffic_5m` 和 `flow_aggregate_5m`；aggregate 表使用可在线修改的 90 天默认 TTL，interface 表首版不配置无条件 CH TTL，其 90 天默认保留由 lifecycle policy/job 执行。
-- [ ] **DDL**：interface 表保留 device/exporter/ifIndex/direction/layer、bytes/packets/count、observed/known、sampling/version refs、generation/marker。
-- [ ] **DDL**：aggregate 表排除 `src_ip / dst_ip / remote_port` 等高基数端点维度，并沿用 EAV generation marker 约定。
-- [ ] **DDL**：两表以 `bucket_start` 为 ORDER BY 前缀；aggregate 设置 `ttl_only_drop_parts=1`，interface 的分区同样必须支持 job 整 part 删除；按 `retention / target_partitions` 预览分区宽度，和按日/月候选做 part/merge/drop benchmark 后冻结。
-- [ ] **DDL/编码**：interface 证据表实现 hold-aware lifecycle 删除和冻结账单证据，证明不会删除未关闭账期、争议或 legal hold 所需数据。
-- [ ] **API**：schema readiness 返回两张表、字段版本和 migration version；缺表时明确 unavailable，不静默回 raw 扫大范围。
-- [ ] **单元测试**：DDL 契约、enum/LowCardinality、IPv4/IPv6、空值、marker 唯一性、TTL 默认/覆盖、整 part 删除和证据 hold。
-- [ ] **集成测试**：真实 ClickHouse clean install、从 020 升级到 021、重复 migration、回滚只停读写不删数据。
+- [x] **DDL**：新增 `021_flow_atomic_5m.sql`，创建 `flow_interface_traffic_5m` 和 `flow_aggregate_5m`；aggregate 表使用可在线修改的 90 天默认 TTL，interface 表首版不配置无条件 CH TTL，其 90 天默认保留由 lifecycle policy/job 执行。（2026-09-28 复核：已完成 — `423d820e2`; `deploy/migration/clickhouse/021_flow_atomic_5m.sql:25-68`；两表已建，aggregate TTL 90 DAY，interface 无 TTL；保留执行改走 DropArchiveMonth（§11.2-A，尚未扩展）；生产未应用 021）
+- [x] **DDL**：interface 表保留 device/exporter/ifIndex/direction/layer、bytes/packets/count、observed/known、sampling/version refs、generation/marker。（2026-09-28 复核：已完成 — `deploy/migration/clickhouse/021_flow_atomic_5m.sql:25-46`；device/exporter/if_index/direction/layer、bytes/packets、observed/known、版本数组、ingest 代区间、generation+row_kind 均在）
+- [x] **DDL**：aggregate 表排除 `src_ip / dst_ip / remote_port` 等高基数端点维度，并沿用 EAV generation marker 约定。（2026-09-28 复核：已完成 — `c1385cd3b`; `internal/flowch/rollup.go:1257`；写入端排除 src_ip/dst_ip/remote_port；表 AS 1h EAV，沿用 _generation marker（bucket_seconds=300））
+- [x] **DDL**：两表以 `bucket_start` 为 ORDER BY 前缀；aggregate 设置 `ttl_only_drop_parts=1`，interface 的分区同样必须支持 job 整 part 删除；按 `retention / target_partitions` 预览分区宽度，和按日/月候选做 part/merge/drop benchmark 后冻结。（2026-09-28 复核：已完成 — `deploy/migration/clickhouse/021_flow_atomic_5m.sql:48-49,62-68`；两表以 bucket(_start) 开头；ttl_only_drop_parts=1；interface 月分区可整分区 DROP；分区 benchmark 已被 §11.2-H 取消）
+- [x] **DDL/编码**：interface 证据表实现 hold-aware lifecycle 删除和冻结账单证据，证明不会删除未关闭账期、争议或 legal hold 所需数据。（2026-09-28 复核：作废 — §11.2-A 删除了 hold/dispute/证据冻结，interface 5m 并入归档月状态机）
+- [x] **API**：schema readiness 返回两张表、字段版本和 migration version；缺表时明确 unavailable，不静默回 raw 扫大范围。（2026-09-28 复核：作废 — §11.1 改用 watchdog-flow-migrate -command inspect；注意 native.go 的 Storage V2 schema 校验不含 5m 表；`cmd/watchdog-flow-migrate/main.go:52,134-137`）
+- [ ] **单元测试**：DDL 契约、enum/LowCardinality、IPv4/IPv6、空值、marker 唯一性、TTL 默认/覆盖、整 part 删除和证据 hold。（2026-09-28 复核：部分完成 — 只断言表数、字段与 TTL 字符串；缺 enum/LowCardinality、空值、marker 唯一、TTL 覆盖、整 part 删除用例（hold 部分已作废）；`423d820e2`; `internal/flowch/schema_test.go:53,82-84`）
+- [ ] **集成测试**：真实 ClickHouse clean install、从 020 升级到 021、重复 migration、回滚只停读写不删数据。（2026-09-28 复核：部分完成 — 通用测试（需环境变量）覆盖 001-021 安装→022 升级→幂等；无 020→021 专测、5m 表断言、回滚测试与运行记录；`internal/flowch/migrator_integration_test.go:20-130`）
 - [ ] **变更测试**：旧 server/worker 在 021 已执行但 feature disabled 时仍可运行。
-- [ ] **已提交门禁**：migration、schema readiness 和真实 CH 测试同一独立提交；不得只提交 DDL。
+- [ ] **已提交门禁**：migration、schema readiness 和真实 CH 测试同一独立提交；不得只提交 DDL。（2026-09-28 复核：部分完成 — 独立提交含 DDL+单测+install 文档；缺真实 CH 测试（仅 dev 手工验证）；schema readiness 已被 §11.1 移出；`423d820e2`）
 
 ### FL5M-02 5m rollup runner 与 marker
 
-- [ ] **编码**：新增 `RollupFiveMinutes`；明确 aggregate 5m 的 1m 来源和 raw fallback，interface 5m 只从 raw 生成。
+- [ ] **编码**：新增 `RollupFiveMinutes`；明确 aggregate 5m 的 1m 来源和 raw fallback，interface 5m 只从 raw 生成。（2026-09-28 复核：部分完成 — RollupFiveMinute 已实现且只能从 1m 派生，raw fallback 显式拒绝；从 raw 生成 interface 5m 的 runner 未做；`c1385cd3b`; `internal/flowch/rollup.go:24,824-826,910-911`）
 - [ ] **编码**：实现 interface 5m 专用 runner；不把接口行硬塞进 EAV runner。
-- [ ] **编码**：两个 runner 均先写数据再写 marker，重试使用稳定 generation，支持 marker-only 空桶。
-- [ ] **编码**：stats/metrics 分别记录扫描行/字节、输出行、耗时、失败、repair、marker gap。
-- [ ] **单元测试**：五个 1m 完整性、空桶、双方向、一条 raw 贡献两个接口、unknown sampling、版本 refs、稳定重试。
+- [ ] **编码**：两个 runner 均先写数据再写 marker，重试使用稳定 generation，支持 marker-only 空桶。（2026-09-28 复核：部分完成 — aggregate 5m 已做到数据→marker、确定性 token、空小时由区间 marker 覆盖；interface runner 缺；热路径重试会换新代；`internal/flowch/rollup.go:658-709,952-957,1108-1124`）
+- [ ] **编码**：stats/metrics 分别记录扫描行/字节、输出行、耗时、失败、repair、marker gap。（2026-09-28 复核：部分完成 — FiveMinute 只在内存计数，flowmetrics 只导出 1m/1h；无扫描行/字节、输出行、耗时、marker gap 指标；`internal/flowch/rollup.go:120,719,793`; `internal/flowmetrics/rollup.go:41-66`）
+- [ ] **单元测试**：五个 1m 完整性、空桶、双方向、一条 raw 贡献两个接口、unknown sampling、版本 refs、稳定重试。（2026-09-28 复核：部分完成 — 只有 SQL 形态、批范围与 1m 完整/不完整两例；缺空桶、双方向、一条 raw 贡献两接口、unknown sampling、版本 refs、重试；`internal/flowch/rollup_test.go:697-754`; `internal/server/flow_hot_rollup_test.go:222-263`）
 - [ ] **集成测试**：真实 CH crash-before-marker、marker retry、同 generation takeover、新 generation repair、旧 generation 不可见。
 - [ ] **性能测试**：1 小时批量构建 12 个 5m bucket 与逐 5m 构建对比，按 read bytes/CPU/峰值内存选实现。
-- [ ] **变更测试**：验证现有 1m/1h/1d SQL 和 marker 没有被改变。
-- [ ] **已提交门禁**：runner、指标、单元与真实 CH 集成测试同一纵向切片提交。
+- [x] **变更测试**：验证现有 1m/1h/1d SQL 和 marker 没有被改变。（2026-09-28 复核：已完成 — `c1385cd3b`; `internal/flowch/rollup_test.go:107-304`；1m/1h/1d 的 SQL 与 marker 常量未改，只加 5m 分支；原有用例未改）
+- [ ] **已提交门禁**：runner、指标、单元与真实 CH 集成测试同一纵向切片提交。（2026-09-28 复核：部分完成 — 同一提交含 runner、stats、单测；缺 metrics 导出、真实 CH 集成测试与 interface runner；`c1385cd3b`）
 
 ### FL5M-03 热路径调度
 
-- [ ] **设计**：冻结 seal delay、repair window、每轮 bucket 数、并发、优先级和 CH read budget；全部为 runtime config 并有安全上限。
-- [ ] **编码**：在已有 hot scheduler 中编排 1m 完整后生成 aggregate 5m，并从 closed raw 生成 interface 5m。
-- [ ] **编码**：不得新建第二套 lease/state machine；继续使用 operation job/marker/generation 原语。
-- [ ] **编码**：启动时从 marker gap 恢复，不从“当前时间”盲目跳过历史缺口。
-- [ ] **单元测试**：时区、桶边界、seal delay、迟到、预算、取消、重启、重复调度。
+- [ ] **设计**：冻结 seal delay、repair window、每轮 bucket 数、并发、优先级和 CH read budget；全部为 runtime config 并有安全上限。（2026-09-28 复核：部分完成 — 按 §11.1 复用既有 hot_rollup 配置键未加新键；但 5m 未用 late window/repair_interval，hour_lookback 无上限（默认 72h，超过 1m TTL 48h）；`d6c38b62e`; `internal/server/flow_hot_rollup.go:103-141`; `internal/server/config.go:365-383`）
+- [ ] **编码**：在已有 hot scheduler 中编排 1m 完整后生成 aggregate 5m，并从 closed raw 生成 interface 5m。（2026-09-28 复核：部分完成 — 1m 整小时齐即派生 aggregate 5m（已接入未部署）；interface 5m 缺；1m 迟到 repair 后 5m 不会重建（已覆盖即跳过）；`d6c38b62e`; `internal/server/flow_hot_rollup.go:91-141`）
+- [x] **编码**：不得新建第二套 lease/state machine；继续使用 operation job/marker/generation 原语。（2026-09-28 复核：已完成 — `internal/server/flow_hot_rollup.go:103-141`；复用 flowHotRollupScheduler 与 CoveredThroughAtLeast/Run 的 marker/generation 原语，无新 lease 或状态机）
+- [ ] **编码**：启动时从 marker gap 恢复，不从“当前时间”盲目跳过历史缺口。（2026-09-28 复核：部分完成 — 每轮在 lookback 内按 5m marker 缺口从最旧补起；超出 lookback 或 1m TTL 的缺口无冷路径兜底（FL5M-04 未做）；`internal/server/flow_hot_rollup.go:104-125`）
+- [ ] **单元测试**：时区、桶边界、seal delay、迟到、预算、取消、重启、重复调度。（2026-09-28 复核：部分完成 — 只有“1m 完整→跑一次”与“不完整→跳过”两例；缺时区、seal delay、迟到、预算、取消、重启、重复调度；`internal/server/flow_hot_rollup_test.go:222-263`）
 - [ ] **集成测试**：真实 MySQL lease + CH，双 server 抢占、crash/restart、backpressure 下最终收敛。
-- [ ] **API/UI**：readiness 展示调度器启用状态、最近成功桶、lag、gap 和失败原因。
-- [ ] **已提交门禁**：默认 feature disabled；完成影子期运行证明后再由部署配置启用。
+- [x] **API/UI**：readiness 展示调度器启用状态、最近成功桶、lag、gap 和失败原因。（2026-09-28 复核：作废 — §11.1 FL5M-03 移出 readiness 展示；另 5m stats 未导出到 metrics；`internal/flowmetrics/rollup.go:41-66`）
+- [x] **已提交门禁**：默认 feature disabled；完成影子期运行证明后再由部署配置启用。（2026-09-28 复核：作废 — §11.1 改为跟随 hot_rollup.enabled、不设 write_5m；Go 默认 false 但 yaml 为 true，部署后立即开始影子写；`internal/server/config.go:261`; `config/watchdog.yaml:52`）
 
 ### FL5M-04 冷构建、迟到与 repair
 
@@ -566,9 +568,9 @@ flow-collect ──RawFlow──► Kafka
 
 - [ ] **编码**：planner 加入 5m source tier；仅对非端点 dimension 且连续 marker 覆盖时选择。
 - [ ] **编码**：src/dst IP、remote port 和 raw detail 永不路由到 aggregate 5m。
-- [ ] **编码**：Explorer、六报表、source/destination/overseas/VPN、导出共用同一 planner 和 coverage reader。
+- [ ] **编码**：Explorer、六报表、source/destination/overseas/VPN、导出共用同一 planner 和 coverage reader。（2026-09-28 复核：部分完成 — 各入口都用 PlanAggregate，但只有报表走覆盖水平线；Explorer、direction split、导出未统一；无 5m；`internal/server/flow_reports.go:474-491`; `internal/server/handlers_flow.go:255`; `internal/server/flow_exports.go:508`）
 - [ ] **编码**：首版禁止跨层拼接；选择单一完整层或预算内完整 raw fallback。
-- [ ] **API**：响应增加 source tier、coverage、generation、incomplete reason；资源超限返回可操作建议而非伪 0。
+- [ ] **API**：响应增加 source tier、coverage、generation、incomplete reason；资源超限返回可操作建议而非伪 0。（2026-09-28 复核：部分完成 — 已有 source、effective_from/to、covered_buckets；Bucket 无 5m 值，无 generation/incomplete_reason；`internal/flowquery/plan.go:20-34`; `internal/flowquery/runner.go:45`; `internal/flowquery/query.go:72-74`）
 - [ ] **单元测试**：4m59s/5m/59m/1h 边界、marker gap、endpoint、显式 step、空范围、时区和晚高峰。
 - [ ] **集成测试**：同一固定向量在 raw/1m/5m/1h 结果守恒，所有报表入口路由一致。
 - [ ] **性能测试**：24h/7d/30d 多维查询的 read rows/bytes、P95/P99、内存、并发和资源超限率；证明非端点请求不读 raw，且读放大与选中 tier 同阶。
@@ -578,55 +580,55 @@ flow-collect ──RawFlow──► Kafka
 
 ### FL5M-06 Billing 证据迁移
 
-- [ ] **设计**：为账期冻结 `evidence_source`、5m generation/coverage、分类/地址版本、缺桶和 unknown sampling 语义。
+- [ ] **设计**：为账期冻结 `evidence_source`、5m generation/coverage、分类/地址版本、缺桶和 unknown sampling 语义。（2026-09-28 复核：部分完成 — §11.1 FL5M-06 已定账期加 evidence_source（建期冻结）、agg 语义不变；列定义、取值、旧账期语义未写进 DDL 或文档）
 - [ ] **DDL**：账期/计算结果增加 evidence source 与覆盖引用；关闭状态不可更新来源。
 - [ ] **编码**：实现 interface 5m billing reader；保留 raw reader 仅用于旧账期和 shadow compare。
-- [ ] **编码**：长账期 calculate/recalculate/export 全部通过 operation job，在线请求不执行 400 天 raw/5m 扫描。
+- [x] **编码**：长账期 calculate/recalculate/export 全部通过 operation job，在线请求不执行 400 天 raw/5m 扫描。（2026-09-28 复核：作废 — §11.2-E 裁定：切到 interface 5m 后同步 API 足够，异步不进本轮）
 - [ ] **API/UI**：展示证据来源、完整率、缺桶、版本引用和异步任务状态；禁止把 incomplete 账期标为可批准。
-- [ ] **单元测试**：月95、日95、平均、总量、时区、方向、缺桶、counter reset、unknown sampling、三层修正、重复计算和 reversal。
+- [ ] **单元测试**：月95、日95、平均、总量、时区、方向、缺桶、counter reset、unknown sampling、三层修正、重复计算和 reversal。（2026-09-28 复核：部分完成 — compute 层与 raw reader 已测 95th、日95、时区、三层、unknown sampling、reversal；interface 5m reader 未实现故无对应用例；`internal/billing/compute_test.go:9,152,197`; `internal/flowch/billing_test.go:45,101`）
 - [ ] **集成测试**：真实 CH raw 与 interface 5m shadow compare；同一固定向量可由独立 SQL 复算。
 - [ ] **变更测试**：旧打开账期保持 raw 或显式迁移；关闭账期拒绝隐式重算；一账期不得混源。
 - [ ] **已提交门禁**：金额/带宽向量由独立 reviewer 复算，之后才允许新账期默认切 5m。
 
 ### FL5M-07 Ingest、rollup 与接口对账闭环
 
-- [ ] **编码**：主 reconciliation 增加 receipt `counter_record_count` 对 `sflow_interface_counters` 的坐标身份与行数校验；若还需比较累计 counter 总和，先显式扩展 receipt schema，不从现有字段臆算。
-- [ ] **编码**：将 committed/reconciled watermark 只有在 fact 与 counter 两路都健康时推进。
-- [ ] **编码**：增加 raw→aggregate 5m、raw→interface 5m 的 marker/coverage/build audit。
-- [ ] **编码**：实现 Flow 估算、sFlow counter、SNMP 5m 对比 issue；只报告 coverage、ratio 和原因，不自动修正数据。
-- [ ] **API/UI**：按设备/端口/方向展示未采样、倍率异常、丢样、mapping reject、counter-only 和时间错位。
-- [ ] **单元测试**：fact-only、counter-only、partial insert、receipt missing、duplicate replay、counter reset/wrap、零流量与未知值。
-- [ ] **集成测试**：真实 Kafka→worker→CH 故意在三次 INSERT 间 crash，重放后对账收敛且水位不越过缺口。
+- [x] **编码**：主 reconciliation 增加 receipt `counter_record_count` 对 `sflow_interface_counters` 的坐标身份与行数校验；若还需比较累计 counter 总和，先显式扩展 receipt schema，不从现有字段臆算。（2026-09-28 复核：作废 — 未实现（counter-only 消息只放行不校验 counter 行）；§11.1 FL5M-07 已移到运维项目；`internal/flowch/reconciliation_scanner.go:167-174`）
+- [x] **编码**：将 committed/reconciled watermark 只有在 fact 与 counter 两路都健康时推进。（2026-09-28 复核：作废 — 未实现；§11.1 FL5M-07 移出“水位双路推进”）
+- [x] **编码**：增加 raw→aggregate 5m、raw→interface 5m 的 marker/coverage/build audit。（2026-09-28 复核：作废 — 未实现；§11.1 FL5M-07 只保留一条，5m 覆盖仅以 §11.4 L758 blocker 形式保留）
+- [ ] **编码**：实现 Flow 估算、sFlow counter、SNMP 5m 对比 issue；只报告 coverage、ratio 和原因，不自动修正数据。（2026-09-28 复核：部分完成 — 只读返回覆盖、比值、reset/gap；未接 API 或调度，无 issue 原因；flow 腿仍扫 raw FINAL；线上人工核验 Flow/sFlow 差≈2%；`c00e6c646`; `internal/flowch/interface_reconciliation.go:94,249`）
+- [x] **API/UI**：按设备/端口/方向展示未采样、倍率异常、丢样、mapping reject、counter-only 和时间错位。（2026-09-28 复核：作废 — 未实现；§11.1 FL5M-07 移出 issue 面板）
+- [x] **单元测试**：fact-only、counter-only、partial insert、receipt missing、duplicate replay、counter reset/wrap、零流量与未知值。（2026-09-28 复核：作废 — 针对已移出的 receipt↔counter 对账（§11.1 FL5M-07），未实现）
+- [x] **集成测试**：真实 Kafka→worker→CH 故意在三次 INSERT 间 crash，重放后对账收敛且水位不越过缺口。（2026-09-28 复核：作废 — 随 receipt↔counter 与水位双路一起被 §11.1 FL5M-07 移出，未实现）
 - [ ] **变更测试**：接口比值异常不阻塞 raw 数值守恒，但 missing 5m marker 阻塞 raw 删除。
-- [ ] **已提交门禁**：未提交 WIP 经审查后重做/吸收；不得直接以文件存在宣告完成。
+- [ ] **已提交门禁**：未提交 WIP 经审查后重做/吸收；不得直接以文件存在宣告完成。（2026-09-28 复核：部分完成 — WIP 已并入标题无关的 c00e6c646，c539d770e 补单测；尚未接线，flow 腿未改读 interface 5m；`c00e6c646`; `c539d770e`）
 
 ### FL5M-08 Retention 与物理清理
 
 - [ ] **设计**：扩展 published policy：各层默认/最小/最大保留、目标 part 数、receipt audit、counter raw、billing dispute、legal hold、backup requirement；禁止散落业务 const。
 - [ ] **编码**：允许在线修改 aggregate 5m/1h TTL，使用 `materialize_ttl_after_modify=0` 避免发布瞬间触发无预算全表重写；readiness 展示当前和待生效 retention。
-- [ ] **DDL/编码**：新增 receipt daily summary；详细 receipt 只在整月所有关联 raw 日安全后按月 DROP PARTITION。
-- [ ] **编码**：sFlow counter 按月检查 interface 5m 覆盖、对账、保留和 hold 后删除。
-- [ ] **编码**：aggregate 5m/1h 查询层允许 CH 整 part TTL；interface 5m、1d 及其他证据数据走 operation job/hold/receipt。任何层都禁止行级无预算 mutation。
-- [ ] **编码**：按 dead/live ratio、part count 和 I/O budget 调度旧 generation 分区 rebuild/compaction；禁止逐桶 mutation。
+- [x] **DDL/编码**：新增 receipt daily summary；详细 receipt 只在整月所有关联 raw 日安全后按月 DROP PARTITION。（2026-09-28 复核：作废 — §11.1 FL5M-08 移出，改为 receipts TTL 45 DAY（同样未做，见 §11.4 L761））
+- [x] **编码**：sFlow counter 按月检查 interface 5m 覆盖、对账、保留和 hold 后删除。（2026-09-28 复核：作废 — §11.1 FL5M-08 移出，改为 counters TTL 90 DAY（未做，018 无 TTL）；`deploy/migration/clickhouse/018_sflow_interface_counters.sql`）
+- [ ] **编码**：aggregate 5m/1h 查询层允许 CH 整 part TTL；interface 5m、1d 及其他证据数据走 operation job/hold/receipt。任何层都禁止行级无预算 mutation。（2026-09-28 复核：部分完成 — aggregate 5m 整 part TTL 已在 021；DropArchiveMonth 只删 1d/1h，未加 interface 5m 分区；1h TTL 已被 §11.2-B 否决；`deploy/migration/clickhouse/021_flow_atomic_5m.sql:67-68`; `internal/flowch/raw_delete.go:45-80`）
+- [x] **编码**：按 dead/live ratio、part count 和 I/O budget 调度旧 generation 分区 rebuild/compaction；禁止逐桶 mutation。（2026-09-28 复核：作废 — §11.1 FL5M-08 移出，改为再生后按分区清理死代（§11.2-H，未实现，见 §11.4 L761））
 - [ ] **编码**：列出 legacy 表引用，经过零引用、备份和回滚窗口门禁后再删除。
-- [ ] **单元测试**：跨月 receipt、迟到事件、open bill、legal hold、policy retirement、并发批准和 stale approval。
-- [ ] **集成测试**：真实 CH DROP PARTITION，验证当前查询、账单、reconciliation、restore 均不依赖已删 detail。
-- [ ] **已提交门禁**：先提交只读 readiness，再提交实际 delete handler；默认删除开关关闭。
+- [x] **单元测试**：跨月 receipt、迟到事件、open bill、legal hold、policy retirement、并发批准和 stale approval。（2026-09-28 复核：作废 — 对应删除功能（跨月 receipt、hold、open bill）已被 §11.1 FL5M-08 移出）
+- [x] **集成测试**：真实 CH DROP PARTITION，验证当前查询、账单、reconciliation、restore 均不依赖已删 detail。（2026-09-28 复核：作废 — detail receipt/counter 的 DROP 作业已被 §11.1 FL5M-08 移出；替代的 TTL 方案需另测）
+- [x] **已提交门禁**：先提交只读 readiness，再提交实际 delete handler；默认删除开关关闭。（2026-09-28 复核：作废 — readiness 已被 §11.1 移出；删除开关默认 0 已由 0033 保证；`deploy/schema/mysql/0033_flow_storage_lifecycle.sql:14-16`）
 
 ### FL5M-09 Backup、restore 与统一 readiness
 
-- [ ] **编码**：backup evidence 只能由成功 restore-drill job 生成，绑定 job ID、manifest/schema digest、覆盖范围和核验 counters。
-- [ ] **编码**：evidence 过期、最近 drill 失败或覆盖不足时阻止新的删除批准。
-- [ ] **API**：新增统一 lifecycle readiness，汇总 scheduler、policy、tier coverage、watermark、mismatch、disk、backup 和 blockers。
-- [ ] **UI**：按 UTC 日/月份展示 raw→5m→1h→1d 状态和“为什么不能删”，不提供绕过门禁按钮。
-- [ ] **单元测试**：伪造 evidence、digest mismatch、过期、部分覆盖、并发 drill、失败清理。
-- [ ] **集成测试**：外部备份恢复到隔离数据库，核对 raw/5m/1h/1d/receipt summary 后生成 evidence。
-- [ ] **运行测试**：周期性 drill、告警和审计日志在 server 重启后仍可追溯。
-- [ ] **已提交门禁**：restore drill 真实成功记录作为发布证据，不接受只跑 mock。
+- [x] **编码**：backup evidence 只能由成功 restore-drill job 生成，绑定 job ID、manifest/schema digest、覆盖范围和核验 counters。（2026-09-28 复核：作废 — 未实现（evidence 由 API 手工录入）；§11.1 FL5M-09 已移出；`internal/flowlifecycle/backup_evidence.go:67`）
+- [x] **编码**：evidence 过期、最近 drill 失败或覆盖不足时阻止新的删除批准。（2026-09-28 复核：作废 — 未实现（只取最新 verified 覆盖证据）；§11.1 FL5M-09 已移出；`internal/flowlifecycle/archive_delete_readiness.go:246-249`）
+- [x] **API**：新增统一 lifecycle readiness，汇总 scheduler、policy、tier coverage、watermark、mismatch、disk、backup 和 blockers。（2026-09-28 复核：作废 — 未实现；§11.1 FL5M-09 移出统一 readiness API）
+- [x] **UI**：按 UTC 日/月份展示 raw→5m→1h→1d 状态和“为什么不能删”，不提供绕过门禁按钮。（2026-09-28 复核：作废 — 未实现；§11.1 FL5M-09 移出 readiness UI）
+- [x] **单元测试**：伪造 evidence、digest mismatch、过期、部分覆盖、并发 drill、失败清理。（2026-09-28 复核：作废 — 未实现；随 §11.1 FL5M-09 一起移出）
+- [x] **集成测试**：外部备份恢复到隔离数据库，核对 raw/5m/1h/1d/receipt summary 后生成 evidence。（2026-09-28 复核：作废 — 未实现（drill 仍只核对 raw/archive）；随 §11.1 FL5M-09 移出；`internal/flowch/restore_drill.go:257`）
+- [x] **运行测试**：周期性 drill、告警和审计日志在 server 重启后仍可追溯。（2026-09-28 复核：作废 — 未实现；周期演练已被 §11.1 FL5M-09 移出）
+- [x] **已提交门禁**：restore drill 真实成功记录作为发布证据，不接受只跑 mock。（2026-09-28 复核：作废 — 随 §11.1 FL5M-09 移出；仓库无真实 drill 成功记录）
 
 ### FL5M-10 Backfill、切流与回滚
 
-- [ ] **设计**：冻结 backfill 范围、分区顺序、并发/读预算、暂停/恢复、磁盘高水位和失败重试。
+- [ ] **设计**：冻结 backfill 范围、分区顺序、并发/读预算、暂停/恢复、磁盘高水位和失败重试。（2026-09-28 复核：部分完成 — §11.1 FL5M-10 已定回填范围；热调度只在 hour_lookback（生产 24h）内自动补 5m-EAV；interface 回填、顺序、预算、暂停、高水位未定；`internal/server/flow_hot_rollup.go:104-110`）
 - [ ] **编码**：按日 operation job backfill 两套 5m，支持断点、取消、幂等和 generation repair。
 - [ ] **编码**：feature flags 分离 `write_5m / read_5m / billing_5m / require_5m_for_delete`，避免一次性切换。
 - [ ] **验证**：至少覆盖正常日、空日、迟到日、mapping reject 日、counter-only 日和跨版本日。
@@ -640,41 +642,41 @@ flow-collect ──RawFlow──► Kafka
 - [ ] **单元门禁**：`flowstream / flowworker / flowch / flowquery / flowlifecycle / billing` 全部通过，含 race/vet。
 - [ ] **真实基础设施**：Kafka、MySQL、ClickHouse clean install，fast sFlow/NetFlow decode→raw/counter/receipt→5m→query/billing 全链。
 - [ ] **可靠性**：Kafka rebalance、worker crash、CH timeout/fake ack、server takeover、迟到、重复重放和磁盘高水位。
-- [ ] **准确性**：raw/rollup 守恒、Flow/sFlow/SNMP 对账、IPv4/IPv6、方向、sampling、六分类、三层修正和历史版本。
-- [ ] **性能**：固定硬件与数据集下 ingest EPS、Kafka lag、5m build、24h/7d/30d query P95/P99、billing 和 backfill 并发。
+- [ ] **准确性**：raw/rollup 守恒、Flow/sFlow/SNMP 对账、IPv4/IPv6、方向、sampling、六分类、三层修正和历史版本。（2026-09-28 复核：部分完成 — Flow 估算与 sFlow counter 差≈2% 已线上验证；5m 守恒、IPv6、方向、六分类、三层、历史版本未验）
+- [x] **性能**：固定硬件与数据集下 ingest EPS、Kafka lag、5m build、24h/7d/30d query P95/P99、billing 和 backfill 并发。（2026-09-28 复核：作废 — §11.1 FL5M-11 移出固定硬件 SLA；查询性能验收改由 §11.4 L763 承担）
 - [ ] **生命周期**：policy 发布、archive、repair、backup、restore、approve、raw delete、receipt/counter/archive delete 完整演练。
 - [ ] **产品回归**：Explorer、六报表、VTable 分页/过滤/导出、账单和 readiness 均显示真实 source/coverage/incomplete。
-- [ ] **发布门禁**：任务清单、代码、DDL、API、测试报告、运行指标、回滚记录和独立复算证据全部进入独立提交；禁止仅勾文档。
+- [x] **发布门禁**：任务清单、代码、DDL、API、测试报告、运行指标、回滚记录和独立复算证据全部进入独立提交；禁止仅勾文档。（2026-09-28 复核：作废 — §11.1 FL5M-11 移出发布门禁仪式，改为常规测试门禁）
 
 ### FL5M-12 Raw 时间聚簇与压缩 P3
 
 - [ ] **设计**：把 raw 排序前缀从 `toStartOfHour(event_time)` 改为 `toStartOfFiveMinutes(event_time)`；冻结 Kafka 坐标去重、`FINAL`、端点过滤和新旧表并存语义。
 - [ ] **审计**：逐一审查 `remote_ip/local_ip/sample_*/*_if_index` 的写入和读取者；只有确定性可重算且查询成本可接受的列才改 `ALIAS`，不为压缩率破坏 VPN/明细查询。
-- [ ] **实验**：先在新 part/影子表比较 minmax index、5m ORDER BY、codec 和 ALIAS 组合；记录压缩 B/row、5m/1h/24h read rows/bytes、插入吞吐、merge CPU 与 `FINAL` 成本。
+- [ ] **实验**：先在新 part/影子表比较 minmax index、5m ORDER BY、codec 和 ALIAS 组合；记录压缩 B/row、5m/1h/24h read rows/bytes、插入吞吐、merge CPU 与 `FINAL` 成本。（2026-09-28 复核：部分完成 — minmax 索引线上 757→122 granules（≈6×）、raw≈62 B/row；5m ORDER BY 影子表、ALIAS、吞吐、merge CPU、FINAL 成本未测；`deploy/migration/clickhouse/022_flow_records_event_time_index.sql:4-14`）
 - [ ] **迁移**：采用新版本表和分区级 backfill/校验/切换；不在原表上做不可回滚的大 mutation；空间预算必须容纳新旧分区并存。
 - [ ] **准确性测试**：Kafka 坐标去重、重放、新 generation、IPv4/IPv6、端点过滤、VPN 和分类结果在新旧表完全一致。
-- [ ] **性能门禁**：同一 5 分钟 raw 查询不再读取接近整小时；codec/ALIAS 达到已冻结的容量收益且 ingest P99 不退化越界。
+- [ ] **性能门禁**：同一 5 分钟 raw 查询不再读取接近整小时；codec/ALIAS 达到已冻结的容量收益且 ingest P99 不退化越界。（2026-09-28 复核：部分完成 — 第一句线上已满足（只读 122/757 granules）；codec/ALIAS 目标未冻结（现 62 B/row），ingest P99 未测；`deploy/migration/clickhouse/022_flow_records_event_time_index.sql:4-11`）
 - [ ] **回滚**：切回旧表/旧 reader 不删除新表；只有独立备份恢复和零读者证明后才回收旧分区。
-- [ ] **已提交门禁**：设计、基准报告、DDL、迁移器、读写切换和回滚测试分阶段提交；不得与 5m 逻辑表首发绑定。
+- [ ] **已提交门禁**：设计、基准报告、DDL、迁移器、读写切换和回滚测试分阶段提交；不得与 5m 逻辑表首发绑定。（2026-09-28 复核：部分完成 — 022 索引与实测注释已提交（与 021 同提交，§11.1 允许）；排序键重建的设计、基准、迁移器、切换、回滚测试未做；`423d820e2`）
 
 ## 9. 完成定义
 
 本生命周期优化包只有同时满足以下条件才可标记完成：
 
-- [ ] clean install 和升级安装均存在两张 5m 表，schema readiness 为通过；
-- [ ] hot、cold、late repair 均能生成并原子发布两套独立 marker；
-- [ ] 查询 planner 实际选择 5m，端点查询明确不误用 5m；
-- [ ] 新账期实际从 interface 5m 读取并冻结 evidence source；
-- [ ] receipt 对 flow facts 和 sFlow counters 两路均可证明无静默丢失；
-- [ ] raw 删除仍通过 1h 守恒，并额外确认正式下游 5m 覆盖；
-- [ ] receipt、counter、旧 generation 和 archive 都有可执行、可回滚、可审计的清理路径；
-- [ ] 外部恢复演练真实通过，生成的 evidence 能被删除门禁验证；
-- [ ] aggregate 5m 默认 90 天、1h 默认 360 天且均可在线配置；interface 5m 的 policy 默认 90 天且 hold-aware；整 part 删除能把各层稳定在已批准容量预算内；
-- [ ] raw codec/派生列/时间聚簇优化有前后基准，达到冻结的 B/row 和时间裁剪目标且不降低 ingest 可靠性；
-- [ ] 24h/7d/30d 非端点查询不读 raw，30 天账单不读 raw，query_log 证明 read rows/bytes 与所选 tier 同阶；
-- [ ] 24h/7d/30d 查询、账单和 backfill 达到固定性能预算，默认请求不再触发 ClickHouse resource limit；
-- [ ] 统一 readiness 能准确解释每个分区当前处于可查、可计费、可修复、可删或阻塞的原因；
-- [ ] 相关实现已提交，工作树没有依赖未提交 helper/WIP 文件。
+- [x] clean install 和升级安装均存在两张 5m 表，schema readiness 为通过；（2026-09-28 复核：作废 — §9 完成定义已被 §11.4 替代（对应 L756）；schema readiness 已被 §11.1 移出）
+- [x] hot、cold、late repair 均能生成并原子发布两套独立 marker；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L757/L758）；目前无 interface marker、无冷路径，5m 无迟到 repair）
+- [x] 查询 planner 实际选择 5m，端点查询明确不误用 5m；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L759）；planner 仍只选 1m/1h/1d）
+- [x] 新账期实际从 interface 5m 读取并冻结 evidence source；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L760）；无 evidence_source）
+- [x] receipt 对 flow facts 和 sFlow counters 两路均可证明无静默丢失；（2026-09-28 复核：作废 — §9 已被 §11.4 替代；§11.1 FL5M-07 移出 receipt↔counter 对账）
+- [x] raw 删除仍通过 1h 守恒，并额外确认正式下游 5m 覆盖；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L758）；blocker 未实现）
+- [x] receipt、counter、旧 generation 和 archive 都有可执行、可回滚、可审计的清理路径；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L761）；TTL、死代清理、legacy DROP 未做）
+- [x] 外部恢复演练真实通过，生成的 evidence 能被删除门禁验证；（2026-09-28 复核：作废 — §9 已被 §11.4 替代；§11.1 FL5M-09 已移出）
+- [x] aggregate 5m 默认 90 天、1h 默认 360 天且均可在线配置；interface 5m 的 policy 默认 90 天且 hold-aware；整 part 删除能把各层稳定在已批准容量预算内；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L756/L761）；1h 360d 为 policy 值非 TTL，interface 不做 hold）
+- [x] raw codec/派生列/时间聚簇优化有前后基准，达到冻结的 B/row 和时间裁剪目标且不降低 ingest 可靠性；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L762）；codec 已上线（62 B/row），ALIAS 不在本轮）
+- [x] 24h/7d/30d 非端点查询不读 raw，30 天账单不读 raw，query_log 证明 read rows/bytes 与所选 tier 同阶；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L763），按 §11.2-C 改为“覆盖前缀内零 raw 读取”）
+- [x] 24h/7d/30d 查询、账单和 backfill 达到固定性能预算，默认请求不再触发 ClickHouse resource limit；（2026-09-28 复核：作废 — §9 已被 §11.4 替代（对应 L763）；固定性能预算已被 §11.1 FL5M-11 移出）
+- [x] 统一 readiness 能准确解释每个分区当前处于可查、可计费、可修复、可删或阻塞的原因；（2026-09-28 复核：作废 — §9 已被 §11.4 替代；§11.1 FL5M-09 移出统一 readiness）
+- [x] 相关实现已提交，工作树没有依赖未提交 helper/WIP 文件。（2026-09-28 复核：作废 — §9 已被 §11.4 替代；条件本身目前成立（工作树干净，原 WIP 已在 c00e6c646 提交）；`c00e6c646`）
 
 ## 10. 建议执行顺序
 
@@ -753,13 +755,13 @@ flow-collect ──RawFlow──► Kafka
 
 ### 11.4 本轮完成定义(替代 §9)
 
-- [ ] 021 两表存在;aggregate 5m 有 90 天 TTL、日分区;interface 5m 月分区、无 TTL、含 provenance 列
-- [ ] 热路径:每个封闭小时产出 5m-EAV(从 1m)与 interface 5m(从 raw),两套 marker 连续;每小时额外成本 ≤ 3 s
+- [x] 021 两表存在;aggregate 5m 有 90 天 TTL、日分区;interface 5m 月分区、无 TTL、含 provenance 列（2026-09-28 复核：已完成 — `423d820e2`; `deploy/migration/clickhouse/021_flow_atomic_5m.sql:25-68`；代码已满足；生产未应用 021（仅手工建了 event_time 索引））
+- [ ] 热路径:每个封闭小时产出 5m-EAV(从 1m)与 interface 5m(从 raw),两套 marker 连续;每小时额外成本 ≤ 3 s（2026-09-28 复核：部分完成 — 5m-EAV 热路径已提交未部署；interface 5m 缺；5m 不随 1m 迟到 repair 重建；≤3 s 未线上实测（dev 0.17 s）；`d6c38b62e`; `internal/server/flow_hot_rollup.go:91-141`）
 - [ ] 冷路径(policy 发布后):raw → 5m → 1h → 1d,守恒门禁不变;raw 删除 readiness 多一个 blocker `five_minute_coverage_missing`
 - [ ] planner:`[5m,1h)` 非端点走 5m,所有入口一致;端点维度不进 5m;响应带 source/coverage
 - [ ] 账单:新账期 `evidence_source=interface_5m_v1`,30 天账期读行数与桶数同阶,影子对比 95th 容差 0
 - [ ] 保留:policy → MODIFY TTL(1m/5m);receipts 45d、counters 90d TTL;死代清理作业;legacy 表已 DROP
-- [ ] raw:`event_time` minmax 索引实验有 EXPLAIN/read_rows 前后对比;5 分钟排序键重建有独立提交
+- [ ] raw:`event_time` minmax 索引实验有 EXPLAIN/read_rows 前后对比;5 分钟排序键重建有独立提交（2026-09-28 复核：部分完成 — 索引前后对比已在线上完成（757→122 granules，≈6×）；5 分钟排序键重建未做；`423d820e2`; `deploy/migration/clickhouse/022_flow_records_event_time_index.sql:14`）
 - [ ] `query_log`:非端点 24h/7d/30d 报表 raw 读行数占比 <5%,hybrid P95 <1 s;30 天账单不读 raw
 
 ---
@@ -802,3 +804,17 @@ flow-collect ──RawFlow──► Kafka
 
 ### 部署文档
 - `docs/watchdog-install.md` 新增「ClickHouse storage tiers, capacity and retention」:列出 raw+1m/5m/1h/1d+interface-5m+event_time 索引及其分区/TTL;写明迁移随 `install.go` 自动应用;点明**容量真相**(raw 无自动保留、~15GiB/天、须 vda3 存储策略 + 发布保留策略,否则手工汰换)。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **§1/§4.5（:15-16,203）**：“不存在 021、执行器只支持 1m/1h/1d、无 5m runner”已被 §12 迭代 1–3 取代：`021`/`022`、RollupFiveMinute、scanFiveMinute 已接入热调度。
+- **hour_lookback（:801）**：仓库默认与示例配置为 72h（> 1m TTL 48h），48–72h 前的小时永远补不出 5m——需统一为 ≤48h 或由冷路径补齐。
+- **interface 5m 回收（:728）**：DropArchiveMonth 只删 `flow_aggregate_1d`/`1h`；`021` 注释说已接入，实际未实现。
+- **冷路径与 blocker（:734,758）**：归档仍 raw→1h→1d，无 `five_minute_coverage_missing` blocker。
+- **未实现（:718,738,759,761）**：planner 对 [5m,1h) 走 5m、每 5 分钟发布、receipts/counters TTL、MODIFY TTL、死代清理均未实现（热层仍按封闭小时发布）。
+- **interface-5m runner 与账期 evidence_source（:716,795）**：均未实现，billing 仍扫 `flow_records FINAL`。
+- **ErrDataLoss（:136）**：已计数并在 worker run summary 上报 `kafka_data_loss`（可见），但未进入水位/删除 blocker（未阻断）。

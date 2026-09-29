@@ -1,5 +1,7 @@
 # Watchdog 自托管收敛审计 (Self-Host Consolidation Audit)
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 16 · 部分修复 3 · 未修复 1 · 作废 3（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 > **历史审计 / 决策已完成：** 本文提出的去 PB、去多租户、MySQL + ClickHouse 方向已经冻结到 [Watchdog KISS 目标架构](watchdog-kiss-architecture.md)。本文不再是待决策或实施入口，仅保留当时的现状证据。
 
 ## 0. 目标（用户指令）
@@ -77,3 +79,29 @@
 
 - 本文**重开** `docs/storage-consolidation.md`（ADR-SC-001）的 §1.4/§3.1/§14（不合并 VM/CH）与 PB-auth-kernel 立场。建议决策落定后，把 ADR-SC-001 标注为"被自托管收敛取代"，避免两份冲突方向并存。
 - `docs/platform-refactor-tasklist.md` 的 P0"PB 收缩"与"空库安装/存量迁移"两项应按本方向重写（后者因无存量而基本作废）。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 16 · 部分修复 3 · 未修复 1 · 作废 3（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L7 | goals: remove PB and tenancy, keep RBAC, MySQL for management | 已修复 | go.mod has no pocketbase; 0001 has no tenant_id; `rbac.go` \| |
+| L9 | goal: all monitoring data in CH | 部分修复 | flow + SNMP in CH；system agent telemetry not built (KISS-03B) |
+| L34 | native auth replaces PB | 已修复 | bcrypt + session; frontend has no PB SDK \| |
+| L37 | telemetry collections → MySQL/CH | 部分修复 | agent auth moved to the shared token (`aa870f65d`)；no system/container CH tables |
+| L38 | SSE → polling | 已修复 | no EventSource or subscribe in frontend \| |
+| L39 | HTTP carrier moves to plain Go | 已修复 | Gin `router.go` \| |
+| L43 | PIN a tenant rather than DROP | 作废（被后续决策取代） | DROP was chosen (`0001_baseline.sql:9`) \| |
+| L45 | address-library owner-tenant workaround | 已修复 | tenancy removed \| |
+| L46 | keep operation_jobs scope | 已修复 | 0001 operation_jobs.scope \| |
+| L50 | VM → CH (rate / traffic-view / billing) | 已修复 | snmpch; /metrics/vmquery compatibility \| |
+| L52 | metric_retention_policies enforced via CH TTL / partition drop | 未修复 | `retention.go` CRUD only; 012/014 have no TTL \| |
+| L56 | decisions 1/3/4 (native auth, VM removed, polling) | 已修复 | as above；3 items |
+| L57 | decision 2 PIN by default | 作废（被后续决策取代） | DROP adopted \| |
+| L63 | step 1 PIN | 作废（被后续决策取代） | DROP adopted \| |
+| L64 | steps 2/3/5/6 VM→CH, auth, HTTP, cleanup | 已修复 | as above；4 items |
+| L66 | step 4 telemetry storage | 部分修复 | agents/shared token；system telemetry missing |
+| L78 | mark ADR-SC-001 superseded / freeze platform tasklist | 已修复 | `storage-consolidation.md:3`; `platform-refactor-tasklist.md:3`；2 items |

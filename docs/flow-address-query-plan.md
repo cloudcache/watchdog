@@ -1,5 +1,7 @@
 # Flow 地址发布、入库分类与查询计划
 
+> **与代码的差异（2026-09-28 复核）**：本文有 9 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 状态：**Accepted，替代旧 ClickHouse `IP_TRIE/dictGet` 方案**。本文件继续作为地址构建、入库热路径、查询和历史修正口径；其中“WADS + classification 强制版本对”的发布生命周期将由 `flow-address-artifact-deployment-design.md` 的独立制品 + Worker deployment manifest v2 替代。在 v2 完成 installed/LKG/rollback 门禁前，现有 pair v1 仅作为兼容实现保留。
 
 ## 1. 已核实的现状
@@ -163,3 +165,19 @@ worker 从已安装的 event-time AddressSnap 得到方向、business、primary 
 - lifecycle fault gate：真实 MySQL 上模拟 builder 在 object/snapshot 已提交、operation job 终态未写时崩溃，过期 lease 由第二 owner 以同一 job/snapshot identity 收敛；同一链路继续验证 WADS approve/activate、retire/rollback 清除 retention，以及回切版本经 GC job 删除对象并只写一份 destruction receipt；
 - reclassification：源/目标版本、重试/takeover/cancel、count/counter 守恒、generation 原子切换和 raw 不可用拒绝；
 - regression：Flow/Watchdog 全库 test/race/vet/build、真实 MySQL/CH/Kafka 组合门禁和 rolling upgrade。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **v2 状态（:3,98）**：v2 已实现（`0049`、RemoteDeploymentSync/DualRemoteVersionSync——装过 v2 后不回退 v1、`/flow/deployments` UI/API）；LKG 另含 `deployments/*.json` 与 `raw-delete-barrier.json`。
+- **门禁（:126,128）**：只要求 publication 的定向 worker（`0048` targets）installed，新 worker 不阻塞无关历史查询；**门禁不读 v2 deployment ACK**（缺口）。
+- **自动发布（:111）**：地址快照激活时会为已绑定设备的 worker 自动发布 deployment（best-effort，失败时在 header 返回警告）；保存 CIDR 本身仍不发布。
+- **ASN 回填（:62）**：构建时对无 operator_name 但有 ASN 的前缀，按标注证据中唯一声明该 ASN 的运营商回填 isp_id，有歧义不映射（`e932c0b3a`）。
+- **审批签名（:23,52,79）**：审批签名列已删除（`0025`，approve 只是认证后的确认 + 审计）；Ed25519 只用于 pair publication 与 deployment manifest。
+- **tenant（:49）**：WADS 头只有 magic/version/flags/长度/CRC，整条链路无 tenant。
+- **worker 认证（:97,100）**：共享 token + handler 校验 kind=flow_worker；服务端不再认 mTLS。
+- **索引编号（:89）**：KISS `0027` 的 `idx_address_base_browse(import_id,family,ip_start,prefix_length,id)`，无 tenant_id。
+- **配置项（:148）**：无 `max_snapshot_bytes`/`WATCHDOG_ADDRESS_LIBRARY_MAX_SNAPSHOT_BYTES`；上限是硬编码常量 `flowDimensionObjectMax`=512MiB 与 worker 的 `defaultMaxAddressSnapshotObjectBytes`。

@@ -1,5 +1,7 @@
 # watchdog 平台化与可插拔模块架构
 
+> **已归档（2026-09-28）**：本文是 KISS 重构前的平台化目标（tenant/module registry/PocketBase/VictoriaMetrics），已被 `docs/watchdog-kiss-architecture.md` 整体取代，**不能再作为代码证据**：文中链接的 `internal/watchdog`、`internal/hub`、`internal/site` 已删除或迁移（`71e9bf39f`、`0315abea7`、`75dde5181`）；§6 的 collector enrollment/mTLS/凭证/service principal/rollout 模型与 `/api/v1/collectors/*` 均不存在，已由 `agents` + 全局共享 token + `/api/v1/agents/*` 取代（`0050`、`aa870f65d`）。
+
 > **历史文档 / 已被取代：** 目标架构已收敛为 [单域、双存储 KISS 架构](watchdog-kiss-architecture.md)。本文的 tenant、module/resource/dataset registry、PocketBase 和 VictoriaMetrics 目标不再实施；已完成能力可作为代码证据，但新增工作必须进入 [KISS 重构清单](watchdog-kiss-refactor-tasklist.md)。
 
 本文定义 flow 模块实施前必须完成的 watchdog 宿主平台整理。目标不是把所有功能重写一遍，而是把当前已经存在但边界分散的 tenant、用户权限、agent、target、指标、图表、导出和流量修正能力整理成稳定契约，使 flow、SNMP、system agent 等模块共享同一套管理面。

@@ -1,5 +1,7 @@
 # Flow API Contract Restoration (KISS-06 fidelity fix)
 
+> **Drift from code (reviewed 2026-09-28):** 6 statements below are behind or at odds with the code — the code is authoritative; see "Drift from code (reviewed 2026-09-28)" at the end.
+
 ## Problem
 
 The KISS-06 flow migration (hub `internal/watchdog`, net/http → v2 `internal/server`,
@@ -185,3 +187,16 @@ Frontend (hub-aligned contract): `frontend/src/components/routes/flow-reports.ts
 `traffic-matrix.tsx`, `flow-vpn.tsx`, `flow-saved-filters.tsx`, `exports.tsx`,
 `export-detail.tsx`, `export-types.ts`; `frontend/src/lib/flow-report-model.ts`,
 `flow-record-model.ts`.
+
+---
+
+## Drift from code (reviewed 2026-09-28)
+
+The 2026-09-28 full project review checked this document against current code, migrations and commits. The items below are superseded by the implementation, renamed, or not yet implemented. **The code is authoritative**; the body is kept as design history.
+
+- **P4 share_scope (:71,93-94):** superseded — the contract is private/shared: migration `0032` rewrites 'tenant' to 'shared' and adds a CHECK; server and frontend both use "shared", so "zero frontend change" no longer holds here.
+- **Operator gate (:130-146):** reads the `flow_enrichment_publications` timeline plus per-publication targets/acks (targeted workers only) and pins snapshot IDs and classification versions (`93570d239`, `313a0ac02`); v2 deployment ACKs are not checked yet.
+- **Direction split (:120-125):** one aggregate query with DimensionDirection; non-aggregate filters use one joint scan (`00be2cdb5`).
+- **StorageV2 hybrid (:23,54):** restored — marker-coverage boundary plus raw tail for aggregate, reports, direction and overseas; overseas returns `uses_raw`.
+- **fail() envelope (:165-170):** requirePermission, auth and CSRF now call `fail()`; only Gin's default NoRoute/NoMethod responses remain unwrapped.
+- **Contract source and P3 (:37-38,69,175-181):** `internal/watchdog` was deleted on 2026-09-16 (`71e9bf39f`); the v2 files are the contract now. The P3 DTO fields (dimension_snapshot_id/geo_version/classification_version/evidence_schema_version/expires_at) were not restored — still open.

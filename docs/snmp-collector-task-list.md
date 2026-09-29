@@ -1,5 +1,7 @@
 # SNMP Collector Task List
 
+> **Archived (2026-09-28):** historical task list, superseded by KISS-03A/KISS-08 — `internal/watchdog` was deleted (`71e9bf39f`), samples go to ClickHouse (`012`) via `internal/snmpch`, recipes live in `deploy/schema/mysql/0016`, and continuous discovery is the server reconcile loop, not tenant jobs claimed by the collector. See `docs/kiss03-snmp-clickhouse-design.md`; individual tasks are not updated.
+
 Status values:
 
 - `[todo]` not started

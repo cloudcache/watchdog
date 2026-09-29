@@ -10,7 +10,7 @@ static server in the backend.
 | --- | --- | --- |
 | Frontend | `npm --prefix frontend run dev` | Frontend development server |
 | API | `build/watchdog-server` | Gin management/query API from `server.listen` |
-| SNMP polling | `build/watchdog-snmp-collector` | Discovery, polling, MySQL recipes, ClickHouse samples |
+| SNMP polling | `build/watchdog-snmp-collector` | Polling, MySQL recipes, ClickHouse samples, closed 5m interface buckets |
 | SNMP traps | `build/watchdog-snmp-agent` | UDP Trap listener and forwarding to the API |
 | Flow collection | `build/watchdog-flow-collect` | sFlow/NetFlow/IPFIX receive and Kafka production |
 | Flow processing | `build/watchdog-flow-worker` | Kafka consumption, fast decode, in-memory classification, ClickHouse writes |
@@ -19,12 +19,14 @@ The API exposes SNMP and Flow management/query routes, but it does not open flow
 sampling sockets, consume Kafka, or execute the SNMP polling loop. Query and export
 workers that operate on already stored data remain control-plane jobs.
 
-One exception still exists: `POST /api/v1/devices/:id/snmp/discover` performs a
-single, operator-triggered SNMP discovery inside the API process. Continuous
-discovery and polling run only in `watchdog-snmp-collector`. Moving this manual
-operation to an operation-job claimed by the collector is a separate architecture
-change; until that is implemented, the API is not a strictly network-I/O-free
-control plane.
+SNMP discovery is the exception: it runs inside the API process. Besides the
+operator-triggered `POST /api/v1/devices/:id/snmp/discover`, the API runs a
+continuous discovery reconcile loop that discovers profiled devices without
+recipes and rediscovers every `snmp.rediscover_interval` (default 6h;
+`snmp.auto_discover` defaults to true). `watchdog-snmp-collector` (and `make
+dev-snmp-collector`, which runs with `--discover=false`) only polls and rebuilds
+the most recent closed `snmp_interface_traffic_5m` bucket after each pass. So
+the API is not a strictly network-I/O-free control plane.
 
 ## 1. Dependencies
 
@@ -95,7 +97,10 @@ make build-snmp-agent
 - `make build-flow-collect`: compile the Flow receiver to `build/watchdog-flow-collect`.
 - `make build-flow-worker`: compile the Flow worker to `build/watchdog-flow-worker`.
 - `make build-runtime`: build the independent frontend and five product processes.
-- `make build`: build the complete runtime plus optional system/SNMP Trap agents.
+- `make build`: build the complete runtime plus the SNMP Trap agent and the
+  legacy `watchdog-agent` (`internal/cmd/agent`, a WebSocket client whose PB-era
+  server endpoint no longer exists). It does **not** build the system agent; use
+  `go build -o build/watchdog-system-agent ./cmd/watchdog-system-agent`.
 - `make build-web-ui`: build the frontend separately.
 
 Do not name runtime binaries after a task (`watchdog-server-snmp`,

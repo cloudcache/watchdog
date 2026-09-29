@@ -1,5 +1,7 @@
 # KISS-07：Billing、三层修正与对账闭环设计
 
+> **与代码的差异（2026-09-28 复核）**：本文有 1 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > 状态：实现冻结（2026-09-17）。单域、无租户；MySQL 保存管理状态和不可变证据，ClickHouse 保存并计算 SNMP/Flow 事实。没有 DatasetProvider、VictoriaMetrics DTO、PB collection 或第二套异步状态机。
 
 ## 1. 不变量
@@ -116,3 +118,11 @@ adjustment 保存 layer、unit、signed amount、reason/evidence、状态、批�
 - HTTP 端到端：真实 Gin/MySQL 覆盖 party/account/port/period、异步 calculate、issue 处理、adjustment、approve/close、CSV/Parquet、RBAC/CSRF/CAS/audit；篡改 artifact 返回 `export_corrupt`，过期 artifact 返回 `export_expired`，存在 period 的 account 删除返回 409。
 - 回归：billing/flowch/snmpch/server 包 test+vet、57 个前端单测、Billing 三页 Biome、Vite production build 通过。完整全仓门禁在提交前再执行一次。
 - 计价与绑定扩展：真实空 MySQL migration 后，经 Gin 完成跨两台设备的两端口原子创建、CAS 原子更新、精确单价往返；无效端口验证整笔回滚。设备概览仅保留 Total/Up/Down/Disabled 统计，不再重复渲染全部端口名称。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **§4 API（:73-95）**：代码另有 `GET /billing/accounts/:id/snmp-usage`、`GET /billing/periods/:id/values`、`GET /billing/jobs/:id`、`POST /billing/jobs/:id/cancel`；`/billing/jobs` 只是 operation_jobs 的只读/取消外壳，不是第二套状态机。

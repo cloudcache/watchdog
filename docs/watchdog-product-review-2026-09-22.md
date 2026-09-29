@@ -1,5 +1,7 @@
 # Watchdog 产品设计与实现审查 — Flow · 账单 · RBAC/用户
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 5 · 部分修复 4 · 未修复 59 · 作废 1（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 日期:2026-09-22(同日晚于 `watchdog-storage-lifecycle-review-2026-09-22.md`,本文引用而不重复其内容)
 目标:需求一致性、完整性、准确性;核心瓶颈(collector / worker / 聚合与查询 / 存储分层 / 生命周期)的效率与**唯一性**(exactly-once / 去重 / 对账基线)。
 证据:三份代码级 deep-dive(flow 数据面、billing、RBAC)+ 生产 .18 live 实测(内存受限查询)。所有断言附 `file:line` 或 live 数字。
@@ -276,3 +278,49 @@ R14 可以直接降低查询风险；R15/R16 涉及证据链，只能 fail-close
 
 - 本次 live 排查曾以一条未受限的 4 列精确 `GROUP BY`(68M 行)叠加回填负载触发宿主 OOM;这本身即 §0 P1 内存治理项的实证。此后所有查询均加 `SETTINGS max_memory_usage=1500000000, max_threads=2`。
 - 生产 flow 查询二进制为并行 rewrite 的 WIP,与仓库不一致;涉及查询投影的定位(F1)以生产响应为准,不以仓库代码推断。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 5 · 部分修复 4 · 未修复 59 · 作废 1（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L30 | P1 Kafka incarnation reuse | 未修复 | worker `main.go:106` only flag help text; no topic-ID binding (grep empty) \| |
+| L31 | P1 block-level dedup ineffective | 未修复 | `native.go:283`; no window \| |
+| L32 | P1 replay silently rewrites historical semantics | 未修复 | receipts have no snapshot ID; reconciliation compares counts only \| |
+| L33 | P1 quarantine-on-replay generation ≥2^63 | 未修复 | `quarantine.go:35` \| |
+| L34 | P1 rollup marker published before data | 已修复 | `bc10958f4` `rollup.go:658-669` two-phase；deployment unconfirmed; needs new generation floor |
+| L35 | P1 one partition's retry exhaustion kills the worker | 未修复 | `consumer.go:302-305` → `main.go:145-146` log.Fatal \| |
+| L36 | P1 ClickHouse memory governance | 未修复 | deploy/clickhouse/config.d has only `backup.xml`; hot rollup capped at 6GiB；server profile not in repo |
+| L37 | P1 cold archive control plane inactive | 未修复 | no published policy (ops)；operator used manual raw retention instead |
+| L38 | P1 RBAC self-escalation | 未修复 | `handlers_admin.go:411-501` has no "cannot grant what you lack" check; IsAdmin by name `rbac.go:28,75` \| |
+| L39 | P1 no password UI; recovery points to a missing CLI | 未修复 | no password calls in `user-form.tsx`; `forgot-pass-form.tsx:101-104` \| |
+| L40 | P1 billing never computes money | 未修复 | unit_price is stored/read only (`accounts.go`)；needs a product decision |
+| L41 | P1 adjustment layer mismatch / agg=sum | 未修复 | no billing commits since 09-22 \| |
+| L42 | P2 bundle (login limit / audit / export recheck / coverage gate / KPI / flow.export / enable user) | 未修复 | see C3/C5/C4/B3/F4/U4/U5 \| |
+| L61 | F1 total-traffic card shows only outbound | 部分修复 | one scan grouped by direction (`00be2cdb5`, `query_test.go:108`)；no prod acceptance showing both directions non-zero |
+| L62 | F2 three meanings of "direction" | 未修复 | no direction contract \| |
+| L63 | F3 six categories apply both ways | 作废（被后续决策取代） | verified correct; not a defect \| |
+| L64 | F4 quality KPI saturated | 未修复 | `query.go:999,1155`; `joint.go:416`; `rollup.go:1065` \| |
+| L65 | §2 B1–B6 billing requirement gaps | 未修复 | billing unchanged；6 items |
+| L71 | §2 U1–U6 (admin reset UI / self password UI / recovery / flow.export unchecked / enable user / email error) | 未修复 | `router.go:59,70` endpoints but no UI; `rbac.go:21,49`; `flow_exports.go:154`; `users.tsx:230-238`; `handlers_admin.go:115`；6 items |
+| L110 | §3.1 U1–U4 dedup / wall-clock generation / quarantine / snapshot drift | 未修复 | `native.go:283`; `writer.go:168-174` no group-timeout assertion; `quarantine.go:35`；4 items |
+| L114 | §3.1 U5 marker ordering | 已修复 | `bc10958f4` \| |
+| L115 | §3.1 U6 stream-id uniqueness | 未修复 | `record.go` only checks the charset \| |
+| L116 | §3.1 U7 collector losses only visible in Prometheus | 部分修复 | `fae7eee2c` summary carries kernel_drops/rejected/invalid/oversize；no alerting; not deployed |
+| L117 | §3.1 U8 whole-worker Fatal | 未修复 | same as :35 \| |
+| L122 | §3.2 cold lifecycle inactive | 未修复 | policy not published \| |
+| L123 | §3.2 auto-planning coverage gap | 已修复 | `bc10958f4` `flow_reports.go:486-488` \| |
+| L124 | §3.2 high-cardinality paths / memory governance / partition 11 | 未修复 | unchanged；3 items |
+| L127 | §3.2 flow billing scans raw | 部分修复 | 021 flow_interface_traffic_5m (`423d820e2`)；no writer; flowch/billing.go:270 still raw FINAL |
+| L130 | §3.2 code-level items 1–6 | 未修复 | dedup / joint shortcut / EAV / provenance GROUP BY / scanner cost / write pipeline all unchanged；6 items |
+| L139 | receipts/reclassified/quarantined have no TTL | 未修复 | no retention job \| |
+| L146 | direction N×2 queries → one grouped query | 已修复 | `00be2cdb5` \| |
+| L147 | dead code mergeFlowDirectionResults | 已修复 | `bc10958f4` (grep empty) \| |
+| L148 | scale generation / billing layer labels / Top-N row contract | 未修复 | unchanged；3 items |
+| L182 | §4.2 B1–B5, B7 | 未修复 | billing unchanged since 09-22；6 items |
+| L187 | §4.2 B6 flow billing via raw 5m | 部分修复 | 021 schema only；reader not switched |
+| L218 | §5.2 C1–C6 | 未修复 | C4: `flow_exports.go:946-957` checks ownership only; C5: no session/billing audit；6 items |
+| L226 | §5.3 route-level gates | 未修复 | `exports.go:32-36` has no requirePermission \| |

@@ -1,5 +1,7 @@
 # Flow 地址库规模基线（PLAT-04C3）
 
+> **与代码的差异（2026-09-28 复核）**：本文有 2 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 对 `internal/flowdimension` 的地址库编译路径（`CompileBundle`：prefix trie 构建 +
 选择器集合成员解析 + 依赖 DAG）做的规模认证基线。不改数据面，只测既有路径。
 
@@ -87,3 +89,12 @@ prefix/job 均为零；运行者还应使用独立 scratch database 并在测试
 - 百万级 MMDB 的解析→operation job batch/checkpoint→MySQL ready 吞吐、峰值内存、
   crash/resume 和清理。当前仓库只有 MaxMind 小型测试库；不能通过循环读取小 fixture
   或复制回调计数伪造该结论，因此 MMDB 继续作为 C3b 独立门禁。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **路径（:11,17）**：管理集合运算门禁现位于 `internal/address/address_management_scale_test.go:18`（`go test ./internal/address`）。
+- **百万 IPDB 门禁（:12-13,19,65-83）**：`TestAddressImportMillionIPDBMySQLEndToEnd` 随 `internal/watchdog` 删除（`71e9bf39f`）、未移植，该门禁已失效（`internal/address` 仅有小型 `TestStreamIPDBEnumeratesTrieBoundaries`）；tenant 表述已不适用。

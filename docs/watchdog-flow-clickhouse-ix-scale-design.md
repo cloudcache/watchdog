@@ -1,4 +1,7 @@
 # Flow 数据在 IX / 骨干网规模下的 ClickHouse 存储·索引·查询设计
+
+> **与代码的差异（2026-09-28 复核）**：本文有 10 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 ## —— 从 P95 计费的 5 分钟聚合起步
 
 日期：2026-09-19　复核：2026-09-20　状态：**复核后的设计草案（禁止直接执行本文示例 DDL/SQL）**　范围：`internal/flowch`（DDL/写入/rollup/计费/对账）、`internal/flowquery`、`internal/billing`、`internal/snmpch`（作为模式来源）。
@@ -238,3 +241,20 @@ P2 只有在客户边界发布/ACK 与三方数值对账先通过后才是最小
 - 他们：counters 入库（018）、读时三方对账、静态 `scale_ppm`。
 - 本文：把三方都物化到 5m 表、动态 k、计费切读。两者正交；建议由流量会话按 P2→P3 顺序实施，本文档只做设计，不改代码。
 - 明确不做：不用 `dictGet` 改历史；不把 k 写回 raw；不在插入去重生效前引入 MV。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **热层现状（§A/§0，:20,61）**：已有稳定热层——每个封闭小时发布 1m，并由 1m 派生 1h 与 5m；查询在 marker 覆盖内读聚合、尾段读 raw；Layer B 已实现（interface-5m 与计费切读除外）。
+- **发布闭环（:22）**：`0049` 四表已提交；保存返回 source_revision + draft；有 `/flow/deployments` 发布 UI/API；地址快照激活时自动发布。
+- **接收缓冲（:24）**：设置后回读 SO_RCVBUF，被 rmem_max 钳制时告警，并提供 `deploy/sysctl.d/90-watchdog-flow.conf`（`a4efa5cc2`）。
+- **状态（:7,57,59,60）**：对账代码已提交（`c00e6c646`、测试 `c539d770e`）但无路由/调用方；`021` 已建 `flow_interface_traffic_5m` 但无写入者；scale_ppm 已提交（`045d7b3a2`、`0047`、CH `019`）。
+- **正确性结论（:21,39）**：生产核验显示估算与 sFlow counter 偏差约 2%（scale_ppm 校正 + 边界发布闭环），“Flow 约为 SNMP 的一半”已不成立。
+- **skip index（:62,181）**：`020` 已建 device/target/exporter set(1024)、src_ip/dst_ip bloom(0.001)、business_direction set(16)、category set(32)；`022` 加 event_time minmax（≈6×）。
+- **投影（:180）**：任何迁移都没有 PROJECTION，投影方案已放弃（FINAL 路径不受益），改用 `021` 物化表 + `022` 索引。
+- **Layer A 形态（:104-126）**：以 `021` 为准——按行存 (direction,layer)，另有 exporter_id、observed/known、版本数组、ingest_generation_min/max，ORDER BY (bucket_start,row_kind,…)。
+- **调度与折叠（:172）**：按封闭小时批量发布，热层代 = unix 秒；只折叠 src_ip/dst_ip（1000）与 remote_port（256）。
+- **未实现（:161,166,182,228）**：`sflow_interface_traffic_5m`、`flow_interface_calibration_5m`/动态 k、IP codec 补齐均未实现（codec 未进任何迁移）。

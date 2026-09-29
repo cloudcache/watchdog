@@ -1,5 +1,7 @@
 # SNMP Collector Design
 
+> **Drift from code (reviewed 2026-09-28):** 16 statements below are behind or at odds with the code — the code is authoritative; see "Drift from code (reviewed 2026-09-28)" at the end. The storage, tenant and definitions-table sections describe the pre-KISS VictoriaMetrics design; the current contract is `docs/kiss03-snmp-clickhouse-design.md`.
+
 ## 1. Hard Rules
 
 This collector is a Go implementation of the LibreNMS SNMP collection model.
@@ -1242,3 +1244,26 @@ The design is implemented only when all statements are true:
 8. VM receives raw counter/gauge/state metrics only.
 9. API derives rate/unit/correction.
 10. Tests fail if vendor metric lookup records or external collector configuration re-enter the collector path.
+
+---
+
+## Drift from code (reviewed 2026-09-28)
+
+The 2026-09-28 full project review checked this document against current code, migrations and commits. The items below are superseded by the implementation, renamed, or not yet implemented. **The code is authoritative**; the body is kept as design history.
+
+- **Storage (:19,783,815-912,1242):** raw samples go to ClickHouse `watchdog_flow.snmp_samples` (`012`) via `snmpch.WriteSamples`, with a natural identity and exact UInt64 counters — not VictoriaMetrics.
+- **Tenant (:23,300-357,432-444,493,526,537,571,767,860):** the code is single-domain; the recipe key is `(device_id,module_name,entity_kind,entity_id,metric,oid_index,context_name)` (`0016`); there is no `tenant_id` anywhere.
+- **Definition/trap tables (:250-316,389-425,1095-1136):** none of these MySQL tables exist. Definitions are parsed at startup from `snmp.definitions_dir` plus embedded MIBs; trap handlers are a fixed Go registry; the importer was retired (`0d6fce761`).
+- **Recipe DDL (:318-387):** the real columns are in `deploy/schema/mysql/0016_snmp_poll_recipes.sql` (entity_kind, metric, value_kind, divisor/multiplier, labels_json/options_json, last_error); there is no poller_type/user_func/state_map_id/unit/last_seen_at, and ClickHouse accepts only gauge/counter.
+- **Events (:427-446,1059,1084):** events live in ClickHouse `snmp_events` (`014`), read via `/devices/:id/events` and `/events/facets`.
+- **Types/modules (:125-139,448-572):** the code uses `snmpdomain.DiscoveryRequest` and `snmpch.Sample` (GaugeValue/CounterValue/CounterWidth); there are nine modules, and the BGP one is named `bgp`.
+- **Tables (:582,739,748):** `network_devices`/`network_interface_addresses` are `devices`/`interface_addresses`.
+- **Recipe pruning (:595-596):** completed modules prune recipes they no longer emit; failed modules are untouched; ports referenced by a bill are kept as notPresent.
+- **Last Seen (:752-754):** `last_seen` is `devices.last_polled_at`, stamped on every poll attempt including failures; status/status_reason tell success from failure.
+- **Backoff/module status (:797-813):** not implemented; panic recovery logs only the device id and stack.
+- **Rates (:914-957):** computed in ClickHouse SQL plus the closed 5m rollup `snmp_interface_traffic_5m`; a 32-bit wrap is auto-detected (previous ≥90%, current ≤10% of 2^32) and a gap is declared when elapsed > max(3×interval, 15m).
+- **Trap auth (:997-1016):** the installation shared token (Bearer or `X-Watchdog-Agent-Token`) or an admin session with `device.update` + CSRF; the device is resolved from source_ip/hostname; there is no per-agent binding.
+- **Trap rediscovery (:1063-1068,1088-1093):** only sets `devices.status='pending', status_reason='trap_rediscover'`; the reconcile loop selects by recipe age, so rediscovery waits for the 6h cycle.
+- **Scheduling (:574-596):** a server-side reconcile loop auto-discovers profiled devices with no recipes and rediscovers every 6h, with a 15m failure backoff (`snmp_discovery_reconcile.go`, `f65f56f68`).
+- **Files (:1138-1167):** the code now lives in `internal/snmpdomain`, `internal/snmpch`, `internal/server/snmp_*.go`, `deploy/schema/mysql/0016` and `deploy/migration/clickhouse/012`/`014`.
+- **5m bucket gaps (not covered by the design):** the billing 5m bucket is rebuilt only by the collector for the latest closed bucket; collector downtime leaves permanent gaps and there is no backfill job.

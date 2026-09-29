@@ -360,27 +360,27 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [x] **单元测试**：验证 archive 使用 `source.*`、raw 使用原生列或与既有分组一致的转换；验证聚合后过滤没有被错误下推。
 - [~] **真实 ClickHouse 集成**（部分，见 remediation §2.1-2）：`storage_v2_migration_integration_test.go` 覆盖 direction/category 但**无 device/target/exporter 过滤、全 raw（archive 下推未覆盖）、单条事实、仅正向匹配**；未做多维向量与结果核对。
 - [ ] **性能验收**：生产同参数运行 `EXPLAIN indexes=1` 和 `query_log` 前后对照，记录 `read_rows/read_bytes/P95/memory_usage`；无明确收益不得把该项写成性能完成。
-- [ ] **提交门禁**：代码、单元、真实 CH 回归与本文证据作为一个独立提交，不夹带无关 UI/架构改动。
+- [ ] **提交门禁**：代码、单元、真实 CH 回归与本文证据作为一个独立提交，不夹带无关 UI/架构改动。（2026-09-28 复核：部分完成 — 独立提交已完成；还缺 CH 集成的 device/target/exporter 与 archive 分支（见 361），以及 362 的性能证据；`a777ac838`）
 
 ### PERF-Q1B 24h 查询聚合内存闭环
 
 - [x] **故障证据**：固定两条生产失败 query，确认不是结果行过多，而是高基数端点聚合在 `AggregatingTransform` 内达到 4GiB；同时确认生产仍使用过滤后置的旧 SQL。
-- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。明确选择 device/target/exporter 的普通单遍 raw 查询使用 250M rows/16GiB read；端点候选两遍查询独立使用 500M/32GiB；两者执行窗口为 30s。未限定身份的全局查询继续保留 50M/4GiB/15s fail-closed 上限，4GiB memory 和结果行上限不变。
+- [x] **编码**：主查询、联合维度与境外查询在 1GiB 中间状态时启用 external group-by/external sort；源/目的 IP 的 raw-only 路径使用 `TopN*8` 有界候选加候选精确桶值，删除千万级 IP 窗口排序。端点第二遍及 Storage V2 普通查询只投影请求指标。明确选择 device/target/exporter 的普通单遍 raw 查询使用 250M rows/16GiB read；端点候选两遍查询独立使用 500M/32GiB；两者执行窗口为 30s。未限定身份的全局查询继续保留 50M/4GiB/15s fail-closed 上限，4GiB memory 和结果行上限不变。（2026-09-28 复核：已被后续实现取代（以代码为准） — 行/字节预算、1GiB 落盘、TopN*8 仍成立；30s/15s 固定执行窗已改为可配置 execution_timeout（默认 2m）；`internal/flowquery/query.go:35-43`; `internal/server/config.go:253`; `config/watchdog.yaml:39`; `00be2cdb5`）
 - [x] **单元测试**：三条查询编译器均断言外部聚合/排序阈值；端点编译器断言两遍扫描均先应用设备过滤、候选数固定、只投影当前指标且无 `dense_rank` 高基数状态；未选择设备或带显式 IP/version 残余筛选时仍回退普通精确门禁路径。
 - [~] **真实 ClickHouse 集成**（部分，见 remediation §2.1-3）：用例 3 端点 TopN=1 → candidate_n=8 ≥ 基数，topK 天然精确；**未证明候选漏掉、多版本 `_other`、多桶、`include_other=false`**。
-- [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；同设备 24h 同形只读探针已在 4.522s 完成，仍需经认证 API 重放并记录 `system.query_log` 的 `read_rows/read_bytes/memory_usage/duration`。
-- [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。普通单遍查询仍超过 250M/16GiB/30s、端点两遍查询仍超过 500M/32GiB/30s，或任何超过 50M 的全局查询不得再抬同步上限，应进入热查询层或异步导出工作包。
+- [ ] **生产验收**：部署包含 `a777ac83` 与本项修复的统一 server 二进制；同设备 24h 同形只读探针已在 4.522s 完成，仍需经认证 API 重放并记录 `system.query_log` 的 `read_rows/read_bytes/memory_usage/duration`。（2026-09-28 复核：部分完成 — 仅有删表到 1.09M 行后的 API 重放（150–230ms）；缺 query_log 的 read_rows/bytes/memory 与 66M 规模重放；remediation-audit §1(7)）
+- [ ] **回归/提交门禁**：`flowquery/server` 已通过；待真实 ClickHouse 与生产六页逐页验收后独立提交。普通单遍查询仍超过 250M/16GiB/30s、端点两遍查询仍超过 500M/32GiB/30s，或任何超过 50M 的全局查询不得再抬同步上限，应进入热查询层或异步导出工作包。（2026-09-28 复核：部分完成 — 读取上限未再抬高，热层与异步已建成；缺真实 CH 端点覆盖（370）、六页生产逐页验收与独立提交；`00be2cdb5`; `internal/flowquery/query.go:35-42`; `045d7b3a2`）
 
 ### PERF-CUST6 七牛 IPv4/IPv6 客户源地址归属闭环
 
 - [x] **设计/本地证据**：以设备绑定为作用域，冻结七牛客户的 IPv4 `120.199.32.128/25`、原生 IPv6 `2409:8728:8ff:1077::/64` 及边界样本；确认生产 MySQL 草稿已有双栈 CIDR，但当前 worker 静态 bootstrap 产物只有 IPv4，且未启用 control-plane 版本拉取。生产 WADS/配对版本/ACK/LKG 仍须发布核对，不把全局 Geo 地址库当客户碎片地址的维护入口。
 - [x] **编码与本地回归**：统一地址规范为 16 字节可比较形式；IPv4 与 IPv4-mapped IPv6 只在协议边界显式 `Unmap`，原生 IPv6 不降级、不加/减伪前缀；worker 对源/目的地址做 LPM，最长前缀命中结果供客户归属、方向和六分类使用。`6b6bb622` 已增加 classification、worker enrichment、Gin→worker 配对版本三层双栈回归测试。
-- [x] **定向发布生命周期**：客户 CIDR 修改时选择负责该设备的 worker，事务内固定 profile/WADS 并排队异步生成不可变签名配对；publication-target 控制该 worker 的 list/object/ACK。单 worker 自动选择且可修复迁移后注册造成的空绑定，多 worker 必须显式选择；禁止全量广播，也禁止因唯一 worker 无历史绑定而让其无法下载。真实 MySQL 覆盖目标隔离、下载/安装 ACK、LKG 和双栈制品内容。
+- [x] **定向发布生命周期**：客户 CIDR 修改时选择负责该设备的 worker，事务内固定 profile/WADS 并排队异步生成不可变签名配对；publication-target 控制该 worker 的 list/object/ACK。单 worker 自动选择且可修复迁移后注册造成的空绑定，多 worker 必须显式选择；禁止全量广播，也禁止因唯一 worker 无历史绑定而让其无法下载。真实 MySQL 覆盖目标隔离、下载/安装 ACK、LKG 和双栈制品内容。（2026-09-28 复核：已被后续实现取代（以代码为准） — 保存 CIDR 只产生 draft，不再自动选 worker/入队；已由 v2 显式 worker+device 部署取代；`1270eb196`; `internal/server/flow_customer_boundaries.go:180-231`; `internal/server/flow_worker_deployments.go:162-165`）
 - [ ] **写入校验**：在 `flow_records` 核对原始 src/dst、local/remote、device/exporter、business、category、address/dimension snapshot 与 classification version；若旧事实版本不含新客户边界，明确走历史重分类，不允许查询层临时猜归属。
-- [ ] **查询校验**：源 IP、目的 IP、多维、六报表和导出均显示“七牛”而非 `_unassigned`；IPv4/IPv6 使用相同客户口径，展示层将 `::ffff:x.x.x.x` 规范为 IPv4 文本但不误改原生 IPv6。
-- [ ] **单元测试**：覆盖 IPv4、IPv4-mapped IPv6、原生 IPv6、CIDR 首尾地址、相邻不命中、重叠前缀最长匹配、同客户多 CIDR、同设备多客户、跨设备同 CIDR 隔离。
-- [ ] **真实链路集成**：发布包含七牛双栈 CIDR 的 WADS → worker 拉取/验签/ACK → 写入 CH → query/report/export；断言双栈均归属七牛且流入/流出、六分类和计数器守恒。
-- [ ] **变更/回归/提交门禁**：旧快照继续由 LKG 可启动；无效 IPv6、重叠冲突、版本回退 fail-closed；跑 flowdimension/flowworker/flowch/flowquery/server 全链后独立提交。
+- [ ] **查询校验**：源 IP、目的 IP、多维、六报表和导出均显示“七牛”而非 `_unassigned`；IPv4/IPv6 使用相同客户口径，展示层将 `::ffff:x.x.x.x` 规范为 IPv4 文本但不误改原生 IPv6。（2026-09-28 复核：部分完成 — ::ffff 展示规范化已实现；七牛在页面/导出中的归属校验未做（生产未下发）；`internal/flowquery/ip_dimension.go:13-43`; `internal/flowch/data_integration_test.go:304`）
+- [ ] **单元测试**：覆盖 IPv4、IPv4-mapped IPv6、原生 IPv6、CIDR 首尾地址、相邻不命中、重叠前缀最长匹配、同客户多 CIDR、同设备多客户、跨设备同 CIDR 隔离。（2026-09-28 复核：部分完成 — 已覆盖 v4、mapped、原生 v6、LPM、多 CIDR、多客户、跨设备；缺 CIDR 首尾地址与相邻不命中用例；`internal/flowdimension/classification_test.go:214-251`; `internal/flowdimension/deployment_artifacts_test.go:42-56`）
+- [ ] **真实链路集成**：发布包含七牛双栈 CIDR 的 WADS → worker 拉取/验签/ACK → 写入 CH → query/report/export；断言双栈均归属七牛且流入/流出、六分类和计数器守恒。（2026-09-28 复核：部分完成 — 发布→worker 同步/安装/ACK 的双栈归属已由集成测试验证（非七牛 CIDR）；缺写 CH→query/report/export 守恒；`internal/server/flow_enrichment_publications_integration_test.go:209-289`）
+- [ ] **变更/回归/提交门禁**：旧快照继续由 LKG 可启动；无效 IPv6、重叠冲突、版本回退 fail-closed；跑 flowdimension/flowworker/flowch/flowquery/server 全链后独立提交。（2026-09-28 复核：部分完成 — LKG 启动、重叠冲突、版本回退已测；缺无效 IPv6 用例与全链后的独立提交证据；`internal/flowworker/version_lkg_test.go:155,250`; `internal/flowworker/version_catalog_test.go:64`）
 
 ### PERF-RECON1 172.57.1.2 的 SNMP ↔ sFlow 端口守恒对账
 
@@ -388,10 +388,10 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [x] **SNMP 口径与基线**：同窗已按发布 generation 的 `snmp_interface_traffic_5m FINAL` 读取 12 个 5 分钟桶；10 端口流出为 `9.203–9.264 Gbps`，coverage 最低 `0.8052`、reset/gap 均为 0。后续实现仍须按 `ifHCOutOctets` 差分语义识别 reset/wrap、`ifCounterDiscontinuityTime`、缺桶和端口状态变化；不得把瞬时 bps 相加当窗口字节。
 - [x] **sFlow 事实基线**：同窗 `flow_records FINAL` 按 device+`egress_if_index` 得到 `8.144–8.218 Gbps`、各端口约 33.8–34.1 万记录、sampling rate 恒为 `8192`，相对 SNMP 约 `88%–89%`。这证明 10 端口并非完全未覆盖，但存在稳定偏差；业务方向/客户归属筛选造成的二次减量必须与物理端口事实分开核对。UDP 接收、sequence gap、collector/kernel drop、Kafka/worker lag、CH reject 仍待补齐。
 - [x] **4096 变更复测**：设备在 `2026-09-19 01:55:00 UTC` 切换；切换后的纯 4096 完整桶为 `02:00–02:35`，10 端口每 5 分钟平均 `642,077` 条，切换前稳定 8192 桶 `01:40–01:55` 平均 `322,060` 条，密度为 `1.994x`。同窗 Flow/SNMP 汇总比值分别为 `97.37%` 与 `97.34%`（只取 SNMP coverage=1 的完整桶时分别为 `97.40%` 与 `97.57%`），差异远小于相邻桶自然波动；估算总量未随倍率翻倍或减半，证明采样倍率应用正确。降低采样间隔约可把随机抽样标准误差降为原来的 `1/sqrt(2)`，但当前约 `2.6%` 的稳定系统性差额未被消除，仍须由 counter、方向覆盖、sequence/drop 和端口映射证据分类。最近 15 分钟无 `mapping_rejected`，有 120 个零 flow-record 的 `empty` 回执；counter-only 接入后该类报文应转为带 counter 数量的 `persisted` 回执。
-- [ ] **方向与端口映射**：明确“设备端口流出”和“本地网络视角流出”不是天然同义；分别产出 observation-port 守恒表与业务方向守恒表，验证 input/output ifIndex 的选择，不允许因客户 CIDR 未命中而让总量消失。
+- [ ] **方向与端口映射**：明确“设备端口流出”和“本地网络视角流出”不是天然同义；分别产出 observation-port 守恒表与业务方向守恒表，验证 input/output ifIndex 的选择，不允许因客户 CIDR 未命中而让总量消失。（2026-09-28 复核：部分完成 — 端口视角 reader 已有（按 ingress/egress ifIndex）；缺业务方向守恒表与 ifIndex 选择验证；`c00e6c646`; `internal/flowch/interface_reconciliation.go:243-260`）
 - [ ] **差额分类**：逐端口计算 `flow_estimated_out_bytes / snmp_ifHCOutOctets_delta`，把差额归入 exporter 未覆盖、ifIndex 错配、采样率未知/变化、序列缺口、collector/kernel drop、Kafka/worker lag、CH reject、查询漏筛或二层同流多端口计数；只报告差异，不自动调平。
-- [ ] **实现/API**：复用现有 SNMP CH reader 与 Flow fact reader，提供有界同窗 reconciliation 结果（设备、端口、SNMP、Flow、比率、证据/质量标志）；长窗口和批量端口通过 operation job 渐进执行、可取消/重试/导出，不占 HTTP 生命周期。
-- [ ] **单元测试**：10 端口、不同采样率、sampling unknown、sequence gap、counter reset/wrap、缺桶、端口 down、IPv4/IPv6、重复 Kafka 消费与同一流经多端口场景。
+- [ ] **实现/API**：复用现有 SNMP CH reader 与 Flow fact reader，提供有界同窗 reconciliation 结果（设备、端口、SNMP、Flow、比率、证据/质量标志）；长窗口和批量端口通过 operation job 渐进执行、可取消/重试/导出，不占 HTTP 生命周期。（2026-09-28 复核：部分完成 — 有界同窗 reader 已有（≤7d/≤1000 scope/预算）；缺 API、operation job、取消/重试/导出（全仓库无调用方）；`internal/flowch/interface_reconciliation.go:85-190`）
+- [ ] **单元测试**：10 端口、不同采样率、sampling unknown、sequence gap、counter reset/wrap、缺桶、端口 down、IPv4/IPv6、重复 Kafka 消费与同一流经多端口场景。（2026-09-28 复核：部分完成 — 仅 fake executor 的 SQL 形状、比率、零分母、参数校验；场景矩阵未覆盖；`c539d770e`; `internal/flowch/interface_reconciliation_test.go:60-121`）
 - [ ] **真实集成**：真实 SNMP CH + Flow CH 同窗对账；核对 receipts 的 count/counter 与事实一致；注入丢包/缺采样/错 ifIndex 后只产生对应问题，不修改原始数据。
 - [ ] **性能/回归/提交门禁**：对账必须按 device+ifIndex+time 裁剪，记录 read_rows/P95；跑 snmpch/flowch/flowquery/billing/server 以及真实 CH 回归后独立提交。容差由生产基线和采样统计确定，不在代码中拍脑袋写死。
 
@@ -403,17 +403,17 @@ EXPLAIN indexes = 1 SELECT count() FROM flow_records WHERE source_stream_id = '<
 - [x] **解码**：fast sFlow 解码器已读取 generic interface counter；未知的合法 counter record 只跳过该 record，并覆盖标准/expanded、counter-only、多 record 和截断测试。继续保留 flow sample 原有零拷贝路径。
 - [x] **可靠传输/回执**：CounterRecord 随原 datagram 经 Kafka→worker；counter-only 数据报由 `empty` 改为 `persisted`，回执分别记录 flow fact count 与 counter record count，重放仍以 Kafka 坐标幂等。单元测试覆盖 decoder→worker 的 counter-only 持久化语义以及 worker→CH 的独立 counter 回执。
 - [x] **ClickHouse 存储**：迁移 `018_sflow_interface_counters.sql` 新增累计量表 `sflow_interface_counters`，以 device/exporter+ifIndex+event time 查询，以 Kafka 坐标去重；累计量不混写 SNMP 表。差分层的 wrap、reset、乱序、迟到和 discontinuity 仍归入下一项对账实现。
-- [ ] **对账/告警**：按 `(device,ifIndex,direction,5m)` 计算 counter delta、Flow estimated 与 `k=counter/estimated`；分别输出“有 counter 无 flow 样本”的覆盖问题、持续漂移、序列缺口、未知倍率、绑定/ifIndex 错误，不自动调平。
+- [ ] **对账/告警**：按 `(device,ifIndex,direction,5m)` 计算 counter delta、Flow estimated 与 `k=counter/estimated`；分别输出“有 counter 无 flow 样本”的覆盖问题、持续漂移、序列缺口、未知倍率、绑定/ifIndex 错误，不自动调平。（2026-09-28 复核：部分完成 — 5m counter delta、Flow 比率、reset/coverage 标志已有；缺问题分类输出、告警与调用入口；`internal/flowch/interface_reconciliation.go:243-313`）
 - [x] **字节估算校准**：根据 4096 采样率切换后完整桶的稳定约 `2.6%`差额，当前 exporter binding 发布 `1,027,000 ppm`。Worker 只校准 `estimated_bytes`，每条记录落 `estimated_bytes_scale_ppm` 并置 `QualityEstimateCalibrated`；raw、sampling rate、packets 不变。生产 plan v4 已验证全部新记录比率为 `1.027`。后续自动 counter 校准仍须保留证据窗口与审批，不得在查询层叠加第二次修正。
-- [ ] **单元测试**：已完成标准/expanded、counter-only、混合 sample、多 record、未知 record、截断以及 counter-only Kafka→worker→CH 回执；尚需随对账层完成 IPv4/IPv6 agent、差分、wrap/reset、迟到/重复、单/双向覆盖、零 estimated、质量阈值和 raw 不可变。
-- [ ] **真实集成/性能**：真实 Huawei CE datagram→Kafka→worker→CH；与 SNMP 同窗 10 端口核对，验证 counter 与 SNMP、packet estimate 三方差异；记录 decoder records/s、worker P95、CH read_rows/bytes，72h soak 无回执漂移后独立提交。
+- [ ] **单元测试**：已完成标准/expanded、counter-only、混合 sample、多 record、未知 record、截断以及 counter-only Kafka→worker→CH 回执；尚需随对账层完成 IPv4/IPv6 agent、差分、wrap/reset、迟到/重复、单/双向覆盖、零 estimated、质量阈值和 raw 不可变。（2026-09-28 复核：部分完成 — 仅测零分母；差分、wrap/reset、迟到/重复、v6 agent、质量阈值、raw 不可变未测；`internal/flowch/interface_reconciliation_test.go:95-98`）
+- [ ] **真实集成/性能**：真实 Huawei CE datagram→Kafka→worker→CH；与 SNMP 同窗 10 端口核对，验证 counter 与 SNMP、packet estimate 三方差异；记录 decoder records/s、worker P95、CH read_rows/bytes，72h soak 无回执漂移后独立提交。（2026-09-28 复核：部分完成 — 线上 Flow 与 sFlow counter 差约 2% 已验证；缺 SNMP 10 端口三方比对、records/s/P95/read_rows、72h soak）
 
 ### PERF-Q2 查询、聚类与存储后续闭环
 
-- [ ] **查询**：完成 Phase 1 的两段式 top-N、direction 联合扫描、端点 N+1 消除、境外单遍聚合、facet 合并、预算档与异步导出；每项保持小窗口数值等价。
-- [ ] **聚类/维度**：验证六分类互斥+残差守恒，客户/Geo/运营商 LPM 只在 worker 内存快照中完成；不得在逐 flow 写路径查 MySQL/ClickHouse，也不得在查询时重新发明归属。
-- [ ] **存储**：只依据真实慢查询影子 A/B 候选 projection/index；闭环确定性重放与去重后再评估去 `FINAL`；receipt/archive/delete 均由水位和 operation job 驱动。
-- [ ] **可观测性**：补 collector datagrams/records/reject/drop、Kafka lag、worker enrich/write、unknown sampling/address miss、CH rows/block/insert/merge、reconciliation drift 指标及告警。
+- [ ] **查询**：完成 Phase 1 的两段式 top-N、direction 联合扫描、端点 N+1 消除、境外单遍聚合、facet 合并、预算档与异步导出；每项保持小窗口数值等价。（2026-09-28 复核：部分完成 — 已做端点两遍、境外全 raw 单扫、direction 维、>1h 异步；剩通用 TopN、方向合并、端点 N+1、facet 合并、命名预算档；`internal/flowquery/query.go:897,1032,1110`; `internal/server/flow_reports.go:326-333`）
+- [ ] **聚类/维度**：验证六分类互斥+残差守恒，客户/Geo/运营商 LPM 只在 worker 内存快照中完成；不得在逐 flow 写路径查 MySQL/ClickHouse，也不得在查询时重新发明归属。（2026-09-28 复核：部分完成 — LPM 只在 worker 内存中做、查询不重归属；缺“六分类+残差=总量”的真实数据守恒验证；`internal/flowworker/enrich.go:200-203`; `internal/flowdimension/category_test.go:5`）
+- [ ] **存储**：只依据真实慢查询影子 A/B 候选 projection/index；闭环确定性重放与去重后再评估去 `FINAL`；receipt/archive/delete 均由水位和 operation job 驱动。（2026-09-28 复核：部分完成 — 022 有线上证据（≈6× 裁剪）；020 的 set/bloom 未做 A/B；receipt 无月清理；未评估去 FINAL；线上 raw 为人工 DROP；`deploy/migration/clickhouse/020_flow_query_skip_indexes.sql`; `deploy/migration/clickhouse/022_flow_records_event_time_index.sql`）
+- [ ] **可观测性**：补 collector datagrams/records/reject/drop、Kafka lag、worker enrich/write、unknown sampling/address miss、CH rows/block/insert/merge、reconciliation drift 指标及告警。（2026-09-28 复核：部分完成 — 采集、lag、写入指标早已有；缺 CH merge 与对账漂移指标，仓库无任何告警规则；`internal/flowmetrics/metrics.go:91-209`）
 - [ ] **回归矩阵**：raw-only、archive-only、跨边界；IPv4/IPv6；流入/流出；六分类；客户/运营商/Geo；重复/迟到/rebalance/CH timeout；报表、明细、分页、导出与计费。
 - [ ] **发布门禁**：固定硬件并发压测和 72h soak；达到准确性、性能、可靠性和生命周期门禁后才允许生产发布。
 

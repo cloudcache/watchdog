@@ -1,5 +1,7 @@
 # PocketBase deletion-first execution record
 
+> **Drift from code (reviewed 2026-09-28):** 3 statements below are behind or at odds with the code — the code is authoritative; see "Drift from code (reviewed 2026-09-28)" at the end.
+
 > Status: destructive pass completed on 2026-09-08. This record describes the exact objects removed before the replacement MySQL authentication/server work starts. No intermediate build or regression test was run, by explicit instruction.
 
 ## Removed runtime and source
@@ -71,3 +73,13 @@ No build, unit test, integration test or regression test was executed during thi
 - Started an isolated disposable ClickHouse container on a separate native port, leaving the active `watchdog_flow` database untouched. Against that empty ClickHouse plus a disposable empty MySQL database and the existing healthy Kafka broker, the current server applied both schemas, created the sole administrator, logged in, issued a one-time enrollment token, registered an SNMP agent, accepted its authenticated heartbeat, reported healthy, and wired the SNMP/Flow query stores, both export workers and billing reader. The exact MySQL database and temporary container were removed afterward and verified absent.
 - The unavailable-ClickHouse companion test also proves that install/login/device management remain available with explicit telemetry `503`, and that restart is idempotent after installation.
 - Go test/build/vet, server race, 47 frontend tests and the production frontend build pass. The follow-up frontend hygiene slice reduced full Biome lint from 42 errors/38 warnings to zero diagnostics without changing routes, API contracts, layout or visual styling. Tailwind v4 custom directives retain a narrowly scoped `src/index.css` exception for Biome 2.2.4's inapplicable unknown-at-rule check; all other CSS linting remains active. KISS-01E is closed; the separately listed KISS-01B/C authentication and browser Network tests are not silently treated as complete.
+
+---
+
+## Drift from code (reviewed 2026-09-28)
+
+The 2026-09-28 full project review checked this document against current code, migrations and commits. The items below are superseded by the implementation, renamed, or not yet implemented. **The code is authoritative**; the body is kept as design history.
+
+- **:13** — `robfig/cron/v3` was itself removed later (KISS-08I); `go.mod` no longer has it.
+- **:70** — the historical migration tree (`deploy/migration/mysql`, `install/init.sql`) was deleted in KISS-08I; `deploy/migration` now holds only ClickHouse migrations.
+- **:71** — the clean-stack check no longer uses a one-time enrollment token: agents self-register with the installation shared token (`aa870f65d`, `0050`).

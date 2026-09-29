@@ -1,5 +1,7 @@
 # Flow 数据面性能与可靠性修复清单
 
+> **与代码的差异（2026-09-28 复核）**：本文有 7 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > **Storage V2 变更门禁**：F9/F19/F20 及所有 TTL/rollup 处置按 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md) 执行。receipt 保留但改为逐 Kafka 消息的自然键与 count/counter 对账；不再保留 per-block 内容 checksum。
 
 > 来源：2026-09 Flow 模块复盘（采集→Kafka→分类→ClickHouse→查询/汇总，5 路并行子系统审查 + 交叉复核）。
@@ -79,3 +81,17 @@
 ## 设计事实（非缺陷，须告知运维）
 
 - 不存在历史「重分类」worker：分类在 ingest 时按事件时间不可变物化，generation/repair 只能重**聚合**不能重**分类**。一次定义修复不回溯纠正历史聚合。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **折叠（:35）**：还折叠 remote_port 的 top-256，并作用于热层 1m/1h 与派生层。
+- **重分类（:81）**：“不存在历史重分类 worker”已不成立——CH `016`/`017`、MySQL `0040`、`/flow/reclassifications` 已实现。
+- **F3 余项（:26）**：已在 Gin server 完成（Scope{AllowedViews}、authorizeFlowView、资源授权）。
+- **F1/F2/F14/F18-obs（:23-25,69）**：FlowRollupReaper、job 台账、terminal 指标、租户公平游标随 `internal/watchdog` 删除，由进程内热调度补齐缺口并在 repair_interval 内 BucketNeedsRepair 迟到修复；相关指标未导出。
+- **tenant 排序键（:36-37）**：KISS-06 已去 tenant；1m 表由 `020` 重建为按日分区 + 2d TTL。
+- **编号（:9）**：生命周期表在 KISS `0033`/`0034`；F1/F2 reaper 已删除，无法回滚。
+- **F12（:44-48）**：现为 `internal/server/flow_geo.go`，标签来自 active WADS；RetainVersions 仍无调用方，由 capHistoricalGeoVersions 限制版本数。

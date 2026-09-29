@@ -1,5 +1,7 @@
 # KISS-03B 设计：系统 agent 去租户 + 系统遥测入 ClickHouse
 
+> **与代码的差异（2026-09-28 复核）**：本文有 3 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 日期：2026-09-17。范围：兑现 KISS-03 中延后的「system/container agent 切片」。目标 = 把系统/容器遥测的采集端去多租户、并把其时序落地到 ClickHouse，忠实照搬 KISS-03A（SNMP→CH）的分层。**不含新业务功能**，只补齐延后的存储与查询垂直切片。
 
 ## 1. 现状（已核实）
@@ -54,3 +56,13 @@
 
 ## 6. 相关小项（独立，需用户输入）
 - **goreleaser/打包去 Beszel/henrygd**（与「已删 LICENSE、按原创口径」一致）：`.goreleaser.yml:134 maintainer: henrygd <hank@henrygd.me>`、`:129-132` Beszel 描述、`:169`、`:191 copyright: 2025 henrygd`，及 `supplemental/debian/copyright`。改品需用户提供**维护者名/邮箱**与**包描述**，不臆造身份。不属 KISS-03B 8 门，可随时单独做。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **发行版 agent（:7）**：`internal/cmd/agent` 只会用 WebSocket 连 `/api/watchdog/agent-connect`，该端点已随 PB Hub 删除（`0315abea7`），但它仍被 `make build` 与 `.goreleaser.yml` 构建发布——孤儿制品，应删除或改为发布 `cmd/watchdog-system-agent`。
+- **现状（:12,14）**：行号已漂移（`main.go:252`、`agents.go:884`）；服务端 `/api/v1/system-agents/:id/{plan,samples}` 已在 `71e9bf39f` 删除，system agent 每轮 FetchPlan 404 后 ReportError——**采集链当前是断的**，KISS-03B 是修复而非增强。
+- **§6 goreleaser（:56）**：已完成（maintainer/copyright 改为 cloudcache，`afa7859a5`）；但 `.goreleaser.yml:144` 仍引用已不存在的 `./supplemental/debian/copyright`，待修。

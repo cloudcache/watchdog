@@ -1,5 +1,7 @@
 # KISS-06 Flow 单域化与 ClickHouse 查询收敛 — 设计冻结
 
+> **已归档（2026-09-28）**：KISS-06/08 已完成，本文归档。Hub 退役依赖序已全部执行（`internal/watchdog` 于 `71e9bf39f` 删除，VM 已移除，SNMP 与账单在 CH）。与现状的主要差异：CH 连接拆为交互/批处理两个池（`0ef47e87f`）；`/flow/query` 的 direction_split 为一次 DimensionDirection 查询（报表面板与 vpn_share 分母仍按方向分查）；geo 优先自动加载 active WADS（`flow.geo.path` 仅遗留）；VPN 发布面板可返回 ready；报表路由为 `POST /flow/reports/query`（另有异步 `GET /query/:id`、`GET /references`）；server 启动时自动执行内嵌 CH 迁移。
+
 > 本文件是 KISS-06「设计」门禁的产出：冻结「不动」的数据面/算法，精确列出「只删 tenant」的改动点与三处签名/序列化 wire 决策，并固化两切片提交计划。编码只能对照本冻结做机械改动。
 > 归属：`docs/watchdog-kiss-refactor-tasklist.md` §KISS-06。原则：复用既有经测试的强代码，只去 PB/tenant/VM，不重写 decoder、不另造存储、不改计数与生命周期语义。
 

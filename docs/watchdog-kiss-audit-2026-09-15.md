@@ -1,5 +1,7 @@
 # KISS 全面审计 — install & target（device/agent/network/flow）+ PocketBase 残留
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 13 · 部分修复 0 · 未修复 3 · 作废 2（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 日期：2026-09-15。范围：多次并行变更（地址库、RBAC、flow 契约恢复、SNMP 预算、发布去签名等）后，对 **install/bootstrap** 与 **target（device、agent、network=snmp/core、flow；system 延后）** 做全面审计，并核销 [watchdog-kiss-refactor-tasklist.md](watchdog-kiss-refactor-tasklist.md) 中 PocketBase 残留清理项。方法：四路只读子代理并行审计（build/vet/route 静态追踪 + 真实 schema 应用验证）。
 
 ## 结论
@@ -98,3 +100,30 @@ KISS-01A 门禁是提交顺序纪律说明（非代码可补救）；KISS-01E �
 - **KISS-01（PB）**：主题 1 的 Docker/CI + init/migration 文字 + GitHub 模板 → 可核销 KISS-01E 代码删除门的这部分；`internal/watchdog` 删除仍属 KISS-08。
 - **KISS-08（遗留清理）**：遗留安装器、遗留 worker、`internal/watchdog` 树、VM config、`deploy/migration/mysql` 全量删除 —— 但危险**接线**（Makefile/scripts/CI/docs）建议提前拆。
 - **install 硬化 / 运维**：CH 启动语义（主题 2）、seed 接线、仓库卫生 —— 独立小包，不阻塞。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 13 · 部分修复 0 · 未修复 3 · 作废 2（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L25 | dead PB hub Dockerfile in CI | 已修复 | `282764880`; `docker-images.yml` now only uses dockerfile_server/agent \| |
+| L26 | init.sql / legacy migration PB fields | 已修复 | `282764880`; `3046fe42c` deleted them \| |
+| L27 | GitHub templates point to /_/#/logs | 已修复 | `282764880` (grep empty) \| |
+| L28 | internal/watchdog still imported | 已修复 | `bf2100879`, `71e9bf39f` (tree deleted) \| |
+| L38 | two MySQL install systems | 已修复 | `4574289d` guard; `03b0a97bf`/3046fe42c deleted installer, `init.sql`, migration/mysql \| |
+| L39 | CH first-run 500 trap | 已修复 | `ed00b061c` non-fatal degrade \| |
+| L40 | address seed not loaded at install | 已修复 | `watchdog-install.md:136-141` \| |
+| L41 | builtin MIB reseed forces enabled=1 | 已修复 | `snmp_mib_modules.go:131-132` only updates version/checksum \| |
+| L42 | 0026 permanent no-op | 作废（被后续决策取代） | kept under the immutable-migration rule \| |
+| L50 | unreachable CH aborts the whole server | 已修复 | `ed00b061c` \| |
+| L51 | legacy rollup/export workers | 已修复 | `e3d1a6364` retired them (git ls-files empty) \| |
+| L52 | two config schemas / VM base_url | 已修复 | `71e9bf39f`, `3046fe42c` \| |
+| L53 | snmp_vmquery.go name misleading | 未修复 | file still exists \| |
+| L63 | listTargets missing filter validation | 已修复 | `f825fac5a`；route later removed by ce58ed4f4 |
+| L64 | replaceUserAccess raw FK 500 | 作废（被后续决策取代） | false positive (doc 09-16) \| |
+| L65 | probe kind has no consumer | 未修复 | `agents.go:841,888` \| |
+| L66 | label keys do not reject " or \ | 未修复 | `device_organization.go:762`；negligible |
+| L85 | root binary / DB dump not ignored | 已修复 | .gitignore:48-49 \| |

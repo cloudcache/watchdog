@@ -1,5 +1,7 @@
 # Watchdog KISS 目标架构：单域、双存储、三层口径
 
+> **与代码的差异（2026-09-28 复核）**：本文有 23 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。 §5.3 Agent 已在本次复核就地修订。
+
 > 状态：ADR-KISS-001，目标架构已冻结（2026-09-08）。本文取代旧文档中“PocketBase 认证内核”“多租户”“VictoriaMetrics + ClickHouse 双分析后端”“通用 module/resource/dataset provider 平台”的目标形态。实施清单见 [watchdog-kiss-refactor-tasklist.md](watchdog-kiss-refactor-tasklist.md)。
 
 ## 1. 决策结论
@@ -192,23 +194,23 @@ SNMP 手工发现入口固定为 `POST /api/v1/devices/:id/snmp/discover`。服�
 
 Agent 固定使用以下生命周期：
 
-`register (共享 token) -> active -> draining -> revoked`（管理端手工创建的行从 `registered` 起，首次通信自动转 `active`）
+`register (共享 token) -> active -> draining -> revoked`（管理端手工创建的行从 `registered` 起，首次通信自动转 `active`；`draining` 目前只是管理端可写的标签，没有运行语义——心跳与 plan 只拦截 `revoked`）
 
-安装侧只配置**一个**全局共享 token（`agents.shared_token` / 环境变量 `WATCHDOG_AGENT_SHARED_TOKEN`），所有采集器/worker 的配置文件直接写入该 token。进程首次同步时凭该 token 幂等注册（创建/更新 `agents` 行），此后所有机器请求都用同一 token 鉴权——不再有一次性 enrollment token，也不再有 per-agent 凭据或 mTLS fingerprint（2026-09-28 Stage 2 移除，见迁移 `deploy/schema/mysql/0050_drop_agent_enrollment_credentials.sql`）。
+安装侧只配置**一个**全局共享 token（`agents.shared_token` / 环境变量 `WATCHDOG_AGENT_SHARED_TOKEN`），所有采集器/worker 的配置文件直接写入该 token。进程首次同步时凭该 token 幂等注册（创建/更新 `agents` 行），此后所有机器请求都用同一 token 鉴权——不再有一次性 enrollment token，也不再有 per-agent 凭据或 mTLS fingerprint（2026-09-28 Stage 2 移除，见迁移 `deploy/schema/mysql/0050_drop_agent_enrollment_credentials.sql`）。注册是可选的：进程只有配置了控制面 URL 与共享 token 文件（plan 下发另需 plan 公钥与 LKG 路径）才会注册，否则以 headless 方式运行、注册表中不可见。共享 token 只证明"是本安装的 agent"，不绑定具体 agent id；凡"只能读自己"的机器接口只能按 URL id 过滤，这是简化后的已知取舍。
 
 最小模型：
 
 - `agents`：kind、name、software/API version、capabilities、health、last_seen、desired/acked plan version；
-- `agent_bindings`：agent 与 device、collector endpoint 或 worker role 的关系；
+- `agent_bindings`：agent 与 device、collector endpoint 或 worker role 的 1:1 关系；扇出分配另有 `flow_worker_device_bindings`（`0048`，一个 flow worker 对 N 台设备，用于定向发布）与 `flow_exporter_bindings.collector_agent_id`（`0006`，exporter→collector）；
 - `agent_plans`：不可变版本、schema version、payload、签名、创建者；
-- `agent_plan_acks`：downloaded/installed/failed 和错误；
-- `agent_runs`：discovery/probe 执行摘要，以及流式采集器/worker 每窗上报的处理量（records/bytes/drops/errors/Kafka lag/版本，存 `summary_json`）。
+- `agent_plan_acks`：`applied`/`rejected`（rejected 必带大写 error_code 与 detail），按 `(agent_id, plan_version, boot_id)` 幂等（downloaded/installed/failed 是 Flow 发布物 ACK 的词汇，不属于这里）；
+- `agent_runs`：运行上报——system agent、SNMP collector 每轮 poll、flow collect/worker 每分钟窗口的处理量（records/bytes/drops/errors/Kafka lag/版本，存 `summary_json`）。SNMP discovery 在 server 内执行，只写设备状态与审计，不写 `agent_runs`；`agent_runs` 目前无保留期，会持续增长。
 
-capability 是版本化字符串与有界 JSON 参数，例如 `snmp.poll/v2`、`flow.receive.sflow/v1`、`flow.write.clickhouse/v2`。控制面只有一个 `AgentKindAdapter` 代码接口负责 validate/plan/status；不为每个 agent kind 注册一套 dataset、resource、target 和菜单。
+capability 是版本化字符串与有界 JSON 参数，例如 `snmp.poll/v2`、`flow.receive.sflow/v1`、`flow.write.clickhouse/v2`。没有单独的 adapter 接口：kind→capability 前缀是一张静态兼容表（`agents.go`），计划兼容性由 `agentplan.ValidateCompatibility` 校验，各 kind 的 config 由对应二进制的 `DecodeConfig` 严格校验；不为每个 agent kind 注册一套 dataset、resource、target 和菜单。
 
 注册/CRUD 固定以下约束：agent kind 只有 `system/snmp/flow_collect/flow_worker/probe`；API version 当前只接受 `v1`，且 capability 必须包含与 kind 对应的版本化前缀。注册只认全局共享 token（常量时间比对）；`system` 只能绑定 host device，`snmp` 只能绑定 network device；collector/worker 可不绑定具体设备。管理端创建 agent 只建行，不签发任何 token/凭据（提交 `token`/`mtls_fingerprint` 返回 `shared_token_only`）；共享 token 由运维带外配置到进程侧，MySQL 不保存它。
 
-`row_version` 表示管理配置版本：创建、编辑、吊销以及首次 `registered -> active` 转换会改变它；稳定 heartbeat 和 run 上报不会每分钟制造配置冲突。心跳只推进 `last_seen`（存活），不再回写 health；health 由处理结果上报（ok/error）与 `last_seen` 陈旧度（派生 offline）共同决定，因此存活但在报错或空转的进程不会被心跳粉饰成健康。生产 machine API 只有 Gin `POST /api/v1/agents/register` 与 `/api/v1/agents/:id/{heartbeat,status,errors}`；吊销后共享 token 对该 id 立即失效。历史 system plan/sample 暂留原实现，直到 KISS-03 把其输入输出逐项迁入 Gin+ClickHouse 后才删除。
+`row_version` 表示管理配置版本：创建、编辑、吊销以及首次 `registered -> active` 转换会改变它；稳定 heartbeat 和 run 上报不会每分钟制造配置冲突。心跳只推进 `last_seen`（存活），不再回写 health；health 由运行上报（`/status`、`/errors` 写 ok/error，计划 ACK 也会写）与 `last_seen` 陈旧度共同决定，因此存活但在报错的进程不会被心跳粉饰成健康。注意：offline 只在 agents API 读取时派生（阈值实际恒为 3 分钟，因 `heartbeat_interval_seconds` 从未写入），直接读 `agents.health` 列的读者（如 flow worker 部署视图）看不到 offline；流式 worker/collector 的周期上报恒为 success，零吞吐不会降级 health。共享 token 鉴权的 machine API 为：`POST /api/v1/agents/register`、`/api/v1/agents/:id/{heartbeat,status,errors}`、`GET /api/v1/agents/:id/plan`、`POST /api/v1/agents/:id/plan-acks`、`POST /api/v1/snmp/traps`，以及 `/api/v1/flow-workers/:id/*`（另校验 kind=flow_worker 且状态为 registered/active）；吊销后共享 token 对该 id 立即失效。system agent 的服务端 `/api/v1/system-agents/:id/{plan,samples}` 已在 `71e9bf39f` 删除，而 system agent 仍在请求这两个路径——**system 采集链当前是断的**（每轮 404），恢复归 KISS-03B。
 
 现有 fleet rollout 的复杂状态机不作为基础能力。批量下发先由一个 `operation_job` 对选定 agent 逐个创建 plan；只有出现真实的灰度发布需求和故障证据后，才增加 canary 数据模型。
 
@@ -432,3 +434,33 @@ v2 schema 的唯一基线目录是 `deploy/schema/mysql`，由 server 原位嵌�
 - **日志与告警子系统**：按 LibreNMS `eventlog`/alert 表结构从零建立，时序事件与查询在 ClickHouse；告警规则、投递和静音等低频管理配置由 KISS-L 按需建 MySQL 表。不复用、不迁移 PB 旧表。
 - **Flow 客户/供应商口径修正**：本期只存 raw；如需，按 §5.6 在渲染/导出/账单计算时对 raw 应用 MySQL 规则算出，不物化、不回写 raw。
 - **用户/服务 API token**：如需程序化访问再加，与 OAuth/OTP/找回一起作为认证扩展后续处理（替换 session authenticator，不恢复 PB）。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **§2 架构图（:83-85,100）**：SNMP collector 并非只经 API——它用 MySQL DSN 直接读 devices/snmp_profiles/recipes、回写 recipe/device 状态，并在进程内重建最近一个已关闭的 `snmp_interface_traffic_5m` 桶（`snmp_collector_runtime.go:38-51,112-130,202-339`），不经 API、不走 operation_jobs。
+- **§2（:97）**：可注册进程为 snmp-collector、system-agent、flow_collect、flow_worker；trap 转发进程 `watchdog-snmp-agent` 只用共享 token 调 `/snmp/traps`、从不注册；`probe` 只保留 kind 与能力前缀，暂无进程。
+- **§2（:96,350）**：server 从不托管静态文件；参考部署为 nginx 托管 MPA 并同源反代 `/api/`（`API_URL` 默认空串，`deploy/nginx/watchdog.conf`）。
+- **§2/§7（:26,346）**：没有 MetricQueryService；设备指标由 `/api/v1/metrics/*` handler + `snmpch.Store` 实现。
+- **§5.1 资源门（:110-111,122）**：另有 `user_aggregate_graph_permissions`、`user_metric_permissions`（`0024`；有行即成白名单），经 `GET/PUT /users/:id/access` 维护；另有 `password_reset_tokens`（`0002`）。
+- **§5.1 找回（:115,332）**：已有自助重置 `POST /session/forgot`、`/session/reset`（无邮件，令牌写入服务端日志转交，`handlers_admin.go:17-18`——需评估日志泄露风险）；改密为 `POST /me/password`，管理员重置为 `POST /users/:id/password`。
+- **§5.1 cookie（:115）**：是否带 `Secure` 取决于请求是否为 HTTPS（含受信 loopback 反代的 `X-Forwarded-Proto`），不是无条件（`auth.go:85-114`）。
+- **§5.1 ability（:130-140）**：缺 `flow.device.view/manage` 与 `flow.vpn.view/triage/manage/publish`（`rbac.go:22-23`）；另 **`flow.export.*` 已定义但没有任何地方强制**（明细导出只校验 `flow.view.<层>`，VPN findings 导出只校验 `flow.vpn.view`）——安全缺口，需补代码。
+- **§5.2 SNMP secret（:172）**：community/v3 secret 当前**明文**存于 `snmp_profiles.security_json`，仅列表 DTO 脱敏；静态加密待实现。
+- **§5.2 事件（:179,304,432）**：设备事件时间线已落在 CH `watchdog_flow.snmp_events`（`014`），经 `/devices/:id/events`、`/events/facets` 查询；只有告警规则/投递/状态仍归 KISS-L。
+- **§5.2 发现（:187）**：绑定 profile 后由 server 内 reconcile 循环自动发现并每 6h 重发现（`snmp_discovery_reconcile.go`，`snmp.auto_discover` 默认 true）；手工端点用于立即重发现。
+- **§5.2/§6 SNMP 保留（:306,358）**：SNMP 三张 CH 表**没有 TTL**，`/api/v1/retention/policies` 只把策略写入 MySQL `metric_retention_policies`、无任何执行者——SNMP 数据无限增长，执行器待实现。
+- **§6 discovery（:322）**：discovery 从未进 operation_jobs：手工端点同步执行，自动发现是进程内 ticker + 内存退避。
+- **§6.1 core（:112,284）**：`idempotency_records`、`export_tasks` 只在 `0001` 基线建表、代码零引用（导出与幂等都在 operation_jobs）；`settings` 实际只存 flow trust bundle 状态，保留策略在 `metric_retention_policies` 与 `flow_retention_policy_revisions`。
+- **§6.1 inventory（:285）**：`custom_mibs` 实为 `mib_modules`（`0022`）；另有 `snmp_collection_recipes`（`0016`）、`traffic_policy_defaults`/`port_policies`（`0022`）、`metric_retention_policies`（`0029`）。
+- **§6.1 flow control（:288）**：`flow_storage_policy` 实为 `flow_retention_*` 生命周期表族（`0033`–`0039`）。
+- **§6.1 presentation（:289,323）**：实为 `aggregate_graphs`/`aggregate_graph_items`/`aggregate_graph_ports`（`0021`）+ `dashboards`（`0023`），API `/aggregate-graphs`、`/dashboards`。
+- **§6.1 billing（:264,290）**：`billing_accounts` 已改为 `measurement_type` + `billing_method`（package_port/monthly_95th/daily_95th/monthly_average）+ `contract_bandwidth_bps`/`minimum_percent`/`traffic_allowance_bytes`（`0042`/`0043`），并有 `billing_period_ports` 冻结端口快照（`0020`）。
+- **§7 地址库路由（:339）**：实为 `/address-imports`（含 tus 上传）、`/address-draft-revisions`、`/dimensions/address`、`/address-prefixes`（含 `/effective`、`/bulk-reassign`）、`/address-sets`、`/geo/dictionary|tree|lines`、`/network/operators`。
+- **§7 报表路由（:341）**：一个 `POST /flow/reports/query`（`kind`=overview/dimensions/overseas/endpoints/vpn）+ 异步 `GET /flow/reports/query/:id`，不是六个路由。
+- **§7 API 表（:330-344）**：不全（缺 `/metrics/*`、`/graph/*`、`/aggregate-graphs`、`/dashboards`、`/retention/policies`、`/users/:id/access`、`/device-groups`、`/locations`、`/snmp/mib-modules`、`/traffic-policy-defaults`、`/agents/plan-rollouts`、`/flow/worker-device-bindings` 等）——完整路由以 `internal/server/router.go` 为准。
+- **§8 审计（:356）**：agent 自注册 upsert 与自动 registered→active 转换**不写审计**，只有管理端 create/update/delete/revoke 有审计。
+- **§9 后续项（:433）**：“Flow 客户/供应商口径只存 raw”已过时：`flow_records` 入库即物化 `supplier_*`/`customer_*` 列（`011`），历史重分类按 generation 执行（`0040`）。

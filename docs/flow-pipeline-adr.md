@@ -1,5 +1,7 @@
 # Flow 数据面收敛 ADR：Akvorado RawFlow + GoFlow2
 
+> **与代码的差异（2026-09-28 复核）**：本文有 6 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > **Storage V2 superseding amendment**：数据身份、回执对账、TTL/downsample、明细 cursor 和去热路径 hash 的唯一生效契约见 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md)。本文中 30 天 TTL、实时 1m/1h rollup、hash 派生 ingest id 的旧描述仅保留为历史背景。
 
 状态：**Accepted，核心传输与解码已实施**
@@ -118,3 +120,16 @@ Kafka raw retention 覆盖约定的最大 worker/CH 故障窗口；ClickHouse �
 ## 8. 来源与许可证门
 
 `internal/flowstream` 的 RawFlow 和 Kafka 生命周期来自 Akvorado，派生文件保留 Free Mobile 版权与 `SPDX-License-Identifier: AGPL-3.0-only`；`franz-go` 和 GoFlow2 保留各自许可证。按项目决定，测试阶段允许 MIT 与 AGPL 文件并存；对外发布前必须完成根许可证、NOTICE、源码提供入口、依赖清单和制品声明切换。许可证门不改变数据面测试标准。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **修订框（:11）**：热层持续物化 1m/5m/1h，查询在 marker 覆盖前缀内读聚合、尾段读 raw（不是“1m 读 raw、不物化”）。
+- **producer（:51）**：另有 MaxBufferedBytes（默认 256MiB），启动时校验 topic。
+- **故障表（:93-99）**：缺数据丢失一行——`kgo.ErrDataLoss` 被计数后继续消费。
+- **VM/tenant（:29,43）**：已移除；collect 通过控制面 agent plan 注册并每分钟上报 run summary。
+- **去重（:62,97）**：无 ingest id——以 (source_stream_id,kafka_partition,kafka_offset,record_index) + ingest_generation 的 ReplacingMergeTree 收敛；schema readiness 禁止 record_id/ingest_batch_id 列。
+- **quarantine（:67）**：以非 Kafka 形式存在：CH `flow_quarantined_datagrams`（迟到数据触及已删 raw 分区时写入）+ worker raw-delete tombstone barrier——是删除安全机制，不是诊断 topic。

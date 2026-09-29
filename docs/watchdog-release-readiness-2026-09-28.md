@@ -23,6 +23,29 @@
 
 **测试口径**：`go build ./...` 干净；`internal/{flowch,server,flowquery}` 全套 `go test` 通过；schema/runner 已在本地 dev ClickHouse 26.3 端到端验证。**尚未做**：生产部署验证、集成测试（真实 Kafka→worker→CH→5m→查询/账单全链）、迭代 4–7（查询路由/账单读 5m/对账/retention）。这些未完成项不能由编译或单元测试替代。
 
+**复核补记（2026-09-28）**：全项目复核发现 5m 路径两处缺陷——`flow_aggregate_5m` 未接入迟到 repair（1m 被迟到数据修正后 5m 不重建，目前尚无读者，属潜伏缺陷）；报表读路径的覆盖检查跑在只有 1 个连接的 batch 池上，会排在后台 rollup/归档作业之后。详见 `docs/watchdog-project-review-2026-09-28.md`。
+
+### 1.3 Agent 共享 token 改动（已进入 `main`，待生产部署）
+
+| 提交 | 内容 | 测试状态 |
+|---|---|---|
+| `fae7eee2c` | 全局共享 token 注册；flow worker/collector 每分钟上报每窗处理量（`agent_runs.summary_json`） | agentplan/server 单测通过 |
+| `cdfd283d9` | SNMP collector 每轮轮询上报 run | 单测通过 |
+| `95bca83d9` | 心跳不再写 health；health 由 run 上报 + `last_seen` 陈旧度派生 | 单测通过 |
+| `e14b16200` | Agent 运行页「工作量」列 | 前端 typecheck/biome 通过 |
+| `aa870f65d` | 删除一次性 enrollment token 与 per-agent 凭据；MySQL 迁移 `0050` DROP `agent_enrollment_tokens`/`agent_credentials` | 真实 MySQL 8 集成（设备/agent API、SNMP trap）通过 |
+
+**升级顺序（必须，否则 agent 会停止采集）**——两个已核实的升级陷阱（2026-09-29 已在代码中缓解，见各条末尾）：
+
+- **凭据陷阱**：生产 agent 的 token 文件里仍是旧的 per-agent `wda_…` 凭据；server 升级到 `aa870f65d` 后它不再被接受（Sync 401 → 注册重试 401 → 进程报错退出 → `Restart=on-failure` 反复拉起）。另外 server 的 `agents.shared_token` 为空时任何 agent 都无法认证。（2026-09-29 缓解：注册被拒现在同样返回 `ErrUnauthorized`，四个进程都记录"agent token was rejected"后以状态 0 退出、不再循环重启——但在换成共享 token 之前该 agent **停止采集**。）
+- **参数陷阱**：旧版 `activate-agent.sh` 在 `/etc/watchdog/agents/<服务>.env` 的 `WATCHDOG_AGENT_ARGS` 中写入了 `-agent-enrollment-token-file`；新二进制已删除该参数，Go `flag.Parse()` 遇到未定义参数直接以状态 2 退出——新二进制根本起不来。（2026-09-29 缓解：四个二进制重新接受该参数但忽略，并打印"deprecated and ignored"警告；计划下个版本删除。）
+
+按序执行：
+1. 生成强随机 token，写入 server 配置 `agents.shared_token`（或环境变量 `WATCHDOG_AGENT_SHARED_TOKEN`），重启 server；
+2. 对每个 agent 运行**新版** `deploy/systemd/activate-agent.sh`（提示输入共享 token）：它同时重写 token 文件（0600，属主 watchdog）和不含 enrollment 参数的 env；
+3. 再滚动升级各 agent 二进制；
+4. 验收：Agents 页四类进程 `run_count` 递增、health 由 run 上报驱动、无进程处于重启循环。
+
 ### 1.2 发布前必须处理
 - **发布门禁**：tag workflow 必须从 `go.mod` 读取 Go 版本，执行全库 Go 测试、前端 check/test/typecheck/build，再分别发布进程制品与独立 web 压缩包。
 - **`.gitignore` 已覆盖缓存/二进制**（已核实）：`.gocache-*/`、`.codex-deploy-*/`、根目录 `watchdog-flow-collect`/`watchdog-flow-worker`/`watchdog-server` 都在已提交的 `.gitignore` 中，`git add .` 不会带入这约 10 GB 垃圾。
@@ -165,14 +188,14 @@ hot_rollup:
 
 ## 7. 上线检查清单
 
-- [ ] `.gitignore` 补 `.gocache-*/`、`.codex-deploy-*/`、根目录构建产物；确认无缓存/二进制入库。
-- [ ] 5m 三个迭代按域分提交；`go build ./...` + 全套 `go test` 绿。
+- [x] `.gitignore` 补 `.gocache-*/`、`.codex-deploy-*/`、根目录构建产物；确认无缓存/二进制入库。（2026-09-28 复核：已完成 — `456157562`, `8e7ec860e`; .gitignore:25-36,47-49；根目录 4 个二进制经 check-ignore 确认均被忽略，git ls-files 无 ELF/归档）
+- [ ] 5m 三个迭代按域分提交；`go build ./...` + 全套 `go test` 绿。（2026-09-28 复核：部分完成 — 已按域分提交；2026-09-28 go build ./... 与 agentplan/flowmetrics/snmpdomain/flowch 单测通过，全套 go test（含集成）未跑；`423d820e2`, `c1385cd3b`, `d6c38b62e`）
 - [ ] 集成测试（真实 Kafka→worker→CH→5m→查询/账单）至少跑一轮。
-- [ ] 迁移应用到目标库，`flow_schema_migrations` = 22；5m 两表、event_time 索引存在。
-- [ ] `flow.hot_rollup.enabled=true`；1h/5m marker 连续推进。
-- [ ] raw 落独立大盘或存储策略生效；发布保留策略（或明确「暂由人工管控」并配告警）。
-- [ ] `/etc/docker/daemon.json` 日志封顶已生效（容器已重建）。
+- [ ] 迁移应用到目标库，`flow_schema_migrations` = 22；5m 两表、event_time 索引存在。（2026-09-28 复核：部分完成 — event_time minmax 已在生产（≈6× 裁剪，手工 ALTER）；021 两张 5m 表与 ledger=22 未上线；`deploy/migration/clickhouse/021_flow_atomic_5m.sql`, `deploy/migration/clickhouse/022_flow_records_event_time_index.sql`）
+- [ ] `flow.hot_rollup.enabled=true`；1h/5m marker 连续推进。（2026-09-28 复核：部分完成 — 仓库配置为 true（代码默认 false）；5m 未部署，09-24 14-17h 的 1h 为人工补，marker 连续性无证据；`config/watchdog.yaml:52`; `internal/server/flow_hot_rollup.go:98-131`）
+- [ ] raw 落独立大盘或存储策略生效；发布保留策略（或明确「暂由人工管控」并配告警）。（2026-09-28 复核：部分完成 — 实际为人工管控（09-19/20/21、09-23..27 已人工 DROP）；无独立盘/存储策略、无书面声明、无告警）
+- [ ] `/etc/docker/daemon.json` 日志封顶已生效（容器已重建）。（2026-09-28 复核：部分完成 — daemon.json 已封顶；既有容器是否已重建未确认（CH json 日志曾需手工截断））
 - [ ] `curl /api/v1/health` 返回 JSON；nginx `/api/` 反代端口与实际 API 一致。
-- [ ] CH 内存上限（交互 1.5G/rollup 6G+落盘）、operation/batch/execution 超时均已配。
+- [ ] CH 内存上限（交互 1.5G/rollup 6G+落盘）、operation/batch/execution 超时均已配。（2026-09-28 复核：部分完成 — 超时与 rollup 6G+落盘已配；交互上限为 4GiB/2GiB 而非 1.5G，未设 max_threads=2，生产配置未核对；`config/watchdog.yaml:20-21,39,64`; `internal/flowch/rollup.go:961-971`）
 - [ ] 磁盘、Kafka lag、摄入新鲜度三项监控/告警上线。
-- [ ] Kafka retention 与磁盘余量匹配；Kafka/CH 容器日志均有 retention/封顶。
+- [ ] Kafka retention 与磁盘余量匹配；Kafka/CH 容器日志均有 retention/封顶。（2026-09-28 复核：部分完成 — 6h/6GiB 仅见于 dev compose 与文档自述；Kafka log4j 与 CH 日志轮转未配；docker 封顶待容器重建；`deploy/compose.flow-dev.yml:46-48`; `c5a9b745b`）

@@ -1,5 +1,7 @@
 # SNMP / Gin 路由迁移审计
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 25 · 部分修复 2 · 未修复 2 · 作废 14（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 状态：2026-09-12；SNMP 时序兼容面已完成迁移。本文只审计迁移完整性，不把历史存在的功能默认为死功能。
 
 ## 结论
@@ -82,3 +84,27 @@ tenant ID 只是作用域参数、而功能本身仍属于目标产品，则应�
 ## 后续迁移顺序
 
 本轮 SNMP 五项已经按 schema、repository、API、进程认证、单元、真实 MySQL/ClickHouse 集成与路由契约闭环。后续仅按“当前前端仍调用”和“历史非 Flow API 全量差异”逐域迁移；每批以历史契约测试为门禁，不再零散修改前端 URL。system/container agent 仍按 KISS-03B 延后，不混入 SNMP 提交。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 25 · 部分修复 2 · 未修复 2 · 作废 14（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L9 | 404s from two half-migrated route sets | 已修复 | `ce58ed4f4` single canonical API + `frontend/src/lib/canonical-api.test.ts` \| |
+| L15 | gate: historical paths are the compatibility contract | 作废（被后续决策取代） | reversed by `ce58ed4f4` (/network/* removed, /devices is canonical) \| |
+| L16 | gate: MySQL definitions + CH time series, no VM | 已修复 | `router.go:126-131`; snmpch \| |
+| L22 | SNMP rows device/subresources/ports/BGP/profile/policy/defaults | 已修复 | `router.go:83-124,139-150,221` (canonical paths)；7 items; paths moved |
+| L27 | SNMP rows metrics/export/graph/aggregate CRUD/series | 已修复 | `router.go:126-163`; `exports.go:31-36`；5 items |
+| L34 | SNMP rows MIB/events/facets/traps | 已修复 | `router.go:137-138,227`; /snmp/traps；4 items; trap auth now shared token (aa870f65d) |
+| L45 | /me/preferences, audit/jobs, /dashboards | 已修复 | `57c8c7128` `router.go:59-60`; `platform_operations.go:18-27`; `router.go:164-172`；3 items |
+| L48 | /retention/policies | 部分修复 | `03acebdcb` `platform_operations.go:29-32`；CRUD only; retention.go never enforces in CH |
+| L49 | /modules, /config+/heartbeat, /smart-devices | 作废（被后续决策取代） | `22fe6f3c8` removed the UI entries (frontend grep 0)；3 items |
+| L51 | /containers, /systemd-services | 未修复 | KISS-03B still deferred; UI removed \| |
+| L62 | /health/*, /permissions PUT/DELETE, enrollment paths, old /plan-rollouts+schedules, /modules, /historical, /query-policies, compute\|void, /config, /smart-devices | 作废（被后续决策取代） | single /health; `a17b313ac` /users/:id/access; `aa870f65d`; /agents/plan-rollouts; calculate/close；10 items; no frontend consumer |
+| L63 | /me/preferences, /dashboards, /metrics/vmquery (diff table) | 已修复 | `router.go:59-60,164,131`；3 items |
+| L69 | /retention/policies (diff table) | 部分修复 | same as :48 \| |
+| L75 | /containers, /systemd-services (diff table) | 未修复 | KISS-03B \| |
+| L78 | multi-tenant management removed | 已修复 | `0001_baseline.sql:9` has no tenant_id \| |

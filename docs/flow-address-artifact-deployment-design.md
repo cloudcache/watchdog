@@ -503,7 +503,7 @@ deployment 到 artifact 的不可变引用；主键 `(deployment_id, kind, scope
 - [x] 冻结三种 artifact schema、manifest v1、ACK 和错误码；
 - [x] 冻结 v1 pair → v2 artifact/deployment 的 reader-first 映射与单向切换规则；
 - [x] 对当前 WADS、classification JSON、HTTP/LKG 做 golden baseline；
-- [x] 记录生产硬件性能基线。
+- [ ] 记录生产硬件性能基线。（2026-09-28 复核：改回待办（原勾选不成立/夸大） — 基线均在 darwin/arm64 开发机测得，没有生产硬件基线；`docs/flow-address-library-scale-baseline.md:21`）
 
 ### Phase B：新增 v2 管理面
 
@@ -511,7 +511,7 @@ deployment 到 artifact 的不可变引用；主键 `(deployment_id, kind, scope
 - [x] WADS builder 输出注册为 address artifact，不改 WADS bytes；
 - [x] 将当前 per-device customer rows 编译为独立 boundary JSON；
 - [x] 将剩余策略编译为独立 policy JSON；
-- [x] 发布 operation job 接受显式 Worker 选择，binding 只作推荐；
+- [ ] 发布 operation job 接受显式 Worker 选择，binding 只作推荐；（2026-09-28 复核：改回待办（原勾选不成立/夸大） — 地址激活按 binding 自动给已绑定 worker 发 v2，无显式选择与确认，违背 §6/§10.2；`28014a8be`; `internal/server/flow_worker_deployments.go:258-320`; `internal/server/handlers_address_dimension.go:242-251`）
 - [x] API/UI 展示编辑态、desired、installed、worker health 和失败状态。
 
 ### Phase C：Worker 双读
@@ -520,7 +520,7 @@ deployment 到 artifact 的不可变引用；主键 `(deployment_id, kind, scope
 - [x] v2 loader 按 checksum 只下载变化对象；
 - [x] 独立编译后组装 composite runtime snapshot 并 atomic swap；
 - [x] LKG 保存 v2 manifest 与对象图并支持冷启动恢复；
-- [x] heartbeat/ACK 暴露 desired/installed drift，installed 里程碑不可被迟到 ACK 倒退。
+- [ ] heartbeat/ACK 暴露 desired/installed drift，installed 里程碑不可被迟到 ACK 倒退。（2026-09-28 复核：改回待办（原勾选不成立/夸大） — ACK 侧成立；heartbeat 没有 installed generation/checksum 摘要；`internal/server/flow_worker_deployments.go:857-868`）
 
 ### Phase D：事实版本与查询 provenance
 
@@ -531,8 +531,8 @@ deployment 到 artifact 的不可变引用；主键 `(deployment_id, kind, scope
 
 ### Phase E：迁移和拆旧
 
-- [ ] 由当前 active pair 生成首个 v2 artifacts + manifests；
-- [ ] 所选 Worker v2 installed ACK 后将新发布入口切到 v2；
+- [ ] 由当前 active pair 生成首个 v2 artifacts + manifests；（2026-09-28 复核：部分完成 — 首代 generation 接在 v1 最大值之后；制品取自 active WADS 加当前 profile/边界而非 pair 对象；无迁移工具；`28014a8be`; `internal/server/flow_worker_deployments.go:626-642`）
+- [ ] 所选 Worker v2 installed ACK 后将新发布入口切到 v2；（2026-09-28 复核：部分完成 — UI 入口已切到 v2，但不以 installed ACK 为前提；激活、绑定、profile 变更仍自动写 v1；`552d9752b`, `c33b1c652`）
 - [ ] 观察至少一个迟到窗口和一次回滚演练；
 - [ ] 停止创建 pair v1；
 - [ ] 删除旧 pair routes/loader/table 前验证全库无引用。
@@ -542,27 +542,27 @@ deployment 到 artifact 的不可变引用；主键 `(deployment_id, kind, scope
 ### 单元测试
 
 - [x] WADS golden/CRC/SHA/未知版本/截断/zstd bomb；
-- [x] boundary JSON 确定性、严格字段、IPv4 unmap、IPv6、掩码、重复和跨客户重叠；
-- [x] policy schema 与算法版本；
-- [x] manifest canonical bytes、签名篡改、generation 回退/同代异文；
+- [ ] boundary JSON 确定性、严格字段、IPv4 unmap、IPv6、掩码、重复和跨客户重叠；（2026-09-28 复核：改回待办（原勾选不成立/夸大） — 未测未知字段、重复 ID、非 canonical 的拒绝（代码在 deployment_artifacts.go:82-97,216-230）；`internal/flowdimension/deployment_artifacts_test.go:9-88`）
+- [ ] policy schema 与算法版本；（2026-09-28 复核：改回待办（原勾选不成立/夸大） — 只测 round-trip，无 schema/算法版本的拒绝测试；`internal/flowdimension/deployment_artifacts_test.go:90-109`）
+- [ ] manifest canonical bytes、签名篡改、generation 回退/同代异文；（2026-09-28 复核：改回待办（原勾选不成立/夸大） — canonical 与篡改有测试；generation 回退、同代不同内容只有代码无测试；`internal/flowworker/deployment_manifest_test.go:14-75`）
 - [x] BART v4/v6 LPM、无匹配、同设备客户归属；
 - [x] runtime composite swap 全有或全无。
 
 ### 集成测试
 
 - [x] 只改客户 CIDR：不构建、不下载 WADS；
-- [ ] 只改 WADS：不重建 boundary；
-- [x] 未绑定但被显式选择的 Worker 可以 list/download/ACK；未选择 Worker 404；
-- [ ] 多 Worker 使用不同 device boundary 集合；
-- [ ] 下载中断、坏 SHA、坏签名、编译超限、fsync 失败均保留旧 LKG；
-- [ ] installed ACK 丢包后只重试 ACK；
-- [x] Worker 离线后从 LKG 冷启，恢复相同 generation/checksums；
-- [ ] event-time 在两个 deployment 间正确选择，缺历史 fail closed；
-- [ ] rollback 生成更高 generation 并引用旧 artifacts。
+- [ ] 只改 WADS：不重建 boundary；（2026-09-28 复核：部分完成 — 服务端按 source_revision 复用、worker 按 checksum 不重复下载；但每次重编全部 BART；无测试；`internal/server/flow_worker_deployments.go:495-508`; `internal/flowworker/deployment_loader.go:127-150`）
+- [x] 未绑定但被显式选择的 Worker 可以 list/download/ACK；未选择 Worker 404；（2026-09-28 复核：复核备注 — 显式选择链路测试已按共享 token 修复并于 2026-09-28 重跑通过；未选 worker 的 404 未测；共享 token 下 path ID 不绑定身份；`internal/server/flow_enrichment_publications_integration_test.go`）
+- [ ] 多 Worker 使用不同 device boundary 集合；（2026-09-28 复核：部分完成 — 一个 job 给所选 worker 发同一设备集；不同集合需分次发布或靠激活按 binding；无测试；`internal/server/flow_worker_deployments.go:264-320,405-422`）
+- [ ] 下载中断、坏 SHA、坏签名、编译超限、fsync 失败均保留旧 LKG；（2026-09-28 复核：部分完成 — 单元测了坏 checksum、落盘失败、签名篡改；v2 下载中断、编译超限、fsync 失败与集成测试未做；`internal/flowworker/deployment_loader_test.go:102-141`）
+- [ ] installed ACK 丢包后只重试 ACK；（2026-09-28 复核：部分完成 — 代码上重入时只 persist 加 installed ACK，对象直接命中 LKG；无 v2 测试（v1 有）；`internal/flowworker/deployment_loader.go:85-93`）
+- [ ] Worker 离线后从 LKG 冷启，恢复相同 generation/checksums；（2026-09-28 复核：改回待办（原勾选不成立/夸大） — v2 冷启动只有单元测试且未断言 checksum；集成测试只验了 v1 Restore；`internal/flowworker/version_lkg_test.go:250-295`）
+- [ ] event-time 在两个 deployment 间正确选择，缺历史 fail closed；（2026-09-28 复核：部分完成 — v2 复用 catalog 的事件时间选择（v1 已测）；无 v2 两 deployment 间选择与缺历史的测试；`internal/flowworker/version_catalog.go:212-228`）
+- [ ] rollback 生成更高 generation 并引用旧 artifacts。（2026-09-28 复核：部分完成 — 无显式 rollback；源回退后重发会复用旧 artifact 且 generation+1，但未测；地址回滚不会自动下发；`internal/server/flow_worker_deployments.go:439,463,503,626-639`）
 
 ### 变更与回归测试
 
-- [ ] v1/v2 双读 rolling upgrade；旧 Worker 不能收到不支持的 v2；
+- [ ] v1/v2 双读 rolling upgrade；旧 Worker 不能收到不支持的 v2；（2026-09-28 复核：部分完成 — 只有单元测试，无真实滚动升级；服务端不按 capability 拦截旧 worker；`internal/flowworker/version_dual_sync_test.go:43-82`）
 - [ ] 从 active pair 自动生成首个 v2 deployment，结果分类逐条 parity；
 - [ ] sFlow/NetFlow fast decode、Kafka offset、CH 写入吞吐不回退；
 - [ ] 六分类总量、客户 v4/v6、Geo/运营商名称与旧正确结果对账；
@@ -571,8 +571,8 @@ deployment 到 artifact 的不可变引用；主键 `(deployment_id, kind, scope
 
 ### 已提交门禁
 
-- [ ] 每一阶段按纵向切片独立提交；
-- [ ] 设计、migration、server、worker、UI、测试不得长期堆在一个未提交工作区；
+- [ ] 每一阶段按纵向切片独立提交；（2026-09-28 复核：部分完成 — Phase B/C 已提交但非干净纵向切片（c00e6c646 夹带对账代码）；D/E 未开始；`c00e6c646`, `28014a8be`, `1270eb196`, `552d9752b`）
+- [x] 设计、migration、server、worker、UI、测试不得长期堆在一个未提交工作区；（2026-09-28 复核：已完成 — `c00e6c646`, `28014a8be`, `1270eb196`, `552d9752b`, `8e7ec860e`；现已全部提交（此前约 4–8 天为未提交 WIP））
 - [ ] pair v1 只在 v2 真实 installed/LKG/rollback 闭环后删除；
 - [ ] 删除旧表和路由必须有静态引用扫描与 fresh-install schema 门禁。
 

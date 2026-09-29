@@ -1,5 +1,7 @@
 # Collector / Worker Lifecycle — Review & Redesign
 
+> **Drift from code (reviewed 2026-09-28):** 5 statements below are behind or at odds with the code — the code is authoritative; see "Drift from code (reviewed 2026-09-28)" at the end.
+
 > **SUPERSEDED for the agent-lifecycle half (2026-09-28).** Item 2's proposals
 > below (persistent install/kind-scoped *registration token* table, a `pending →
 > approve` gate, keeping one-time enrollment as legacy) were **not** the shipped
@@ -336,3 +338,15 @@ Each phase is independently shippable and verifiable.
 3. **P2 — agent lifecycle (D1 identity/approval + D2 keep signing):** add `pending` + reversible `disabled` states (stop aliasing `disabled → revoked`); `approve`/`disable`/`enable` endpoints + UI; registration lands `pending`; work-authorization gated on `active` while heartbeat-authorization allows `pending`/`disabled`. Signed-plan fetch/apply/ACK unchanged.
 4. **P3 — config-file register (D1):** single `agent.yaml` (`backend_url` + registration `token` + `kind`); registration-token table (SHA-256, rotatable); make registration the default path for all three binaries; keep one-time enrollment + `activate-agent.sh` as legacy.
 5. **P4 — fleet assignment (D3):** SNMP device→agent assignment (`ListDueDevices`/discovery filtered by the calling agent's scope; "unassigned → default") + a **Flow Sources** UI over the existing `/flow/exporter-bindings` API, incl. collector-agent picker, plan-version status, and an "unclaimed source" list for passive sFlow exporters.
+
+---
+
+## Drift from code (reviewed 2026-09-28)
+
+The 2026-09-28 full project review checked this document against current code, migrations and commits. The items below are superseded by the implementation, renamed, or not yet implemented. **The code is authoritative**; the body is kept as design history.
+
+- **Status line (:18):** P1 (SNMP auto-discovery) is implemented (`f65f56f68`); item 2 is superseded by the shared-token model (`aa870f65d`, `0050`); P4 is partially open.
+- **§7 auto-discovery (:241-251):** shipped in reduced form — an in-process `watchdog-server` ticker (1m scan, batch 50, concurrency 4, fixed 15m in-memory backoff), with no operation_job and no persisted collection state beyond `devices.status/status_reason`. The top banner's "shipped as described" applies to §11 P1, not to all of §7.
+- **Flow assignment (:264-277,312-316):** worker→device assignment has shipped — `flow_worker_device_bindings` (`0048`), `/api/v1/flow/worker-device-bindings`, a UI and targeted publications (`313a0ac02`). The exporter CRUD UI and SNMP device→agent assignment remain open.
+- **Collector plan (:270):** the server only validates exporter bindings with a throw-away `CompilePlan`; `published_plan_version` is never set, and flow-collect still loads a hand-supplied `-plan` file.
+- **Phased path (:336-338):** P2/P3 are superseded (no approval gate; shared-token self-registration); P4 is partial (flow worker bindings delivered).

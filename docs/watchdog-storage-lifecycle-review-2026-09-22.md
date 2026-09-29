@@ -1,5 +1,7 @@
 # Watchdog 存储分层 / 生命周期 / 查询效率审查 — 对标 akvorado
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 23 · 部分修复 11 · 未修复 12 · 作废 2（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 日期:2026-09-22
 范围:原始数据 / 处理后聚合 / 报表查询三层的存储、生命周期、Kafka 消息设计;并回答"为什么 akvorado 存储与查询高效,而我们不行"。
 证据:live 生产 .18 实测 + 三份代码级 deep-dive(watchdog CH 存储/查询、watchdog Kafka、akvorado 架构)。
@@ -241,3 +243,47 @@ network → flow-collect(收 UDP + admission + 封 RawFlow)
 - Kafka:[internal/flowstream/rawflow.go:85](../internal/flowstream/rawflow.go)(ExporterKey/skew),[internal/flowstream/producer.go](../internal/flowstream/producer.go)；初始仓库无 retention，live 已手工止血，当前 dev compose 工作树已加入 6h+6GiB/partition；复发记录 docs/watchdog-flow-perf-audit-2026-09-19.md:420-424
 - 异步已存在:live `operation_jobs.job_type='flow.report.query'`
 - akvorado:orchestrator/clickhouse/{config.go:64-74,migrations_helpers.go:401-459,725-767},common/schema/{definition.go,clickhouse.go:122-152},console/clickhouse.go:283-335,config/akvorado.yaml:22-28
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 23 · 部分修复 11 · 未修复 12 · 作废 2（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L13 | rev1 no published policy (scheduler fail-closed) | 未修复 | ops has not published a policy；operator did manual raw retention |
+| L14 | rev2 endpoint two raw scans | 已修复 | v13 / `00be2cdb5` \| |
+| L15 | rev3/4/5 keep raw FINAL, no raw TTL, no insert-trigger MV | 已修复 | constraints upheld: 020–022 add no raw TTL; RMT + generation kept；3 items |
+| L18 | rev6 minimum_generation also gates reads | 已修复 | `flow_archive.go:112,161` \| |
+| L19 | rev7/8 hour batching / no raw fallback for the hour tier | 已修复 | `00be2cdb5` RollupRequest.BucketEnd, MarkerOnly (`rollup.go:38-46,304`)；2 items |
+| L21 | rev9 two-phase marker | 已修复 | `bc10958f4`；deployment unconfirmed |
+| L22 | rev10 coverage-aware tier selection | 已修复 | `bc10958f4` `flow_reports.go:486-488` \| |
+| L38 | TL;DR1 downsampling/archive never ran | 部分修复 | hot rollup (v13)；cold still fail-closed |
+| L39 | TL;DR2 async retries amplify limit failures | 已修复 | `00be2cdb5` `flow_report_jobs.go:117-122` TerminalError \| |
+| L40 | TL;DR3 Kafka retention recurrence | 部分修复 | `c5a9b745b` `compose.flow-dev.yml:48`；prod provisioning not codified |
+| L41 | TL;DR4 root disk pressure | 作废（被后续决策取代） | snapshot state; disk-full handled operationally \| |
+| L42 | TL;DR5 hybrid tiers, no rebuild | 已修复 | `00be2cdb5` \| |
+| L91 | §3 P1 tiers | 部分修复 | 1m/1h/1d + 5m (`c1385cd3b`)；cold lifecycle inactive; 5m not routed |
+| L92 | §3 P2 FINAL dependence | 已修复 | marker reads drop FINAL (`rollup.go:345`) \| |
+| L93 | §3 P3 skip indexes | 部分修复 | 020 + 022 (`423d820e2`)；old parts not materialized |
+| L94 | §3 P4 tiered TTL | 部分修复 | 1m 2d (020), 5m 90d (021:67)；metadata tables unbounded |
+| L95 | §3 P5 route to coarsest tier | 已修复 | `flow_archive.go:103-116`；5m not routed yet |
+| L97 | §3 P7 Kafka as short buffer | 部分修复 | dev compose only \| |
+| L98 | §3 P8 CH dual pools | 已修复 | `0ef47e87` \| |
+| L106 | §4.1 cold control plane inactive | 未修复 | policy not published \| |
+| L107 | §4.2/4.3/4.4 tiers / marker FINAL / endpoint raw scans | 已修复 | `00be2cdb5`, v13；3 items; 1d prod acceptance pending |
+| L110 | §4.5 provenance columns in GROUP BY | 未修复 | `query.go/joint.go` by design \| |
+| L111 | §4.6 Kafka retention declared | 部分修复 | `c5a9b745b` \| |
+| L112 | §4.7 metadata tables unbounded | 未修复 | no TTL or job \| |
+| L156 | §5.5 limit errors terminal | 已修复 | `00be2cdb5` \| |
+| L164 | §6 retention.ms + bytes / declarative | 部分修复 | `compose.flow-dev.yml:48`；2 items; prod not codified |
+| L166 | §6 skew handled by time retention | 作废（被后续决策取代） | design trade-off, no action \| |
+| L167 | §6 three different consumer-group defaults | 未修复 | `config.go:101` / `main.go:108` / `watchdog.yaml:30` \| |
+| L177 | §7 raw / 1h lifecycle | 未修复 | policy not published；2 items |
+| L179 | §7 1m 2d TTL / new 1d tier | 已修复 | 020 migration；2 items |
+| L181 | §7 receipts / reclassified / quarantined | 未修复 | unchanged；3 items |
+| L184 | §7 Kafka topic | 部分修复 | dev compose \| |
+| L190 | Phase 0 retention / disk alerts / no raw TTL | 部分修复 | `c5a9b745b`; no raw TTL upheld；disk handled by ops; no alerting in repo |
+| L191 | Phase 1/2/2.1 | 已修复 | `00be2cdb5`, `bc10958f4`；3 items; 2.1 deployment unconfirmed |
+| L194 | Phase 3/4 cold activation / old-part index materialization | 未修复 | not done；2 items |

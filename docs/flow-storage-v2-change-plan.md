@@ -156,8 +156,8 @@ Policy CRUD 允许显式发布 `raw_delete_enabled` 与 `archive_delete_enabled`
 
 - [x] **编码**：source stream 贯穿 decode/enrich/write；移除四类热路径 hash；block 与 receipt 解耦。
 - [x] **单元**：同消息重放、跨 block、批预算变化、同 topic 新 stream、不连续 record index、溢出。
-- [ ] **集成**：真实四协议 Kafka→worker→CH 和 count/counter receipt 已通过；真实 CH ambiguous ACK 与 `dedup window=0` 后自然坐标收敛已通过。仍缺实际 worker/CH crash 与存活 consumer 间 rebalance 的组合故障，因此本项不提前关闭。
-- [ ] **性能**：同一 Apple M2、1024-record enrichment benchmark 各 5 次，V1/V2 中位数分别为 `1.044ms/0.829ms`，V2 CPU 时间约降 20.6%，两者均 `0 alloc`；这只是整批 enrich 而非 hash-only microbenchmark，但仍不能代替真实 Kafka→CH 的 records/s、CPU、CH bytes/row 与固定硬件 soak。
+- [ ] **集成**：真实四协议 Kafka→worker→CH 和 count/counter receipt 已通过；真实 CH ambiguous ACK 与 `dedup window=0` 后自然坐标收敛已通过。仍缺实际 worker/CH crash 与存活 consumer 间 rebalance 的组合故障，因此本项不提前关闭。（2026-09-28 复核：部分完成 — CH 丢响应、rebalance、kill worker 各自单测过；缺 worker/CH crash 与存活 consumer rebalance 的组合故障；`internal/flowch/production_process_integration_test.go:120,154-166`）
+- [ ] **性能**：同一 Apple M2、1024-record enrichment benchmark 各 5 次，V1/V2 中位数分别为 `1.044ms/0.829ms`，V2 CPU 时间约降 20.6%，两者均 `0 alloc`；这只是整批 enrich 而非 hash-only microbenchmark，但仍不能代替真实 Kafka→CH 的 records/s、CPU、CH bytes/row 与固定硬件 soak。（2026-09-28 复核：部分完成 — 生产 raw≈62 B/row 已有；缺 records/s、CPU、固定硬件 soak）
 
 ### V2-C 查询、导出与对账
 
@@ -172,7 +172,7 @@ Policy CRUD 允许显式发布 `raw_delete_enabled` 与 `archive_delete_enabled`
 > **单域实现替换（2026-09-16）**：当前运行入口是 `internal/flowlifecycle/archive*.go` 与 `internal/server/flow_archive.go`，状态表由 `0033`–`0039` 管理；旧 `internal/watchdog/flow_storage_jobs.go` 已随 KISS-08 删除。server 固定有界扫描/迟到复核预算，所有保留时长只读全局 published policy。归档完成后，标准单维、方向、境外、固定报表和导出通过 MySQL 连续 boundary 读取 archive/raw；联合维度与明细仍读 raw。raw 日与 archive 月的 DDL executor/receipt、真实外部 restore drill 均已接线；开关可显式发布，但每个分区仍逐项 fail closed。
 
 - [x] **设计**：冻结管理策略表/API、UTC 分区粒度、目标 schema、守恒证据、generation 命名空间和删除授权。
-- [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。
+- [x] **编码（非破坏路径）**：关闭实时 rollup 互斥开关；增加 aging scanner、downsample operation handler、repair、连续 archive boundary 和管理 API。（2026-09-28 复核：已被后续实现取代（以代码为准） — aging/downsample/repair/API 仍在；实时 rollup 已以 hot_rollup 形式重启，存储边界改按 marker 覆盖（非 MySQL reconciled）；`00be2cdb5`, `bc10958f4`; `internal/server/flow_archive.go:80-128`; `config/watchdog.yaml:51-52`）
 - [x] **单元**：raw retention/迟到最大窗口、空分区、策略版本、取消/失败 repair、generation、UTC 边界和 raw-delete fail-closed。
 - [x] **集成（非破坏路径）**：真实 MySQL policy/lease/state + 真实 CH source→archive→reconcile 与 hybrid read 守恒。
 - [x] **L5A 删除就绪度证据**：真实 CH 从逐消息 receipt 验证 UTC 日 offset 范围（跨午夜消息保守纳入），真实 MySQL 验证 bootstrap/committed/reconciled/backup/counter 全满足才 ready，水位落后即锁定；API 读取不改变 partition state/row version。

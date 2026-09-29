@@ -1,5 +1,7 @@
 # Watchdog 采集 Agent / Worker 全生命周期审计（2026-09-28）
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 2 · 部分修复 4 · 未修复 19 · 作废 2（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 范围:采集 agent(snmp/flow_collect)与 flow_worker 的**注册、下发、运行、状态感知、CRUD/操作**的缺陷审计。方法:三路并行代码审计 + 生产 .18 live 佐证。所有条目附 `file:line`。
 
 生产 live 现状锚点(触发本次审计):agent 注册表只有 3 个 agent(flow_collect/flow_worker/snmp),全部 `active` / `health=ok` / `last_seen` 新鲜,但 `run_count=0`、`failure_count=0`、6h 内 `agent_runs` 为空、`desired/acked_plan_version=0/0`;flow worker 每 10s 日志 `flow deployment v2 endpoint is unavailable; retaining version 11`。下面的缺陷解释了这三个现象。
@@ -82,3 +84,39 @@
 5. **治理与卫生**:审计加入-激活链;凭据默认 TTL;id 字符集校验;移除死状态/死列;批量操作 + 强制并发保护。修 P2-10、P3-1、P3-3、P3-5、P3-9、P3-10。
 
 每项落地都应能在注册表/管理 API 上被验证(而不仅在 worker 本地日志),否则运维仍然"看不见"。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 2 · 部分修复 4 · 未修复 19 · 作废 2（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L21 | P1-1 heartbeat forces health=ok; no ingest-liveness signal | 部分修复 | `95bca83d9` `agents.go:495-500` (heartbeat no longer writes health); `fae7eee2c` run reports；worker/collector RunReport never sets Status (worker main.go:317-336, collect main.go:253-270), so it always defaults to success; zero throughput never degrades health; no last_run staleness check; not deployed |
+| L22 | P1-2 streaming agents never report runs | 已修复 | `fae7eee2c` (worker/collector RunReports every minute) + `cdfd283d9` (SNMP each poll pass) → `agents.go:626` INSERT agent_runs；not deployed; prod still shows run_count=0 |
+| L23 | P1-3 enrichment/deployment never writes desired/acked_plan_version | 未修复 | only writers are still `agent_plans.go:381`/517; `flow_worker_deployments.go` does not touch these columns \| |
+| L24 | P1-4 no reconciler advancing the desired plan | 未修复 | `agent_plans.go:240-243` desired=0→204; set only by manual/rollout \| |
+| L25 | P1-5 irreversible v2→v1 latch; persistent 404 freezes LKG | 未修复 | `version_dual_sync.go:53-58` unchanged since `c00e6c646`; `version_http.go:244`；matches prod "retaining LKG 11" |
+| L26 | P1-6 classification-profile/binding edits only publish v1 | 未修复 | `flow_enrichment_publications.go:386,` `flow_worker_bindings.go:119` only enqueue v1；boundary save now returns draft+publication_required (flow_customer_boundaries.go:231) |
+| L34 | P2-1 no approval gate; registered auto-promotes | 作废（被后续决策取代） | user decision; `aa870f65d` shared-token register inserts 'active' directly (`agents.go:815`)；by decision |
+| L35 | P2-2 no reversible enable/disable; revoke is terminal | 未修复 | `agents.go:318-325`; normalizeAgentStatus disabled→revoked (:860-861)；credential/new-token cost gone with aa870f65d; UI still Revoke/Delete only |
+| L36 | P2-3 agent_bindings 1:1 | 未修复 | `0003_agents.sql:59` uq_agent_bindings_agent \| |
+| L37 | P2-4 offline is only a read-time DTO override | 未修复 | `agents.go:80-94`; `flow_worker_deployments.go:937` still reads raw a.health；now that heartbeat no longer overwrites health, the stored value can stay stale longer |
+| L38 | P2-5 heartbeat overwrites error with ok within 30s | 已修复 | `95bca83d9` `agents.go:500` UPDATE no longer touches health；not deployed |
+| L39 | P2-6 no operational telemetry; summary_json never written | 部分修复 | `fae7eee2c` `agents.go:566-579,626` (records/bytes/drops/lag/partitions); `e14b16200` UI column；no ingest freshness watermark, per-port/device state or enrichment generation |
+| L40 | P2-7 no server-side "worker stuck on old version" detection | 未修复 | worker `main.go:780-786` only logs; summary has plan_version only, no enrichment cursor \| |
+| L41 | P2-8 address activation triggers both v1 and v2 | 未修复 | `handlers_address_dimension.go:225` + :246 \| |
+| L42 | P2-9 v1/v2 version namespaces overlap | 未修复 | `flow_worker_deployments.go:626-641` seeds from v1 MAX; `flow_enrichment_publications.go:663` \| |
+| L43 | P2-10 join/activation chain not audited | 未修复 | createEnrollmentToken removed (`aa870f65d`); enrollAgent `agents.go:720-837` and run/heartbeat auto-activation still have no s.audit；enrollment half gone with the decision; registration audit still missing |
+| L44 | P2-11 asymmetric clock-skew handling marks agents offline | 部分修复 | heartbeat still returns 400 (`agents.go:489-491`); recordAgentStatus (:630) refreshes last_seen with no skew check, so `fae7eee2c` per-minute reports mitigate offline；asymmetry itself remains |
+| L52 | P3-1 draining is a dead state | 未修复 | `agents.go:84,848`; `agent_plans.go:332,490` only block revoked \| |
+| L53 | P3-2 admin state transitions barely validated | 未修复 | `agents.go:313-325` \| |
+| L54 | P3-3 credentials never expire by default | 作废（被后续决策取代） | `aa870f65d` removed per-agent credentials; 0050 DROP agent_credentials；by decision |
+| L55 | P3-4 hard delete of active agent, no checks, cascades | 未修复 | `agents.go:382-402`；process now stops itself on 401 after delete; restart re-registers with the shared token |
+| L56 | P3-5 id charset unchecked / admin may set low-entropy token | 部分修复 | token field rejected `agents.go:227-230,289-292` (`aa870f65d`)；id still length-only (agents.go:235,752,906) |
+| L57 | P3-6 LKG staleness unbounded, no alert | 未修复 | `version_lkg.go` has no max-age; worker `main.go:783` only logs \| |
+| L58 | P3-7 version/ack state split across three endpoints | 未修复 | agent DTO carries plan versions only; `router.go:250,252` \| |
+| L59 | P3-8 headless collectors never register | 未修复 | `runtime.go:225` Enabled()=BaseURL!=""; gated in every cmd main \| |
+| L60 | P3-9 fictitious heartbeat_interval / DEFAULT 'pending' / unreachable branches | 未修复 | `agents.go:85,854-865`; 0012:6-8 \| |
+| L61 | P3-10 no bulk operations; If-Match optional | 未修复 | `device_organization.go:923-934` \| |

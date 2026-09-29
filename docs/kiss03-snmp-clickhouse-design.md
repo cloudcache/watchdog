@@ -1,5 +1,7 @@
 # KISS-03A：SNMP 时序切换 ClickHouse 详细设计
 
+> **与代码的差异（2026-09-28 复核）**：本文有 7 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > 状态：KISS-03A1/A2 实现冻结（2026-09-09）。本切片只迁移 SNMP；system/container agent 时序明确延后到 KISS-03B。Flow 继续使用既有 `flowch` 数据面，不因本切片重写。
 
 ## 1. 边界与删除项
@@ -73,3 +75,17 @@
 4. 真实采集集成：一次性 MySQL v2 schema + 固定 SNMP varbind -> existing poller -> CH；核对 `>2^53` counter、recipe 状态和无 tenant 列。
 5. 真实 CH：raw query/rate/跨 scope aggregate/closed 5m generation/billing total；额外绑定一个无数据端口时必须降低 coverage 并置 gap。VictoriaMetrics 停止或不存在不影响链路。
 6. 回归：目标 Go packages、`go test ./...`、`go vet ./...`、`go build ./...`；沙箱若禁止测试监听 socket，必须在允许本地 loopback 的环境重跑，不能改测试掩盖。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **DDL 执行者（:26）**：`watchdog-server` 安装与每次启动都会幂等执行内嵌 CH 迁移 ledger（含 `012`、`014`，`install.go:153-186`、`server.go:210-224`）；只有 collector 仅做 Ready 校验。另有 SNMP 事件表 `014_snmp_events.sql`。
+- **MySQL 管理表（:8）**：还保存 `mib_modules`、`traffic_policy_defaults`/`port_policies`、`aggregate_graphs` 三表、`metric_retention_policies`、`user_metric_permissions`/`user_aggregate_graph_permissions`（`0021`–`0024`、`0029`）。
+- **collector 职责（:9）**：还回写 recipe/device 状态、在进程内做 5m rollup，并每轮向注册表上报 recipes/devices/samples/failed 摘要（`cdfd283d9`）。
+- **保留期（:30）**：**没有任何 SNMP TTL**；`/api/v1/retention/policies` 只写 `metric_retention_policies`，全仓库无执行者——SNMP 三张表无限增长，执行方案待定。
+- **5m rollup（:37）**：只由 collector 在每轮后重建“上一个”已关闭桶（`lastRollup` 仅在内存，generation 取当前毫秒）；无 server/opjob 修复任务，collector 停机期间漏掉的桶**永远不会补算**——计费桶会出现永久缺口，需要回填/修复任务。
+- **查询 API（:41）**：另有 `/metrics/aggregate`、`/metrics/exports` 与仅管理员的 `/metrics/vmquery`（VM selector 语法兼容层，直接读 CH 并写敏感查看审计）。
+- **预算（:42）**：行预算可由 `snmp.query_max_intermediate_rows` 配置（上限 250000），另有 CH 执行时间/读行/读字节/内存预算（`snmp.query_max_*`，`b8182d8eb`）。

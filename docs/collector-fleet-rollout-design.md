@@ -1,5 +1,7 @@
 # Collector Fleet Rollout / Canary — Design
 
+> **Archived (2026-09-28):** historical — none of the tenant-scoped `collector_agents`/`collector_plan_revisions`/rollout tables or `/api/v1/collectors/*` routes exist. KISS-04 replaced them with `POST /api/v1/agents/plan-rollouts`, an operation_jobs fan-out that creates immutable `agent_plans` (no canary or waves); the trust bundle survives only as `GET /api/v1/flow-workers/:id/trust-bundle`. Phases 3B–5 will not be built. Current design: `docs/agent-plan-delivery-design.md` and KISS architecture §5.3.
+
 Status: **Phases 0–2 and 3A implemented; Phases 3B–5 proposed**. Owner: platform. Tracks
 tasklist P1 item "collector enrollment … fleet rollout/canary 完整闭环".
 

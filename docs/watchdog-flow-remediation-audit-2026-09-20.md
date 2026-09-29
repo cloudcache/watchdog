@@ -1,5 +1,7 @@
 # Flow 三份文档的修复/优化落地复审（代码级）
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 44 · 部分修复 56 · 未修复 76 · 作废 3（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 日期：2026-09-20　对象：[watchdog-flow-perf-audit-2026-09-19.md](watchdog-flow-perf-audit-2026-09-19.md)、[watchdog-flow-clickhouse-ix-scale-design.md](watchdog-flow-clickhouse-ix-scale-design.md)、[watchdog-flow-collector-worker-code-review-2026-09-19.md](watchdog-flow-collector-worker-code-review-2026-09-19.md)（三者均含 2026-09-20"复核"节）。
 基点：`HEAD b80d88ae`（= 流量侧最后一次提交 `313a0ac0 feat(flow): target enrichment publications to selected workers` + 3 个前端提交）。工作树另有**未提交/未跟踪**的发布闭环代码（`0049_flow_worker_deployments.sql`、`flow_worker_deployments.go`、`deployment_*.go`、`version_dual_sync.go`、`version_http.go`/`version_lkg.go` 改动、`interface_reconciliation.go`），本文一律按**未交付**处理并单独标注。
 方法：四路只读复审（查询层 / 采集器·worker·解码器 / 存储·CH·生命周期 / 发布闭环）+ 本人对每个高风险结论按 file:line 复核；`go build ./...`、`go vet`、无外部依赖的 `go test` 均在当前工作树执行。**未修改任何代码。**
@@ -425,3 +427,115 @@ B/C/D/E 组（发布闭环、幂等一致性、性能、文档）其余项均**�
 
 **E. 文档**
 18. ✅ 已做：**(a)** §2.1 的 8 处 [x] 已在 perf-audit 改回真实状态（第 1 条由 `cc692d71` 补齐后成立；第 2/3/8 条改 `[~]` 标注集成用例覆盖缺口；第 4/5 条在 §8.3 段落追加校正；第 6 条在 Phase 1 标注两段式仅落地端点路径；第 7 条门禁本就是 `[ ]`）。**(b)** perf-audit §8 头部加采样时刻分注（§8 基线取自 PERF-OPS1 删表前 45.3M，PERF-OPS1 为删表后 1.09M，勿混比）。**(c)** ix-scale §1 生命周期行把"schema 测试禁止 TTL"改为准确表述（禁令仅文本匹配+3 表 DSN 门控；`flow_vpn_candidates`/legacy 仍带固定 TTL）。**(d)** collector-review QinQ 条目改为"已证明机制、暴露面待测"。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 44 · 部分修复 56 · 未修复 76 · 作废 3（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L29 | R1.1 raw GROUP BY FINAL on the hot window | 部分修复 | `00be2cdb5`/bc10958f4 aggregate prefix + raw tail (`flow_archive.go:91-124`)；raw tail still FINAL GROUP BY |
+| L30 | R1.3 rollup window / external sort | 部分修复 | `rollup.go:969-970` configurable spill/memory (`00be2cdb5`)；no external sort |
+| L31 | R3.2/R3.3 guards raised / toUInt64 IN, CAST AS String | 未修复 | `query.go:35-66`; `detail.go:729` \| |
+| L33 | R3.4 named budget tiers | 部分修复 | flow.query.execution_timeout configurable；detail.go:480-489, detail_facet.go:122-125 still literals |
+| L34 | R4.1 overseas CTE referenced repeatedly | 部分修复 | all-raw single scan (`045d7b3a`)；mixed path still reads selected repeatedly (overseas.go:502-538) |
+| L35 | R4.2 overseas ARRAY JOIN | 部分修复 | `overseas.go:368` single ARRAY JOIN；mixed path :486 and unbounded window unchanged |
+| L36 | R4.3 top-N via dense_rank | 部分修复 | two-phase endpoint path + `rollup_joint.go` (`00be2cdb5`)；query.go:890-897, joint.go:426-433 still dense_rank |
+| L37 | R4.4 direction as a joint dimension | 已修复 | `00be2cdb5` `query_test.go:108,` `joint_test.go:57` single scan \| |
+| L38 | R4.5 endpoint report N+1 | 部分修复 | correlation reads aggregate prefix (`00be2cdb5`)；still several queries per page (flow_report_endpoints.go:84-95) |
+| L39 | R4.6 filters applied after UNION | 已修复 | `a777ac83`/045d7b3a; `cc692d71` \| |
+| L40 | R4.7/R4.8/R4.9/R4.10/R4.11/R4.14 | 未修复 | `detail_facet.go` no memory cap; `time_window.go:40`; `address_set.go:110`; no singleflight；6 items |
+| L45 | R4.12 boundary looked up per panel | 未修复 | per-panel CH marker query (`flow_archive.go:106-116`), no cache；moved from MySQL to CH |
+| L46 | R4.13 guards / end-to-end HTTP deadline | 部分修复 | `a877277d` → SynchronousTimeout (`flow_reports.go:408`); `d9ce99817` header/idle timeouts；facet still has no memory cap |
+| L48 | R7.1/R7.2/R7.3 | 未修复 | scanner has no event_time bound; `archive.go:138`; `reclassification.go` unchanged \| |
+| L51 | C1 VPN complete_ratio reads an empty table | 已修复 | `c672dfc7` `vpn_candidate.go:178,202` \| |
+| L52 | PERF-Q1 | 部分修复 | `cc692d71` seven-predicate unit test；no real-CH before/after equality test |
+| L53 | PERF-Q1B | 部分修复 | `7acad9d6` approximate flag；joint.go:410-416 still sums all four counter sets |
+| L54 | PERF-OPS1 | 未修复 | same as §8/C.15 \| |
+| L58 | §2.1 [x]#1 archive source.* assertions | 已修复 | `cc692d71` \| |
+| L59 | §2.1 [x]#2–#8 overstated markers | 已修复 | `ffe7b9d8b` markers downgraded or corrected in place；underlying test gaps remain; 7 items |
+| L69 | §2.2 done but undocumented | 部分修复 | `59c614d8` documents overseas semantics；joint 30s etc. still undocumented |
+| L80 | §3 collector H1 | 部分修复 | = doc2:108 `a4efa5cc` \| |
+| L81 | §3 collector H2/M5/M8/M9/M10 | 未修复 | same as doc2；5 items |
+| L82 | §3 collector H3/M1/M3/M12 | 已修复 | `bbb3451e`, `d33ebc9d`, `6d606807`, `17a4042c`；4 items |
+| L84 | §3 collector M2 | 部分修复 | `d33ebc9d` \| |
+| L91 | §3 collector M4/M6/M7/M11/L1–L10 row | 部分修复 | `1005b5e3` (M7), `63411d8f` (L8)；the rest open |
+| L93 | §3 worker C1/H4/M5/L1–L7 | 部分修复 | `02177a20`; automatic effective_from; `984d1af1d`; `63411d8f`；4 items |
+| L94 | §3 worker H1/H2/H3/M1/M2/M4/M6/M7/M9 | 未修复 | same as doc2；9 items |
+| L100 | §3 worker M3/M8 | 已修复 | `44465c17`, `5cffd9dd`；2 items |
+| L109 | §3 decoder C1 | 已修复 | `5e822705` \| |
+| L110 | §3 decoder H1/H2/M1/L1–L4 | 未修复 | same as doc2；4 rows |
+| L113 | §3 decoder M2 | 部分修复 | `4e9dd9bb`；v5 still outside recover |
+| L120 | §3.1 0.1/0.3/0.5/0.8 | 已修复 | `5e822705`, `bbb3451e`, `6d606807`, `44465c17`+`5cffd9dd`；4 items |
+| L121 | §3.1 0.2/0.4/0.6/0.9/1.3/1.8 | 部分修复 | same as doc2:323,325,327,330,340,345；6 items |
+| L126 | §3.1 0.7/1.1/1.2/1.4/1.5/1.6/1.7 | 未修复 | same as doc2；7 items |
+| L142 | §3.2 replayWatermarks lock taken per record with replay off | 未修复 | `consumer.go:361,174-189` \| |
+| L146 | §3.2 receipts carry calibrated bytes without a ppm column | 作废（被后续决策取代） | A.8 ruled non-defect (like-for-like comparison) \| |
+| L146 | §3.2 scale_ppm encoded as both 0 and 1e6 | 未修复 | `decode_adapter.go:177-189` writes 0 for non-sampled; 019 default is 1e6 \| |
+| L148 | §3.2 baseline Ready() column-order defect | 已修复 | `045d7b3a` native_test checks column names \| |
+| L150 | §3.2 in-flight fetch memory unbounded | 部分修复 | `63411d8f` MemoryMax=2G backstop；not sized by load test |
+| L155 | §3.3 WIP ①stale fail-open ③LKG non-atomic+now ④shared uint32 cursor | 未修复 | worker `main.go:780-786`; `version_lkg.go:335-367`; `version_dual_sync.go:9-12,` `main.go:664-670`；3 items |
+| L155 | §3.3 WIP ② unverified artifact install | 作废（被后续决策取代） | review found no defect \| |
+| L155 | §3.3 WIP ⑤ v2 effective_from only ≥ current minute | 部分修复 | clamp at `flow_worker_deployments.go:242-256`；no activation delay |
+| L165 | R2.1/R2.2 dedup window / deterministic token | 未修复 | no migration sets non_replicated_deduplication_window \| |
+| L167 | R2.4 FINAL everywhere | 部分修复 | marker reads drop FINAL (`rollup.go:345`)；raw FINAL kept by design; interface_reconciliation adds 4 FINALs |
+| L168 | R5.1/R5.3/R5.4 receipt lifecycle / explicit DDL / raw delete chain | 未修复 | no TTL or job; no published policy；operator did manual raw retention outside the chain |
+| L169 | R5.2 1h archive cardinality | 部分修复 | rollupPortTopN=256 + _other (`rollup.go:882,` `00be2cdb5`)；IP 1000/group unchanged |
+| L172 | R5.6 codecs | 部分修复 | 018–021 ship codecs；existing wide columns untouched |
+| L173 | R6.1 + R6.3/R6.4/CH3/CH4/CH7/HP1–4 | 未修复 | `consumer.go:340-388`; `native.go` three Do calls；2 rows |
+| L174 | R6.2 cross-poll batching | 部分修复 | knobs only (`config.go`)；no accumulator |
+| L176 | R7.x (storage table) | 未修复 | unchanged \| |
+| L177 | CH1/CH5/CH6 | 部分修复 | CH1 `0ef47e87`；QueryID and snmp TLS not done |
+| L178 | CH8 loopback LZ4 | 未修复 | `native.go:125` \| |
+| L179 | Phase 1.2/1.7/1.8, 2.1–2.3 | 部分修复 | 1.8 by `0ef47e87`；the rest open |
+| L180 | IX P0 measurements on .18 | 部分修复 | docs only \| |
+| L181 | IX P1 projection/skip index/codec/dedup | 部分修复 | 020 metadata skip indexes; 022 event_time minmax (`423d820e2`)；dedup / deterministic blocks not done |
+| L182 | IX P2 flow_interface_traffic_5m | 部分修复 | 021 creates the table (`423d820e2`)；no writer; flowch/billing.go:270 still reads raw |
+| L183 | IX P3/P5 dynamic k / remove FINAL, sharding | 未修复 | none \| |
+| L184 | IX P4 hot dimension tier | 部分修复 | `c672dfc7`; 1m/1h/1d (`00be2cdb5`) + 5m (`c1385cd3b`/d6c38b62e)；5m not in query routing; not deployed |
+| L186 | 018 / 019 landed; readiness gap | 已修复 | `bb7490a4`, `44465c17`；2 items |
+| L191 | §4.1 counter-only receipts reported as missing_records | 已修复 | `bb7490a4` `reconciliation_scanner.go:227,238`；retention_coverage.go:50 still filters record_count>0 |
+| L195 | §4.2 018 has no TTL test guard / re-decode under a different binding | 未修复 | unchanged \| |
+| L203 | §4.4 interface_reconciliation defects ①–⑫ | 未修复 | committed unchanged in `c00e6c646` (:249-251 JOIN ON…OR), still no caller \| |
+| L208 | §4.5 TTL wording / flow_vpn_candidates TTL | 部分修复 | `43f75bb2b` fixes the wording；001:207 fixed TTL still present |
+| L209 | §4.5 018/019 deploy order undocumented | 部分修复 | server migrates at startup (`install.md:29-30`); worker readiness fails cleanly (`44465c17`) \| |
+| L226 | §5.1 transit ≈53% (no auto-publish + static worker) | 部分修复 | prod worker already in remote mode (per log)；server with v2 not deployed → stuck at LKG 11 |
+| L243 | §5.2 address.manage bypasses address.publish | 部分修复 | boundary CRUD no longer publishes (`1270eb196`)；profile/binding PUT still auto-publish v1 (router.go:244; flow_worker_bindings.go:31,119) |
+| L243 | §5.2 in-transaction enqueue rolls back unrelated saves | 部分修复 | boundary save decoupled；profile/binding PUT still enqueue in-tx |
+| L243 | §5.2 stale-boundary fail-open | 未修复 | worker `main.go:780-786` \| |
+| L247 | §5.3 PERF-CUST6 test gaps | 未修复 | `1270eb196` rewrote the integration test for v2 \| |
+| L251 | §5.4 v2 risks 1–8 (v1-only operator gate / uint32 namespace / idempotency key without content + uq(worker,effective) / no backfill / non-atomic LKG / stale fail-open / registered target / artifact reuse) | 未修复 | `flow_operator_query.go:78,149`; `flow_worker_deployments.go:115-116,188,626-641`; 0049:50；8 items; committed but not deployed |
+| L275 | §6.1 pushdown equality untested | 未修复 | no real-CH equality test \| |
+| L279 | §6.2 approximate candidate set unlabeled | 部分修复 | `7acad9d6` `flow_report_endpoints.go:81` meta；frontend has no badge (grep empty) |
+| L282 | §6.2 second pass falls back to exact full-cardinality | 已修复 | `37e6333f` pushdown \| |
+| L283 | §6.2 10/26 queries per page | 部分修复 | correlation reads aggregate (`00be2cdb5`)；query count about the same |
+| L287 | §6.3 budget tier chosen by request content; no deadline | 部分修复 | deadline added (`a877277d`/d9ce99817)；tier still hasIdentityScope (query.go:46-66) |
+| L291 | §6.4 three overseas behaviour changes undocumented | 已修复 | `59c614d8` documented as intentional \| |
+| L295 | §6.5 static ppm vs no-unexplained-multiplier rule | 部分修复 | Ready fixed `44465c17`; operator verified ≈2% vs sFlow；residual gap classification still [ ] |
+| L307 | §7.1 QinQ re-verdict / doc wording | 已修复 | `43f75bb2b` (E.18d)；loss mechanism itself still OPEN (decoder H1) |
+| L312 | §7.2 kernel drops invisible while Produce blocks | 部分修复 | `d33ebc9d`; kernel_drops/kafka_buffered in summary (`fae7eee2c`)；no application backpressure state |
+| L333 | §8 PERF-OPS1 out-of-band deletions unrecorded | 未修复 | no audit, receipt or job；operator's manual raw retention adds another out-of-band deletion |
+| L360 | A.1 counter-only receipts | 已修复 | `bb7490a4` \| |
+| L361 | A.2 Ready() scale_ppm | 已修复 | `44465c17` \| |
+| L362 | A.3 endpoint IP pushdown | 已修复 | `37e6333f`；read-volume gain needs prod EXPLAIN |
+| L363 | A.4 Top-N approximate disclosure | 部分修复 | `7acad9d6`；no frontend badge |
+| L364 | A.5 report end-to-end deadline | 部分修复 | `a877277d`, `d9ce99817`；budget tier still driven by the request |
+| L365 | A.6 overseas semantics | 已修复 | `59c614d8` \| |
+| L366 | A.7-0.1/0.3/0.5/0.6(PLAIN)/0.8/0.9 | 已修复 | `5e822705`, `bbb3451e`, `6d606807`, `17a4042c`, `5cffd9dd`, `63411d8f`；6 items at row scope |
+| L367 | A.7-0.2 data shape → receipt | 部分修复 | `02177a20`；ODID case / partition pause remain |
+| L369 | A.7-0.4 SO_RCVBUF readback | 部分修复 | `a4efa5cc`；no metric |
+| L374 | A.8 receipts get a scale_ppm column | 作废（被后续决策取代） | withdrawn as non-defect \| |
+| L380 | M1 MaxBufferedBytes / M2 fast-path fuzz / collector two allocations removed | 已修复 | `d33ebc9d`, `4e9dd9bb`, `1005b5e3`；3 items; v5 recover gap noted in doc2 |
+| L391 | table: CH pool split | 已修复 | `0ef47e87` \| |
+| L392 | table: connection reuse / multithreading / shortest path | 未修复 | `native.go` three Do calls; no recvmmsg; columns not reused；3 rows |
+| L393 | table: remaining zero-copy | 部分修复 | `1005b5e3` only \| |
+| L412 | B.9 v1/v2 decision | 部分修复 | v2 committed (`c00e6c646`/1270eb196/28014a8be)；double writers, namespace and backfill unresolved; not deployed |
+| L413 | B.10 sync failure → metric + readiness | 未修复 | log only (`main.go:783`) \| |
+| L416 | C.11/C.12/C.15 dedup / replay floor / PERF-OPS1 audit | 未修复 | unchanged；3 items |
+| L418 | C.13 LKG SignedAt / effective_from / partition pause | 部分修复 | effective_from floors only；SignedAt and pause not done |
+| L419 | C.14 R7.1 + VPN coverage | 部分修复 | `c672dfc7` (VPN)；R7.1 not done |
+| L423 | D.16 performance items | 部分修复 | `0ef47e87`, `1005b5e3`；pipeline / column reuse / recvmmsg not done |
+| L424 | D.17 5m interface table only after reconciler fixes | 未修复 | 021 table created (`423d820e2`) without meeting that gate \| |
+| L427 | E.18 doc accuracy (a–d) | 已修复 | `ffe7b9d8b`, `43f75bb2b`, `cc692d71` \| |

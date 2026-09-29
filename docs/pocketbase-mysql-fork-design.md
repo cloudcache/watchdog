@@ -1,5 +1,7 @@
 # PocketBase v0.36.8 → MySQL Fork — 设计 (Design)
 
+> **已归档（2026-09-28）**：方案**未被采纳**——PocketBase 已于 2026-09-08 整体删除（见 `pocketbase-removal-inventory.md`），`go.mod` 无 pocketbase，认证为自研 Gin+MySQL session/CSRF（KISS-01）。本文仅作历史调研保留。
+
 > 状态：设计草案（research/design，无代码）。基于对 PB v0.36.8 源码（`core/`、`tools/search/`、`migrations/`、`pocketbase/dbx`）与 watchdog 实际用法的三路审计。配套：`docs/self-host-consolidation-audit.md`。
 
 ## 0. 目标与范围

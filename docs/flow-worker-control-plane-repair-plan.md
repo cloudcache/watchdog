@@ -588,87 +588,87 @@ Flow facts/查询 provenance 应保存并展示 boundary revision；否则控制
 ### FCP-00 事实冻结与旧链止损
 
 - [x] **设计审计**：确认客户 CRUD 只生成 draft，不产生 desired/ACK。
-- [x] **设计审计**：确认绑定仍触发旧 `flow_enrichment_publications`，v2 deployment 是并行 WIP。
+- [x] **设计审计**：确认绑定仍触发旧 `flow_enrichment_publications`，v2 deployment 是并行 WIP。（2026-09-28 复核：已被后续实现取代（以代码为准） — 结论仍成立；“WIP”措辞已过时：v2 已提交（c00e6c646/1270eb196/552d9752b），激活时 v1 与 v2 同时写；`internal/server/flow_worker_bindings.go:111-126`; `internal/server/handlers_address_dimension.go:225,246`）
 - [x] **设计审计**：确认 Flow Worker 存在两个 control-plane URL 和 v1/v2 dual sync。
 - [x] **设计审计**：确认现有集成测试把“不自动发布”固化为预期。
 - [ ] **变更冻结**：在实现开始前禁止继续扩展 composite deployment 和手工发布 UI。
-- [x] **前端审计**：确认当前“每路由 HTML + 单 React 启动壳”会在每次导航重复 install/session/lazy route 启动，并且 API 无统一超时/取消。
-- [x] **前端审计**：确认 Flow deployment 页首屏等待四 API、pending 时每 2 秒重置 loading、浏览器等待 operation job 最长 120 秒。
-- [ ] **前端止损**：冻结当前去 SPA/MPA 框架级改造；不再让 Flow 修复依赖路由、构建或 Nginx 架构变更。
-- [ ] **前端基线决策**：以最后一个真实部署验证可用的导航/启动版本为基线；真正 MPA 另立设计，不用混合态继续试错。
-- [ ] **清单校准**：把现有文档中仅有 WIP、未提交或未经过真实进程验收的 `[x]` 改回待办。
-- [ ] **已提交门禁**：独立提交只包含设计/清单校准，不夹带生产代码。
+- [x] **前端审计**：确认当前“每路由 HTML + 单 React 启动壳”会在每次导航重复 install/session/lazy route 启动，并且 API 无统一超时/取消。（2026-09-28 复核：已被后续实现取代（以代码为准） — 部分过时：install-status 已按 tab 缓存（main.tsx:263-294），session 有 2.5s×3 超时；业务 API 仍无统一超时；`frontend/scripts/build-mpa.ts:25-47`; `frontend/src/components/router.tsx:63-70`）
+- [x] **前端审计**：确认 Flow deployment 页首屏等待四 API、pending 时每 2 秒重置 loading、浏览器等待 operation job 最长 120 秒。（2026-09-28 复核：已被后续实现取代（以代码为准） — 部分过时：已提交代码（自 552d9752b）从无 2s 重置 loading 的轮询；四 API Promise.all 与 120×1s 作业等待仍在；`frontend/src/components/routes/flow-worker-deployments.tsx:94-107,436-444`）
+- [x] **前端止损**：冻结当前去 SPA/MPA 框架级改造；不再让 Flow 修复依赖路由、构建或 Nginx 架构变更。（2026-09-28 复核：作废 — 已被 KISS-01C1 的静态 MPA 决策取代（build-mpa 与 nginx 路由已提交）；其部署验收仍待办，prod 未上线；`8e7ec860e`, `ea0cb8c3b`）
+- [x] **前端基线决策**：以最后一个真实部署验证可用的导航/启动版本为基线；真正 MPA 另立设计，不用混合态继续试错。（2026-09-28 复核：作废 — 同被 KISS-01C1 取代：团队选择继续做混合 MPA（每页仍启动完整 React），未回退到已验证基线；`8e7ec860e`; `frontend/src/main.tsx:256-419`）
+- [ ] **清单校准**：把现有文档中仅有 WIP、未提交或未经过真实进程验收的 `[x]` 改回待办。（2026-09-28 复核：部分完成 — G3 已改回待办；剩余：artifact 设计文档 Phase A–C 仍为 [x] 但 prod 未启用，H1–H3 仍写“未提交”实际已提交；`8e7ec860e`; `docs/flow-module-tasklist.md:287-289,295`）
+- [ ] **已提交门禁**：独立提交只包含设计/清单校准，不夹带生产代码。（2026-09-28 复核：部分完成 — 设计已单独纯文档提交；清单校准混进 8e7ec860e（99 个文件，含生产代码）且未做完；`38630d22f`, `ada804230`, `8e7ec860e`）
 
 ### FCP-01 单一领域模型与协议冻结
 
-- [ ] **详细设计**：冻结 boundary canonical JSON v1、排序/重叠/IPv4 Unmap/tombstone 规则。
-- [ ] **详细设计**：冻结 Agent identity、assignment、desired、observed、heartbeat 的所有权边界。
-- [ ] **详细设计**：冻结 generation 单调、幂等、乱序 ACK、rollback 和换 Worker 两阶段语义。
+- [ ] **详细设计**：冻结 boundary canonical JSON v1、排序/重叠/IPv4 Unmap/tombstone 规则。（2026-09-28 复核：部分完成 — 排序/重叠/Unmap/空边界 tombstone 已按 composite schema 实现并有测试；剩按 §5.2 改用 generation/source_revision、去 prefix id 并成文冻结；`internal/flowdimension/deployment_artifacts.go:170-175,193-275,298-305`; `internal/flowdimension/deployment_artifacts_test.go:9-88`）
+- [ ] **详细设计**：冻结 Agent identity、assignment、desired、observed、heartbeat 的所有权边界。（2026-09-28 复核：部分完成 — 身份（全局共享 token + agent 行）与心跳（只表示存活）已成文；assignment/desired/observed 所有权未定义；`05fe23276`; `docs/watchdog-kiss-architecture.md:195-211`）
+- [ ] **详细设计**：冻结 generation 单调、幂等、乱序 ACK、rollback 和换 Worker 两阶段语义。（2026-09-28 复核：部分完成 — composite 已有 per-worker generation 单调、ACK 里程碑不倒退；rollback 与换 Worker 两阶段语义未定义；`internal/server/flow_worker_deployments.go:626-639,857-868`）
 - [ ] **详细设计**：冻结普通同步编辑和超大批量 operation job 的可配置分界。
 - [ ] **API 契约**：冻结管理 API、Worker long-poll API、ACK DTO、错误码和 content-type。
-- [ ] **安全契约**：复用一个 trust root；冻结 credential/mTLS、capability 和设备授权。
+- [x] **安全契约**：复用一个 trust root；冻结 credential/mTLS、capability 和设备授权。（2026-09-28 复核：作废 — credential/mTLS 已被全局共享 token 取代（服务端无 mTLS），trust root 已统一；capability/设备授权须按共享 token 重新定义；worker 仍留无效 mTLS flag（main.go:99-102）；`aa870f65d`; `internal/server/agents.go:526-547`）
 - [ ] **评审门禁**：Reviewer 能仅凭协议回答断网、重启、ACK 丢失、磁盘满、删除和换 Worker 的结果。
 - [ ] **已提交门禁**：协议与测试向量独立提交，尚不建表、不接 UI。
 
 ### FCP-02 MySQL revision、assignment、desired/observed
 
 - [ ] **迁移**：新增/收敛 `flow_device_boundary_revisions`。
-- [ ] **迁移**：新增/收敛 Worker-device assignment 和 boundary desired/observed；不复制 Agent liveness。
+- [ ] **迁移**：新增/收敛 Worker-device assignment 和 boundary desired/observed；不复制 Agent liveness。（2026-09-28 复核：部分完成 — assignment 表已有，但 PK=device_id（一台设备只能一个 worker，不符合 §8.3）；boundary desired/observed 表不存在；`deploy/schema/mysql/0048_flow_worker_targeted_publications.sql:1,5-13`）
 - [ ] **约束**：唯一键、FK、generation/checksum/schema CHECK、tombstone 和必要查询索引完整。
 - [ ] **编码**：客户 create/update/delete 与 revision/desired/audit 同一事务；失败全回滚。
-- [ ] **编码**：允许向 registered/offline 但 capability 兼容的 Worker 分配 desired。
+- [ ] **编码**：允许向 registered/offline 但 capability 兼容的 Worker 分配 desired。（2026-09-28 复核：部分完成 — v2 目标接受 active/registered（含离线）；但绑定仍只接受 active，UI 过滤 registered，也不校验 capability；`internal/server/flow_worker_deployments.go:183-191`; `internal/server/flow_worker_bindings.go:173,193`）
 - [ ] **编码**：重复相同 source revision 幂等，不无意义增加 generation。
-- [ ] **单元测试**：CIDR、双栈、重叠、If-Match、幂等、删除、rollback、并发编辑。
+- [ ] **单元测试**：CIDR、双栈、重叠、If-Match、幂等、删除、rollback、并发编辑。（2026-09-28 复核：部分完成 — CIDR/双栈规范化、跨客户重叠、tombstone（artifact 级）已测；缺 If-Match、幂等、rollback、并发编辑；`internal/server/flow_customer_boundaries_test.go:5-40`; `internal/flowdimension/deployment_artifacts_test.go:42-88`）
 - [ ] **集成测试**：真实 MySQL crash/retry、锁竞争、离线 Worker、assignment 变更和 tombstone。
 - [ ] **变更测试**：从当前客户行生成初始 revision，证明 WADS 与 policy 未变化。
 - [ ] **已提交门禁**：clean install 和 migration replay 通过；不创建第三套 Agent/operation 状态机。
 
 ### FCP-03 Agent/Collector/Worker 注册收敛
 
-- [ ] **配置设计**：统一为一个 control-plane base URL；明确 HTTPS/loopback 规则。
-- [ ] **编码**：Flow Worker 注册成功后同一 client 同时用于 heartbeat、plan、boundary desired/ACK。
-- [ ] **编码**：heartbeat 上报 kind、capability、schema range、boot/software version 和 boundary summary。
-- [ ] **编码**：Registry health 与 boundary convergence 分开查询和展示。
-- [ ] **编码**：flow collector 只取得 exporter/source plan，不取得客户 boundary。
+- [ ] **配置设计**：统一为一个 control-plane base URL；明确 HTTPS/loopback 规则。（2026-09-28 复核：部分完成 — 只配 -control-plane-url 时 agent 通道可兜底共用；但两个 flag 仍并存，激活脚本只写 agent URL，loopback 规则仅 enrichment 客户端有；`cmd/watchdog-flow-worker/main.go:90-91,439-444`）
+- [ ] **编码**：Flow Worker 注册成功后同一 client 同时用于 heartbeat、plan、boundary desired/ACK。（2026-09-28 复核：部分完成 — 两条通道已共用同一个共享 token 文件，但仍是两个 HTTP client、两个 URL；无 boundary desired/ACK 通道；`cmd/watchdog-flow-worker/main.go:445-451,707-713`）
+- [ ] **编码**：heartbeat 上报 kind、capability、schema range、boot/software version 和 boundary summary。（2026-09-28 复核：部分完成 — 心跳只带 software/api version、capabilities、sent_at；boot_id 仅在 plan ACK；无 schema range、boundary summary、flow.boundary.v1；`internal/agentplan/runtime.go:49-54`）
+- [ ] **编码**：Registry health 与 boundary convergence 分开查询和展示。（2026-09-28 复核：部分完成 — 注册表健康与 composite deployment ACK 已分开；无 per-device boundary 收敛的查询与展示；`95bca83d9`; `internal/server/flow_worker_deployments.go:912-975`）
+- [ ] **编码**：flow collector 只取得 exporter/source plan，不取得客户 boundary。（2026-09-28 复核：部分完成 — collector 不拉 boundary；但 source plan 仍是本地签名文件（不经 API/ACK），共享 token 下服务端无法按身份拦截；`cmd/watchdog-flow-collect/main.go:44-45,65-70`）
 - [ ] **编码**：SNMP collector 改为从机器 API 拉取有界 collection plan/recipe，删除直接 MySQL 设备/recipe 调度查询。
 - [ ] **编码**：SNMP discovery/inventory 管理数据通过机器 API 回写；时序样本继续写 ClickHouse，不经 MySQL。
-- [ ] **编码**：System agent 和其他 Agent 不持有 MySQL DSN，不得用数据库作为控制面故障回退。
-- [ ] **API/UI**：Agent 页面显示进程、assignment、desired/installed drift 和最近错误，不声称能远程启动进程。
-- [ ] **单元测试**：错误 kind、缺 capability、revoked credential、clock skew、boot ID 变化。
-- [ ] **实进程集成**：真实 `flow_collect` 与 `flow_worker` 分别注册；只有 worker 能拉 boundary。
+- [ ] **编码**：System agent 和其他 Agent 不持有 MySQL DSN，不得用数据库作为控制面故障回退。（2026-09-28 复核：部分完成 — system/flow 进程已无 MySQL 依赖；SNMP collector 仍持有 DSN（runtime.env + watchdog.yaml）；deploy/systemd/watchdog-snmp-collector.service:11,13）
+- [ ] **API/UI**：Agent 页面显示进程、assignment、desired/installed drift 和最近错误，不声称能远程启动进程。（2026-09-28 复核：部分完成 — 已显示 health、plan ACK/desired、last_error、每次运行工作量；缺设备 assignment 与 boundary drift；`e14b16200`; `frontend/src/components/routes/agents.tsx:104-125`）
+- [ ] **单元测试**：错误 kind、缺 capability、revoked credential、clock skew、boot ID 变化。（2026-09-28 复核：部分完成 — 错 kind、clock skew、吊销已测；缺 capability 缺失与 boot ID 变化；“revoked credential”现对应吊销 agent 行；`internal/agentplan/contract_test.go:64-66`; `internal/server/device_agent_integration_test.go:206,291`）
+- [ ] **实进程集成**：真实 `flow_collect` 与 `flow_worker` 分别注册；只有 worker 能拉 boundary。（2026-09-28 复核：部分完成 — 真实二进制的共享 token 注册/LKG/吊销已测（需 MySQL env）；“只有 worker 能拉”在共享 token 下只能按 URL id 过滤，此半条需改写；`aa870f65d`; `internal/server/agent_process_integration_test.go:80-81,124-134`）
 - [ ] **实进程集成**：真实 SNMP collector 在无 MySQL 网络权限、无 MySQL 配置的环境中完成 plan 拉取、轮询、discovery 回报和 ClickHouse 写入。
-- [ ] **变更测试**：现有 enrollment credential 可升级，不要求重新录入 secret。
-- [ ] **静态门禁**：Agent/Collector/Worker 命令及运行包不得 import MySQL driver/管理 repository；部署模板中不得出现 MySQL 配置。
+- [x] **变更测试**：现有 enrollment credential 可升级，不要求重新录入 secret。（2026-09-28 复核：作废 — 已被全局共享 token 取代；升级时必须把各 agent token 文件换成共享 token，否则注册 401、进程被 systemd 循环重启；`aa870f65d`; `deploy/schema/mysql/0050_drop_agent_enrollment_credentials.sql`）
+- [ ] **静态门禁**：Agent/Collector/Worker 命令及运行包不得 import MySQL driver/管理 repository；部署模板中不得出现 MySQL 配置。（2026-09-28 复核：部分完成 — worker/collect/system-agent 已干净；snmp-collector 仍引入 go-sql-driver/mysql 与 internal/server；无自动化门禁；`internal/server/snmp_collector_runtime.go:42`）
 - [ ] **网络门禁**：集成环境显式阻断机器进程到 MySQL 3306，四类进程仍完成各自闭环。
 - [ ] **已提交门禁**：仓库不再出现两个语义重叠的 Flow Worker control-plane URL；机器进程无 MySQL 凭据和直连路径。
 
 ### FCP-04 Worker 每设备热加载、文件 LKG 与 ACK
 
 - [ ] **编码**：实现 per-device desired long poll 和授权下载。
-- [ ] **编码**：复用现有 canonical 校验、BART 编译、atomic swap 和 checksum。
-- [ ] **编码**：实现 revision 文件、current manifest、file+directory fsync 和 atomic rename。
-- [ ] **编码**：启动先恢复所有 LKG，再开始 Kafka 消费。
-- [ ] **编码**：安装/失败 ACK 单调幂等；ACK 重试不重复下载或编译。
+- [ ] **编码**：复用现有 canonical 校验、BART 编译、atomic swap 和 checksum。（2026-09-28 复核：部分完成 — 组件在 composite loader 中均已具备，尚未接到 per-device 安装路径；`internal/flowworker/deployment_loader.go:127-157`; `internal/flowdimension/deployment_artifacts.go:145-191`）
+- [ ] **编码**：实现 revision 文件、current manifest、file+directory fsync 和 atomic rename。（2026-09-28 复核：部分完成 — tmp+fsync+rename+目录 fsync 原语已有（composite 用）；未实现 boundaries/<device>/revisions + current.json 布局；`internal/flowworker/version_lkg.go:495-609`）
+- [ ] **编码**：启动先恢复所有 LKG，再开始 Kafka 消费。（2026-09-28 复核：部分完成 — composite LKG 与 raw-delete barrier 已在 Kafka 消费前恢复；per-device LKG 与单设备隔离不存在；`cmd/watchdog-flow-worker/main.go:209,229,268,346,640-651`）
+- [ ] **编码**：安装/失败 ACK 单调幂等；ACK 重试不重复下载或编译。（2026-09-28 复核：部分完成 — composite 已实现（同代已装只补 ACK，对象按 checksum 缓存）；per-device 未实现；`internal/flowworker/deployment_loader.go:85-93`; `internal/server/flow_worker_deployments.go:857-868`）
 - [ ] **编码**：tombstone 原子移除、rollback 高 generation、同设备更新不影响其他设备。
-- [ ] **单元测试**：IPv4/IPv6、坏签名/checksum/schema、旧 generation、重复 ACK、编译失败。
-- [ ] **故障测试**：下载中断、磁盘满、fsync/rename 失败、切换前后 crash、ACK 丢失、控制面离线。
-- [ ] **性能测试**：lookup 0 alloc；不同规模 CIDR 的编译、内存、p95/p99；Kafka 消费无暂停峰值。
+- [ ] **单元测试**：IPv4/IPv6、坏签名/checksum/schema、旧 generation、重复 ACK、编译失败。（2026-09-28 复核：部分完成 — composite 已测 v4/v6、篡改、坏 checksum、编译失败；缺旧 generation 拒绝与 per-device 测试；`internal/flowdimension/deployment_artifacts_test.go:9-88`; `internal/flowworker/deployment_loader_test.go:102-141`）
+- [ ] **故障测试**：下载中断、磁盘满、fsync/rename 失败、切换前后 crash、ACK 丢失、控制面离线。（2026-09-28 复核：部分完成 — 下载中断、持久化失败、ACK 重试、离线冷恢复已测（多为 v1）；缺磁盘满、fsync/rename 注入、进程级 crash；`internal/flowworker/version_http_test.go:21,154`; `internal/flowworker/version_lkg_test.go:155,250`）
+- [ ] **性能测试**：lookup 0 alloc；不同规模 CIDR 的编译、内存、p95/p99；Kafka 消费无暂停峰值。（2026-09-28 复核：部分完成 — 热路径 0 alloc 已测；缺 per-device 不同 CIDR 规模的编译/内存 p95/p99 与 Kafka 暂停测量；`internal/flowworker/enrich_test.go:354-371`; `internal/flowdimension/address_scale_bench_test.go:77-123`）
 - [ ] **已提交门禁**：一个真实 Worker 安装后重启断网恢复，desired=installed，Flow facts 带 revision。
 
 ### FCP-05 管理 API 与单页 UI 闭环
 
 - [ ] **API**：保存客户/多行 CIDR/target workers 一次完成业务行、revision、assignment 和 desired。
 - [ ] **API**：提供状态、retry、rollback、tombstone；所有列表 server pagination/search/sort/filter。
-- [ ] **UI**：客户地址页内选择设备、多个客户、多段 CIDR和一个或多个 Worker。
-- [ ] **UI**：offline Worker 可见且可选；默认当前 assignment。
-- [ ] **UI**：显示 desired/installed/health/LKG/error，不再跳转到组合发布页。
-- [ ] **UI**：统一 transport 错误，识别 HTML fallback、CORS、404、401/403、request ID。
-- [ ] **UI 稳定性**：install/session/API 请求统一配置可审计超时和 AbortController；路由离开取消请求，超时显示可操作错误而非永久 loading。
-- [ ] **UI 稳定性**：初始 loading、手动刷新、后台状态轮询和发布动作使用独立状态；后台轮询不遮罩页面、不清空已加载数据。
-- [ ] **UI 稳定性**：删除客户地址页对四接口 `Promise.all`、2 秒整页 loading 轮询和 120 秒浏览器阻塞等待 operation job 的依赖。
+- [ ] **UI**：客户地址页内选择设备、多个客户、多段 CIDR和一个或多个 Worker。（2026-09-28 复核：部分完成 — 设备、多客户、多行 CIDR 已有；Worker 选择已删，且前端契约测试禁止加回；`frontend/src/components/routes/flow-customer-boundaries.tsx:160-195`; `frontend/src/lib/flow-deployment-contract.test.ts:20`）
+- [ ] **UI**：offline Worker 可见且可选；默认当前 assignment。（2026-09-28 复核：部分完成 — 组合向导里离线（status=active）worker 可见可选、默认按绑定选中；registered 被过滤；客户页无 worker；`frontend/src/components/routes/flow-worker-deployments.tsx:108,124-128,245-256`）
+- [ ] **UI**：显示 desired/installed/health/LKG/error，不再跳转到组合发布页。（2026-09-28 复核：部分完成 — 按 composite deployment 显示 desired/health/ACK/installed/error；无 per-device 与 LKG，仍依赖组合发布区；`frontend/src/components/routes/flow-worker-deployments.tsx:318-370`）
+- [ ] **UI**：统一 transport 错误，识别 HTML fallback、CORS、404、401/403、request ID。（2026-09-28 复核：部分完成 — 已识别 HTML fallback、网络错误/超时、非 JSON、status+code；缺 request_id 与路径展示、CORS 与断网区分、404 路由提示；`8e7ec860e`; `frontend/src/lib/api.ts:237-252,288-327`）
+- [ ] **UI 稳定性**：install/session/API 请求统一配置可审计超时和 AbortController；路由离开取消请求，超时显示可操作错误而非永久 loading。（2026-09-28 复核：部分完成 — session 有可配超时与重试，PageLoading 10s 后出重试按钮；install-status 与业务 API 仍无超时；`frontend/src/lib/api.ts:101-118,144-146,194`; `frontend/src/components/page-loading.tsx:7-28`）
+- [ ] **UI 稳定性**：初始 loading、手动刷新、后台状态轮询和发布动作使用独立状态；后台轮询不遮罩页面、不清空已加载数据。（2026-09-28 复核：部分完成 — 发布用独立 working 状态，刷新不遮罩不清空；初始加载与手动刷新共用 loading；无后台状态轮询；`frontend/src/components/routes/flow-worker-deployments.tsx:84-91,226,343`）
+- [ ] **UI 稳定性**：删除客户地址页对四接口 `Promise.all`、2 秒整页 loading 轮询和 120 秒浏览器阻塞等待 operation job 的依赖。（2026-09-28 复核：部分完成 — 2s 轮询已不存在；四 API Promise.all 与 120×1s 作业等待仍与客户地址同页；`frontend/src/components/routes/flow-worker-deployments.tsx:94-107,436-444`）
 - [ ] **单元测试**：表单规范化、无 Worker、离线 Worker、冲突 CIDR、并发 ETag。
-- [ ] **前后端契约测试**：每条前端 API 路径在 Gin router 注册，响应 JSON content-type。
-- [ ] **前端回归测试**：install-status、session、任一业务 API 分别模拟 pending/timeout/401/404/HTML/CORS；每种情况在规定时间内退出 loading 并给出恢复入口。
+- [ ] **前后端契约测试**：每条前端 API 路径在 Gin router 注册，响应 JSON content-type。（2026-09-28 复核：部分完成 — 只有手工维护的 Flow 路由清单；非从前端路径推导，无 content-type 断言；`internal/server/router_test.go:78-120`）
+- [ ] **前端回归测试**：install-status、session、任一业务 API 分别模拟 pending/timeout/401/404/HTML/CORS；每种情况在规定时间内退出 loading 并给出恢复入口。（2026-09-28 复核：部分完成 — helper 层超时/HTML/取消/重试已测；无针对 install/session/业务 API 的 401/404/CORS/pending 场景测试；`frontend/src/lib/api-transport.test.ts:25-72`）
 - [ ] **浏览器集成**：编辑 IPv4+IPv6 → pending → installed，刷新/直达路由不空白、不丢状态。
 - [ ] **已提交门禁**：截图中的三步向导不再是客户地址生效的必要路径。
 
@@ -691,7 +691,7 @@ Flow facts/查询 provenance 应保存并展示 boundary revision；否则控制
 - [ ] **测试数据**：为真实设备创建多个客户，包含 IPv4、IPv6、删除、修改和重叠拒绝向量。
 - [ ] **数据面验证**：发布前命中 transit/unknown，installed 后新 Flow 命中正确 customer/六分类。
 - [ ] **版本验证**：查询能按 `device_boundary_revision` 解释发布前后结果，不用当前配置重写历史。
-- [ ] **SNMP 对账**：同设备、端口、方向和时间桶比较 SNMP/sFlow counter/估算 Flow；分别报告采样覆盖、倍率、丢样和分类遗漏。
+- [ ] **SNMP 对账**：同设备、端口、方向和时间桶比较 SNMP/sFlow counter/估算 Flow；分别报告采样覆盖、倍率、丢样和分类遗漏。（2026-09-28 复核：部分完成 — 对账查询（含覆盖率、未知采样、reset/gap）已实现并有测试；无生产调用方与报表，无倍率/丢样/分类遗漏分项；`c00e6c646`, `c539d770e`; `internal/flowch/interface_reconciliation.go:44-65,94`）
 - [ ] **负向验证**：客户地址修复不得被用于掩盖 sampling rate、方向未采样或 exporter mapping 错误。
 - [ ] **重启回归**：Server、Worker、Kafka、MySQL 任意单点重启后最终收敛且不清空边界。
 - [ ] **权限回归**：只有管理员/授权角色能改地址或 assignment；Worker 只能读自己的 desired。

@@ -1,5 +1,7 @@
 # Watchdog KISS 遗留清理台账（待清理清单 + 清理影响评估）
 
+> **与代码的差异（2026-09-28 复核）**：本文有 4 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 日期：2026-09-15。范围：把 [watchdog-kiss-audit-2026-09-15.md](watchdog-kiss-audit-2026-09-15.md) 的区域级审计下沉到**代码/包/符号、表/字段、接口/路由、配置/依赖**级别，逐项给出精确位置、依赖它的活跃代码、删除影响、前置条件、KISS 归属与执行状态，用于**确认剩余任务（KISS-01E / KISS-08）的执行状态**。方法：只读子代理精确枚举 + 对 live `watchdog` 库（79 表）与 `go build ./...`（exit 0）核验；每条均带 file:line / table.column / symbol 证据。
 
 状态取值：`ready`=无前置可现在做；`blocked-by-X`=须先完成 X；`done`=已收敛；`KEEP`=保留。
@@ -148,3 +150,14 @@ canonical 面现为：`/devices`（CRUD、summary、SNMP 设置/发现、`/devic
 **结论**：Phase B 可行但是**真实多文件重构**（移 ~30 文件 + 5 处小类型抽取 + graph_panel 文件拆分 + 未导出符号清点 + ~65 别名 + repoint 13 server 文件 + 全量 build/vet/test），非一次安全推完。已干净回退（`git reset --hard` + 无 snmpdomain 残留，full build 绿）。⚠ **教训：共享 worktree 中 `git reset --hard` 会毁掉并行 session 的未提交改动**（本次瞬时清掉并行 flow-enrichment-publications 的 server.go/router.go 未提交改，并行 session 已重放恢复）——清理未落地改动应用 `git stash`/`git checkout -- <path>` 限定范围，勿用 reset --hard。KISS-01E 代码删除门的 PB 残留（L19/S1）已清；`internal/watchdog` 整包 + init.sql/migration 整树物理删除仍属 KISS-08（须先 Phase B + 退役 worker + 处理 ~20 遗留测试）。
 
 **Phase B 增量执行（2026-09-16）**：G1 已把端口三层策略和修正算法迁入无租户的 `internal/snmpdomain`；G2 把共享指标目录、value mode 和自动查询步进迁入 `internal/metricdomain`；G3a 再把内置 MIB 资源、gosmi registry、OID 正反解析与 MIB inventory 迁入 `internal/snmpdomain`；G3b 把 CH 事件响应 DTO 与设备/端口 dashboard schema builder 迁入同一新域；G3c 把 trap 解析/分派/状态变更决策迁入新域；G3d1 已把生产 GoSNMP query、poll runner、精确 counter 与 CH writer 迁入无 tenant 参数的新域；G3d2a 已把 discovery 全量输入/输出 DTO、Gin persistence 和 collector 调用收敛到同一单域契约；G3d2b1 已原样迁移 LibreNMS definition parser、OS detection、state/trap definition 解析；G3d2b2 已原样迁移所有 discovery modules/engine 并删除 `legacySNMPDiscoveryRunner`。生产 `internal/server` 对旧 `internal/watchdog` import 已归零，轮询、发现、definition、MIB、trap、CH writer 全部走单域实现；旧包当前只为尚未删除的历史内部代码/测试保留显式 compatibility wrapper，后续按 repository/import/runtime 引用闭包物理清理。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **§0 总览（:13-14,18）**：KISS-01E/08 均已完成——`internal/watchdog` 已删（`71e9bf39f`），遗留 cmd 已删（`e3d1a6364`、`03b0a97bf`），现在 git 跟踪的 cmd 只有 9 个；与 §1/§5 的 done 状态一致。
+- **§6（:120,138）**：L16 yaml、Phase A 剩余 L16/S2/L5 均已于 KISS-08H/I 完成。
+- **L14（:37）**：system agent 的服务端 `/api/v1/system-agents/:id/{plan,samples}` 已在同批删除，agent 每轮 404——采集链已断，恢复归 KISS-03B。
+- **trap（:123,135）**：trap 调用方改用全局共享 token，设备按源 IP/hostname 解析，不再有 per-agent 设备绑定（`snmp_traps.go`，`aa870f65d`）。

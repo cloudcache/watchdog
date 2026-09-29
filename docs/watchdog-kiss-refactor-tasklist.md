@@ -37,7 +37,7 @@
 #### KISS-01B MySQL 本地认证与纯 Go 入口
 
 - [x] **KISS-01B1 首次安装纵向切片**：后端和 `frontend/` 分离运行，公开 `GET /api/v1/install-status`、`POST /api/v1/install` 与 `/install`；空 MySQL 启动保持 0 表且登录返回 `428 install_required`，显式提交后依次应用 MySQL/ClickHouse schema，并在事务中只创建一个管理员；重复安装返回 409。安装页不主动登录，正常登录页也不在渲染时提交登录请求。
-- [x] **设计/编码/API/UI**：安装状态明确区分 `installed/requires_install/runtime_ready`；无默认或日志生成密码；前端只用 `WATCHDOG_CONFIG.API_URL` 直连 8091，Vite 8090 仅服务 `frontend/`，后端不托管前端、不做代理。运维步骤见 `docs/watchdog-install.md`。
+- [x] **设计/编码/API/UI**：安装状态明确区分 `installed/requires_install/runtime_ready`；无默认或日志生成密码；前端只用 `WATCHDOG_CONFIG.API_URL` 直连 8091，Vite 8090 仅服务 `frontend/`，后端不托管前端、不做代理。运维步骤见 `docs/watchdog-install.md`。（2026-09-28 复核：已被后续实现取代（以代码为准） — “前端只直连 8091”已不成立：API_URL 默认 ""（同源），经 nginx /api/ 反代（设计演进）；`b80d88aed`; frontend/public/watchdog-config.js:10-11; deploy/nginx/watchdog.conf:25-35）
 - [x] **单元/集成/变更测试**：覆盖用户名/密码边界；真实空 MySQL 生命周期、安装前登录阻断、安装后 cookie 登录、单管理员与重复安装；真实 ClickHouse 迁移校验命中过历史 checksum drift 时安装失败且不伪报 ready，清理无数据的开发库后 fresh apply 成功；CORS preflight、前端 `/`/`/install` history fallback 与已安装重定向均实测。
 - [x] **回归测试**：`internal/server` 测试、管理后端构建、前端 45 个单测和 production build 通过；Docker Kafka 主题 12 partitions、ClickHouse health/schema、MySQL 69 张当前嵌入表均核对。Flow 采集/处理进程未在本切片启动或修改。
 - [x] **已提交门禁**：安装 schema、server/auth/router、独立入口、前端 install route/client/page、测试和部署文档构成一个可独立审查的提交，不夹带并行 Flow WIP。
@@ -63,7 +63,7 @@
 - [x] **性能/可靠性**：移除导致公共入口预加载 VTable/VChart 的强制 manual chunk；构建后的入口约 146 KiB gzip，首页不再预加载约 281 KiB 的 VTable 或约 339 KiB 的图表包。HTML/runtime config 使用 `no-store`、hash 静态资源 immutable，旧标签页 chunk 失效时只允许一次受控刷新。
 - [x] **单元/构建门禁**：自动检查 Nginx 无 SPA fallback/无 API proxy、导航不再 `preventDefault`/`router.open`、构建必生成 MPA 文档，且入口只解析一次当前 document page、无 router store 订阅；前端 80 项测试、TypeScript 和 production build 通过，本切片变更文件 Biome 与 `git diff --check` 通过。全库既存格式债不在本切片扩大处理。
 - [ ] **部署验收**：用生产 Nginx 配置验证固定路由刷新、动态详情刷新、浏览器前进/后退与滚动恢复、未知路由 404、错误 API 地址返回 JSON 错误而非 HTML、安装→登录→主页面完整链路。
-- [ ] **已提交门禁**：部署验收后只提交 MPA/认证代理 cookie 相关文件，不夹带并行 Flow worker、地址库或文档删除改动。
+- [ ] **已提交门禁**：部署验收后只提交 MPA/认证代理 cookie 相关文件，不夹带并行 Flow worker、地址库或文档删除改动。（2026-09-28 复核：部分完成 — 在部署验收前已提交，且 8e7ec860e 夹带 Flow endpoint 报表/地址/CI/文档；剩部署验收并记录门禁偏差；`8e7ec860e`, `c9da57da6`）
 
 #### KISS-01D PB 剩余活入口迁移或删除
 
@@ -133,7 +133,7 @@
 - [x] **编码—写入**：生产 collector 已从旧 BackendRuntime 改为全局 MySQL device/profile/recipe -> 既有 poller -> `snmpch` 有界同步 CH batch；CH 成功后才更新 recipe，失败有界 retry/backpressure；无 PB、tenant、VM 或双写。
 - [x] **编码—派生**：CH 内按真实相邻时间和 UInt64 counter 计算速率，覆盖 32-bit wrap、reset、gap、重复；只 rebuild 已关闭 5m bucket，value 后 marker 发布 repair generation。
 - [x] **编码—查询/API**：Gin `metrics/catalog|query|range|realtime` 直接查询 CH，沿用现有 chart JSON，保留 device/port RBAC、固定/自定义周期和 query budget；active DTO 不再引用旧 metrics backend 类型。
-- [x] **编码—schema**：MySQL `snmp_collection_recipes` 和 CH migration 012 已建立；server/collector 只做 readiness，不在启动时改 CH schema；已删除第二套 embedded CH baseline。
+- [x] **编码—schema**：MySQL `snmp_collection_recipes` 和 CH migration 012 已建立；server/collector 只做 readiness，不在启动时改 CH schema；已删除第二套 embedded CH baseline。（2026-09-28 复核：已被后续实现取代（以代码为准） — server 每次启动幂等 Apply CH 迁移（与 KISS-01F 一致），“不在启动时改 CH schema”已失效；collector 仅做 Ready；`88cec287d`; `internal/server/server.go:210-219`; `internal/server/install.go:153-184`）
 - [x] **单元测试**：已覆盖 UInt64 精度、batch identity/retry、wrap/reset/gap、closed bucket、query budget、API JSON 兼容与 `tenant_id` 参数拒绝。
 - [x] **集成测试**：真实 MySQL + 固定 SNMP varbind + 既有 poller + 真实 CH 核对 `>2^53` 原值和 recipe 状态；真实 CH 覆盖 raw/rate/closed bucket；链路没有 VM 依赖。
 - [x] **变更设计/测试**：无历史数据，不 backfill/shadow read；唯一 CH migration ledger；schema 未迁移时明确拒绝启动；轮询 pass 暂时失败下个 tick 重试。
@@ -167,12 +167,12 @@
 - [x] **设计**：冻结 `max_data_points` 仅限制最终单曲线点数；customer/supplier 必须先按策略步进读取、逐端口修正、聚合后再降采样。运行预算与绝对硬上限分类见 `docs/runtime-budget-audit.md`。
 - [x] **编码/API**：单端口按范围/步进计算中间行，多端口/device-wide 使用 `snmp.query_max_intermediate_rows`；rate/gauge 均值降采样，counter/state 末值降采样；metrics/aggregate/saved aggregate graph 使用同一实现。CH execution/read rows/read bytes/memory 均进入 YAML，配置只能在硬安全上限内调整。
 - [x] **单元测试**：覆盖 24h/5m/180 点需要 289 行中间预算、双端口预算、device-wide 上限、均值/末值降采样、YAML 覆盖/越界拒绝和 CH settings 下推。
-- [ ] **集成/回归/已提交门禁**：真实 :8091 + ClickHouse 对现有端口执行 24h raw/customer/supplier hover，确认无 row-budget 错误且每曲线不超过 180 点；全库 test/vet/build 后独立提交，不携带并行删除/address/软著文件。
+- [ ] **集成/回归/已提交门禁**：真实 :8091 + ClickHouse 对现有端口执行 24h raw/customer/supplier hover，确认无 row-budget 错误且每曲线不超过 180 点；全库 test/vet/build 后独立提交，不携带并行删除/address/软著文件。（2026-09-28 复核：部分完成 — 代码+单测已作为独立 SNMP 提交；剩真实 :8091+CH 下 24h raw/customer/supplier hover ≤180 点实测与全库记录；`b8182d8eb`; `config/watchdog.yaml:91`）
 
 #### KISS-03B system/container agent 延后切片
 
-- [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。
-- [ ] **删除/测试/提交**：等价迁移后物理删除剩余 VictoriaMetrics writer/client/provider/DeleteSeries、remote-write/import、配置和旧 BackendRuntime 路径；停止 VM 后做真实进程集成并独立提交。
+- [ ] **设计/编码/API**：system/container agent 恢复推进时按真实指标冻结显式 CH schema、writer/query 和 Gin API；不得因延期任务重建 `telemetrych` 万能层。（2026-09-28 复核：部分完成 — 仅有设计；无 system_samples CH 表、systemch 与 ingest 路由；agent 仍带 TenantID 并调用已删除的 /api/v1/system-agents/:id/{plan,samples}（404，系统遥测当前完全不入库）；`9fbf45634`; `cmd/watchdog-system-agent/client.go:157`）
+- [ ] **删除/测试/提交**：等价迁移后物理删除剩余 VictoriaMetrics writer/client/provider/DeleteSeries、remote-write/import、配置和旧 BackendRuntime 路径；停止 VM 后做真实进程集成并独立提交。（2026-09-28 复核：部分完成 — VM writer/client/provider/BackendRuntime 已由 KISS-08H/I 删除；剩 CH 等价迁移、真实进程集成与提交；flowmetrics 的 VM 测试仍在；`internal/server/flow_query.go:17`; `internal/flowmetrics/victoriametrics_integration_test.go:31`）
 
 > **2026-09-17 精确范围（设计见 [watchdog-kiss03b-system-agent-design.md](watchdog-kiss03b-system-agent-design.md)）**：核实后本切片= ①去多租户：仅系统 agent `cmd/watchdog-system-agent` 本地类型带 `TenantID`（types.go:6,17；main.go:232 `plan.Agent.TenantID`）+ 其 plan 契约去 tenant；发行版 agent `internal/cmd/agent` 已干净不动。②「VM→CH」实为**在 CH 上从零实现系统遥测**（KISS 路径当前既无 VM 也无 CH 系统遥测存储，`agents.go:977` 仅登记 `system.samples/` 能力标签），照 KISS-03A：新 `system_samples` CH schema（模 `deploy/migration/clickhouse/012_snmp_telemetry.sql`）+ `internal/systemch`（模 `internal/snmpch`）+ `POST /agents/:id/system-samples` ingest（agent 鉴权）+ agent client 改端点 + host/target 页 CH 查询接线。③**去 PocketBase=空操作**（agent 代码 0 PB 引用）。⚠ 触及 `internal/server`（并行 session flow-enrichment 区），须 worktree 执行、禁 `git reset --hard`。goreleaser/debian 的 henrygd/Beszel 改品为独立小项（需用户给维护者名/邮箱/描述）。
 
@@ -206,10 +206,10 @@
 - [x] **设计边界**：systemd/容器唯一负责安装、`enable --now`、restart、权限和资源限制；Gin/Agent Registry 负责 identity/token/binding/heartbeat/plan/ACK/LKG/run，禁止给 Web 后端 root 或 Docker socket。Flow source plan 与 enrichment publication 是独立业务签名域，不塞进 Agent plan。
 - [x] **API/UI/提交前门禁**：管理员导航暴露 Agents；enroll 显示一次性 token、计划公钥、稳定 Agent ID 和真实 bootstrap 参数；plan 从裸 JSON 补为四类进程已实现字段的表单并保留高级 JSON；能力版本与真实二进制一致。前端 typecheck、64 单测和 production build 已通过；仍须随本纵向切片提交，不能据此倒签生产部署。
 - [x] **运行期计划收敛**：首次 enrollment 后没有 desired plan 时，正常运行模式保留本地 bootstrap/default tunable 并继续心跳，`-agent-plan-check` 仍严格失败；heartbeat 返回 desired/acked，发现新版本后四类进程排空并非零退出，由现有 `Restart=on-failure` 重启加载；401/403 排空后正常停止；304/LKG 路径重试 ACK。共享 runtime 与 server heartbeat 契约单测已覆盖。
-- [ ] **部署**：以统一 unit/drop-in 给 system、SNMP、flow collect、flow worker 写入 control-plane/ID/token/enrollment/public-key/LKG 参数并 `enable --now`；不得继续仅靠静态命令行绕过 Registry。一次性 token 消费后只保留 mode 0600 的 machine credential。
-- [ ] **Flow worker 前置**：另行满足 Kafka/ClickHouse secret、source stream incarnation ID、source plan 与已批准 enrichment publication/LKG；Agent 注册成功不等于 Flow worker 可以启动。
-- [ ] **生产验收**：MySQL 中四类实际部署进程有唯一 Agent 行，`desired=acked`、heartbeat 新鲜、run 可追溯；吊销任一 credential 后对应进程停止并由 systemd 显式失败，不允许用 LKG 绕过 401/403。重启后离线 LKG、恢复联网和计划升级各验证一次。
-- [ ] **当前生产事实（2026-09-18）**：SNMP 与 flow collect 虽 enabled/active，但 ExecStart 未带任何 Registry bootstrap，`agents` 无对应登记；flow worker disabled/inactive 且 `/etc/watchdog/flow/worker.env` 缺失。因此数据接收进程存活不能冒充 KISS-04D 完成。
+- [ ] **部署**：以统一 unit/drop-in 给 system、SNMP、flow collect、flow worker 写入 control-plane/ID/token/enrollment/public-key/LKG 参数并 `enable --now`；不得继续仅靠静态命令行绕过 Registry。一次性 token 消费后只保留 mode 0600 的 machine credential。（2026-09-28 复核：部分完成 — 仓库 4 个 unit + 共享 token 激活脚本已就绪但未部署；生产仅 3/4 类（无 system）以旧二进制登记；升级顺序见 release-readiness §1.3；`aa870f65d`; `deploy/systemd/activate-agent.sh`）
+- [ ] **Flow worker 前置**：另行满足 Kafka/ClickHouse secret、source stream incarnation ID、source plan 与已批准 enrichment publication/LKG；Agent 注册成功不等于 Flow worker 可以启动。（2026-09-28 复核：部分完成 — 生产 worker 已登记 active 并运行在 LKG v11（前置曾满足）；但 v2 desired 404 把它冻在 LKG，需部署后复核）
+- [ ] **生产验收**：MySQL 中四类实际部署进程有唯一 Agent 行，`desired=acked`、heartbeat 新鲜、run 可追溯；吊销任一 credential 后对应进程停止并由 systemd 显式失败，不允许用 LKG 绕过 401/403。重启后离线 LKG、恢复联网和计划升级各验证一次。（2026-09-28 复核：部分完成 — 3/4 类有行且心跳新鲜；desired/acked=0/0（无计划）；run_count=0（run 上报未部署）；无 system；吊销/LKG/升级未演练；`fae7eee2c`, `cdfd283d9`）
+- [x] **当前生产事实（2026-09-18）**：SNMP 与 flow collect 虽 enabled/active，但 ExecStart 未带任何 Registry bootstrap，`agents` 无对应登记；flow worker disabled/inactive 且 `/etc/watchdog/flow/worker.env` 缺失。因此数据接收进程存活不能冒充 KISS-04D 完成。（2026-09-28 复核：作废 — 09-18 事实已过时：09-28 时生产 snmp/flow_collect/flow_worker 已登记 active（见 L211 与 agent lifecycle audit））
 
 > **KISS-04D 部署契约补齐（2026-09-18）**：仓库现提供四类统一 systemd unit 与 `deploy/systemd/activate-agent.sh`。本机 enrollment 的主流程只显示一次性 token 和一条激活命令；命令携带非秘密的计划公钥，脚本静默读取 token、创建受保护文件、安装 unit、enable 并 restart。文件路径和 Registry 参数仅保留在高级/自动化入口。Flow worker 的 Agent 控制面使用独立 `-agent-control-plane-url`，不得因登记 Agent 而把既有 bootstrap enrichment 错切到远程版本。注册成功后 runtime 删除 enrollment 文件、只保留 mode 0600 machine credential。它不把 `systemctl`/Docker socket/root 交给 Gin，也不绕过 Flow worker 的 publication 前置。此项在生产三进程真正登记、worker 发布物就绪并完成 ACK 前仍保持未勾选。
 
@@ -218,10 +218,10 @@
 ### KISS-05 现有 Geo/AddressSnap 链单域化
 
 - [x] **设计**：冻结“实现不重写、只去 tenant/owner”的边界；现有 MMDB/IPDB import、MySQL 业务表/字段、CRUD/list、job payload、WADS v1、object store、download/LKG/ACK/GC 均不变。(边界已冻结 + 全链去 tenant 清单已产出；结构决策见下方进度)
-- [x] **编码**：`internal/address` 忠实去 tenant——删 address 表/repo/API/签名 envelope/权限中的 tenant/owner，改全局 `address.manage/address.publish`；importer、规范化/集合运算、builder、codec、object writer/reader、worker loader、publication 状态机逐字未改；ed25519 信封已恢复（撤销 checksum-only 回归）。
+- [x] **编码**：`internal/address` 忠实去 tenant——删 address 表/repo/API/签名 envelope/权限中的 tenant/owner，改全局 `address.manage/address.publish`；importer、规范化/集合运算、builder、codec、object writer/reader、worker loader、publication 状态机逐字未改；ed25519 信封已恢复（撤销 checksum-only 回归）。（2026-09-28 复核：已被后续实现取代（以代码为准） — “ed25519 信封已恢复”不成立：2026-09-14 已刻意删除，approve 仅为审计确认（dimension_lifecycle.go:52-58）；`43d4cc69d`; `deploy/schema/mysql/0025_drop_dimension_signature_columns.sql:1-10`）
 - [x] **API/UI**：Geo/线路/运营商/prefix/set/import/draft/preview/publish/versions/rollback/retire 契约（server 分页、If-Match→428/412、ETag、cursor/table、`{job}`/202）逐项复刻；owner-tenant 鉴权适配器→全局 RBAC，非管理员 `address.view` 只读；前端契约与文件未改。
-- [x] **单元测试**：迁入遗留 v4/v6、层级、并交差、include/exclude、CIDR 归一、重叠、资源预算、object checksum、**ed25519 签名**、rollback/GC/consumers/draft 套件 + 新增无 tenant/全局权限契约测试；`internal/address` 全绿。
-- [x] **集成测试（address/server 链）**：真实 MMDB/IPDB→MySQL→async build→WADS→解码非空 range→幂等重建同 checksum；lifecycle approve(ed25519)/activate/rollback/retire、ACK/consumer summary、GC 生命周期+并发（late reference 串行于发布锁）+销毁回执，均对真实 MySQL 通过。〔worker download/install/内存 lookup/断网 LKG 经 flow-worker 消费端 + enrichment-delivery API，属 KISS-06〕
+- [x] **单元测试**：迁入遗留 v4/v6、层级、并交差、include/exclude、CIDR 归一、重叠、资源预算、object checksum、**ed25519 签名**、rollback/GC/consumers/draft 套件 + 新增无 tenant/全局权限契约测试；`internal/address` 全绿。（2026-09-28 复核：已被后续实现取代（以代码为准） — ed25519 签名单测随签名代码一起删除；其余单测仍在；`107797c72`）
+- [x] **集成测试（address/server 链）**：真实 MMDB/IPDB→MySQL→async build→WADS→解码非空 range→幂等重建同 checksum；lifecycle approve(ed25519)/activate/rollback/retire、ACK/consumer summary、GC 生命周期+并发（late reference 串行于发布锁）+销毁回执，均对真实 MySQL 通过。〔worker download/install/内存 lookup/断网 LKG 经 flow-worker 消费端 + enrichment-delivery API，属 KISS-06〕（2026-09-28 复核：已被后续实现取代（以代码为准） — “lifecycle approve(ed25519)”已失效：激活只要求 approved，不再校验签名；`internal/address/dimension_lifecycle.go:101-106`）
 - [x] **变更设计/测试**：迁入的遗留套件（仅去 tenant）证明 MySQL 业务值/API 行为一致；WADS 幂等重建 checksum 恒定 + `internal/flowdimension` codec/build 测试通过（bytes parity）；scale 认证复跑（50k inputs 29ms/55MiB，<10s/512MiB）；单域已无"按客户复制 WADS"。
 - [x] **回归测试**：`go build ./...`、`go vet`、`go test -race ./internal/address ./internal/opjob`（含真实 MySQL 集成）、address HTTP 契约套件、operation lifecycle、Flow dimension parity 全绿；按 line 11 约束未改 UI、不加视觉测试。
 - [x] **已提交门禁**：全局发布链共 14 个 address-only pathspec 提交（见下），无 Flow query/report 夹带；server.go/router.go/config.go 的 address 接线已提交（`7887e862`），共享文件上并行会话的 agent-plan 改动为其未提交 WIP、非本包。
@@ -332,7 +332,7 @@
 
 - [x] **KISS-08F11 旧 Graph Overview HTTP 副本删除（本提交）**：当前 Gin 已在单一 device root 上承接 `/api/v1/graph/devices/:id/overview`、`/api/v1/graph/ports/:port_id/overview`，仅返回可授权设备/端口的面板查询，并由 canonical ClickHouse metrics API 解析。将旧 handler 用例的 signed 进出流量、BGP 和 sensor 面板契约转入现行真实 MySQL 集成测试后，删除旧 tenant-scoped `net/http` handler/test-router 注入与专属测试；共享 graph panel builder 保留。真实 MySQL、全库 test/vet/build 和旧 handler 零引用为提交门禁。
 
-- [x] **KISS-08F12 旧 SNMP Trap HTTP 副本删除（本提交）**：当前 Gin 保留原 URL `/api/v1/snmp/traps`，已承接管理员会话与 SNMP agent token/mTLS、agent-device binding、trap dispatcher、ClickHouse 事件写入、端口/BGP 状态更新和立即采集触发。删除仍经 tenant repository 持久化的旧 `net/http` handler 及 router config 注入；SNMP trap domain/dispatcher/MIB handlers 保留。现行管理员与 agent 认证集成、CH sink 错误传播、全库 test/vet/build 和旧 handler 零引用为提交门禁。
+- [x] **KISS-08F12 旧 SNMP Trap HTTP 副本删除（本提交）**：当前 Gin 保留原 URL `/api/v1/snmp/traps`，已承接管理员会话与 SNMP agent token/mTLS、agent-device binding、trap dispatcher、ClickHouse 事件写入、端口/BGP 状态更新和立即采集触发。删除仍经 tenant repository 持久化的旧 `net/http` handler 及 router config 注入；SNMP trap domain/dispatcher/MIB handlers 保留。现行管理员与 agent 认证集成、CH sink 错误传播、全库 test/vet/build 和旧 handler 零引用为提交门禁。（2026-09-28 复核：已被后续实现取代（以代码为准） — 共享 token 模式下 trap 不再校验 agent-device binding（改按源 IP/hostname 解析设备），mTLS 已删除——这是 Stage 2 带来的安全语义变化；`aa870f65d`; `internal/server/snmp_traps.go:31-47,130-135`）
 
 - [x] **KISS-08F13 旧 Module Center HTTP 删除（本提交）**：单域固定产品不存在 tenant module enable/disable 或 runtime target-kind registry 管理面；全库扫描确认前端和 Gin 无 `/api/v1/modules`、`/api/v1/tenants/:id/modules` 消费者。删除旧 `net/http` module handler、router 注册和只验证该旧面的测试；暂留仍被旧 QueryGateway/Flow 测试引用的底层 registry，不在本切片越界修改 Flow。全库 test/vet/build、前端零 URL 和旧 handler 零引用为提交门禁。
 
@@ -385,12 +385,12 @@
   - [x] **L5B4 archive 月批准/删除/恢复**：新增 `0039`，同一 storage partition 只允许一个活动批准；readiness 必须证明完整 UTC 月每天均为 `raw_deleted`、MySQL 日 archive 总和等于 CH 最新完整 generation、物理行非零、保留期已过且 restore-tested `archive/all` backup 覆盖整月。独立 API 冻结月证据，canonical `flow_storage_archive_delete` job 用稳定 QueryID 执行 `DROP PARTITION YYYYMM`，执行前后复核并禁止取消；模糊 ACK 只在 takeover attempt 且物理分区已空时收敛。真实 MySQL 审批/job/receipt 与真实 ClickHouse 非空月分区删除、整月 BACKUP→RESTORE counters/物理行复算均通过。
 
 - [x] **编码**：KISS-08A–I 已迁出仍使用能力并物理删除 `internal/watchdog`、旧 Hub runtime、VM/VLogs provider、tenant/module/resource/dataset registries、旧 targets、兼容 adapter、旧 schema/config 和零引用依赖；当前生产入口只保留 Gin、MySQL、ClickHouse、Kafka 与独立采集/worker 进程。
-- [ ] **静态门禁（接近完成）**：生产依赖和可执行实现已无 PocketBase、`internal/watchdog`、`NewBackendRuntime`、DatasetProvider、VictoriaMetrics/VictoriaLogs client 或 target/device 双写；仍需清理少量历史兼容文字/注释以及 `snmp_vmquery` 对旧 `tenant_id` 标签的显式忽略，完成后再勾选字面零命中门禁。
-- [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。
+- [ ] **静态门禁（接近完成）**：生产依赖和可执行实现已无 PocketBase、`internal/watchdog`、`NewBackendRuntime`、DatasetProvider、VictoriaMetrics/VictoriaLogs client 或 target/device 双写；仍需清理少量历史兼容文字/注释以及 `snmp_vmquery` 对旧 `tenant_id` 标签的显式忽略，完成后再勾选字面零命中门禁。（2026-09-28 复核：部分完成 — 依赖已清；剩 vmquery 忽略 tenant_id、system agent 的 TenantID、“501 scaffold”注释与死代码 todoCRUD、零引用的 idempotency_records/export_tasks 表、VM 测试；`internal/server/snmp_vmquery.go:143-145`; `cmd/watchdog-system-agent/types.go:6,17`）
+- [ ] **空库验收**：仅 MySQL + ClickHouse + Kafka，从零安装管理员、设备、agent、地址 publication、Flow、SNMP、六报表、账单、导出、告警。（2026-09-28 复核：部分完成 — 已覆盖安装/登录/agent/设备/SNMP/Flow 六报表/导出（2026-09-28 server 包在真实 MySQL 8 全绿 206/0）；缺地址 publication、账单端到端、告警（KISS-L 未实现）与浏览器验证；`internal/server/install_integration_test.go:208-569`）
 - [ ] **故障验收**：MySQL/CH/Kafka 短断、agent 离线、worker crash/rebalance、坏 publication、SNMP reset、任务 takeover/cancel/retry。
 - [ ] **性能验收**：Flow 吞吐/延迟/内存不低于切换前基线；SNMP 写入和查询满足目标；账单计算有界。
 - [ ] **回归测试**：Go/前端/真实依赖/浏览器/安装脚本/备份恢复全矩阵。
-- [ ] **文档**：只保留一套当前架构、schema、配置、运维和故障手册；旧文档标历史，不再作为实施入口。
+- [ ] **文档**：只保留一套当前架构、schema、配置、运维和故障手册；旧文档标历史，不再作为实施入口。（2026-09-28 复核：部分完成 — 2026-09-28 复核为 7 份旧文档加归档横幅、为 22 份设计文档加「与代码的差异」节，并就地更新安装手册、本地开发、agent plan 设计与 KISS 架构 §5.3（共享 token）；仍缺故障手册，差异节未逐句改写正文；`docs/watchdog-project-review-2026-09-28.md`）
 - [ ] **已提交门禁**：最终删除提交后 clean checkout 可完整部署；所有遗留数据库/volume 已按各工作包的精确白名单处置，不把物理清理拖到项目末尾。
 
 > **2026-09-16 精确清理台账见 [watchdog-kiss-cleanup-ledger.md](watchdog-kiss-cleanup-ledger.md)**（代码/表/字段/接口/配置逐项 + 依赖 + 删除影响 + 严格删除顺序 + 执行状态；L1-L19 代码、S1-S12 schema、I1-I5 接口）。KISS-08A–G4 已逐域迁出当前能力，H 物理删除 `internal/watchdog`，I 删除冲突 schema 树、tenant seed、legacy YAML 和零引用 cron 依赖。运行代码、schema 与配置均已收敛；剩余是历史文档标记/删减以及完整空库、故障和性能发布门禁。

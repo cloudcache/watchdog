@@ -1,5 +1,7 @@
 # Watchdog 5 分钟计量原子层设计 · DDL 与迁移草案 · 存储生命周期审计
 
+> **与代码的差异（2026-09-28 复核）**：本文有 10 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 日期:2026-09-23
 输入:akvorado 源码(`~/Downloads/akvorado-main`)、生产 .18 live 实测(全部查询 `max_memory_usage=1.5G, max_threads=2`)、仓库当前 schema(migration 001–020)、`internal/flowch/{rollup,billing}.go`、`internal/flowlifecycle`、`config/watchdog.yaml`。
 关系:承接 `watchdog-storage-lifecycle-review-2026-09-22.md`(含并行开发者的十条修订)与 `watchdog-product-review-2026-09-22.md`;不重复其结论,只在其约束下给出可落地方案。
@@ -386,3 +388,20 @@ ALTER TABLE watchdog_flow.flow_records
 ### 8.6 结论
 
 方案核心(5m 计量原子层 + generation-marked 方案 C)与 v13/r19 代码**兼容且互补**,可在不改现有读写协议的前提下作为第四层接入;但 §8.2 有四处必须修正(#4 不是同一次扫描、#5 路由规则收窄、#6 放弃多层拼接、#8 不进删除门禁),两处与并行开发在同一文件(`flow_reports.go`、`rollup.go`),一处比 5m 更便宜的杠杆(`event_time` minmax 索引)应先验证。计费是唯一"必须做"的驱动:live 数据证明现有 raw 路径对任何真实账期都算不出来。实施仍待用户与并行开发者确认,本节不改代码。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **§8.4/§8.6（:352-363,388）**：“实施仍待确认、本节不改代码”已过时——`021`/`022`、`RollupFiveMinute`、`scanFiveMinute` 均已落地（`423d820e2`、`c1385cd3b`、`d6c38b62e`），尚未部署生产。
+- **§8.5 #1（:365-372）**：event_time minmax 索引已作为 `022` 落地，生产新 part 上 5 分钟窗口 757→122 granules（≈6×）；排序键重建仍属 P3。
+- **§8.3 命名（:339,349）**：迁移实际为 `021_flow_atomic_5m.sql` + `022_flow_records_event_time_index.sql`（server 启动也会自动 apply）；常量为 `derivedFiveMinuteRollupSQL`（toStartOfFiveMinutes，排除 src_ip/dst_ip/remote_port），5m 批最长 1 天且 source 必须为 1m。
+- **调度顺序（:342）**：scanFiveMinute 在 1m 与 1h 之后执行，复用 hour_lookback/MaxHourBucketsPerRun。
+- **§3.2(a) interface DDL（:108-132）**：以 `021` 为准——无 TTL、按月分区（设计由归档月状态机回收，但 DropArchiveMonth 尚未加入该表）；ORDER BY (bucket_start,row_kind,device_id,exporter_id,if_index,direction,layer)；Enum 含 `'na'=0`；列为 observed/known + 版本数组 + ingest_generation_min/max。
+- **迟到修复（:341）**：**未实现**——`BucketNeedsRepair` 没有 5m 分支，scanFiveMinute 只补缺失覆盖，1m 被迟到数据修复后 5m 不会重新派生（潜伏缺陷，目前无读者）。
+- **未实现（:342-348）**：interface-5m 从 raw 派生、planner/bucketSpec 加 5m、报表回退、计费切读、冷归档 raw→5m、对账读 5m 均未实现（planner 只有 1m/1h/1d，billing 仍扫 `flow_records FINAL`，归档仍 raw→1h→1d）。
+- **raw codec（:295）**：“已应用”仅指生产手工 ALTER；`011` 中这些列没有 CODEC，新装库拿不到——需补 forward migration。
+- **hour_lookback**：仓库默认 72h 大于 1m TTL（48h），48–72h 前的小时永远补不出 5m（scanFiveMinute 要求 1m 完整）——应限制为 ≤48h 或由冷路径补齐。
+- **死代清理（:258,296-298）**：无任何死代 DELETE 或 MODIFY TTL 作业。

@@ -1,5 +1,7 @@
 # 流量流向分析：需求与选型基线
 
+> **与代码的差异（2026-09-28 复核）**：本文有 6 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > 状态：现行；2026-09-05 收敛。详细实现见 [flow-module-design.md](flow-module-design.md)，架构取舍见 [flow-pipeline-adr.md](flow-pipeline-adr.md)，执行状态见 [flow-module-tasklist.md](flow-module-tasklist.md)。旧的 collector 解码、WAL、normalized topic 和 collect-state 方案已废止。
 
 ## 1. 目标、范围与证据
@@ -206,3 +208,16 @@ router UDP
 - [Akvorado 运维与容量](../akvorado/console/data/docs/04-operations.md)
 - [GoFlow2](https://github.com/netsampler/goflow2)
 - [nDPI](https://github.com/ntop/nDPI)
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **F1 解码（:79,182）**：NetFlow v5 与 sFlow v5 用自研快解码器，GoFlow2 只负责 v9/IPFIX 与回落。
+- **F2 Geo（:88-89）**：Geo/ISP/ASN 来自地址库（EdgeManager 基础 seed）编译的 WADS，server 自动加载 active WADS；flow-geo bundle 为遗留。
+- **估算（:49）**：放大后 estimated_bytes 再乘 binding 的 estimated_bytes_scale_ppm（不算二次采样放大）。
+- **六分类降级（:57-64）**：省份缺失降为跨省；本网同省城市缺失降为本网跨市；只有身份无法判定时才是 unknown。
+- **方向枚举（:31-36,55）**：业务方向代码枚举为 in/out/internal/transit/ambiguous；ingress/egress 只用于观察方向。
+- **探测（:140-142）**：未实现，只有 Tier-1 被动评分与 family_hint。

@@ -1,5 +1,7 @@
 # flow-collector / flow-worker 代码级审查（正确性·可靠性·安全·协议·高性能）
 
+> **复核状态（2026-09-28）**：逐条对照当前代码复核——已修复 13 · 部分修复 29 · 未修复 57 · 作废 1（作废 = 被后续设计决策取代，如全局共享 token、不设审批门）。逐条状态与证据见文末「复核状态（2026-09-28）」。
+
 日期：2026-09-19　复核：2026-09-20　方法：代码审查 + 当前 Git + 生产进程/Kafka/ClickHouse/MySQL 只读证据。本文原始审查**未修改任何代码**；2026-09-20 复核用于校正其结论和任务状态。
 原审查基点：`HEAD cfbb31ce fix(flow): split endpoint scan budget`。当前复核基点：`HEAD 313a0ac0`，工作树仍含未提交/未跟踪的发布、对账和部署代码；这些文件不能被当作已交付生产能力。
 关联：[watchdog-flow-perf-audit-2026-09-19.md](watchdog-flow-perf-audit-2026-09-19.md)（性能根因 R1–R7；其 §8 已含 `.18` 生产实测）、[watchdog-flow-clickhouse-ix-scale-design.md](watchdog-flow-clickhouse-ix-scale-design.md)（IX 规模存储设计）。
@@ -363,3 +365,72 @@ CH 服务端对 100 列 × 50k 行块的插入延迟（worker 吞吐的主导项
 
 ## 7. 代码无法判定、需实测
 生产 `net.core.rmem_max`/内核版本/网卡 RSS；生产 Kafka 分区数、副本、`min.insync.replicas`、`message.max.bytes`、ACL；`collector-plan.json` 如何到达主机与刷新；exporter 源端口固定与否；`/etc/watchdog/flow/worker.env`（重放窗口、`MaxConns`、批大小）；franz-go 在屏障期间失去分区时 `CommitRecords` 的确切结果；控制面 raw-delete ACK 门是否覆盖文件引导 worker；`effective_from` 的运维策略；真实吞吐/延迟（无接收循环基准）。
+
+---
+
+## 复核状态（2026-09-28）
+
+本节由 2026-09-28 全项目复核生成：每条发现都对照当前代码/迁移/提交核实，以代码为准。汇总：已修复 13 · 部分修复 29 · 未修复 57 · 作废 1（部分未修复项在复核时按组列出，故表格行数可能少于汇总数）。
+
+| 位置 | 发现 | 状态 | 证据 / 说明 |
+|---|---|---|---|
+| L26 | customer-boundary save only writes the DB, never publishes (transit ≈53%) | 部分修复 | v2 deployment chain `c00e6c646`/1270eb196/552d9752b/28014a8be; save returns draft (`flow_customer_boundaries.go:231`)；not deployed; prod v2 404 stuck at LKG 11 |
+| L42 | sFlow counters dropped | 已修复 | `cf8b55eb`/0dca0d2b (018 sflow_interface_counters); scanner fixed in `bb7490a4`；5m reconciliation layer not wired |
+| L44 | interface_reconciliation.go not delivered | 部分修复 | committed in `c00e6c646`; test `c539d770e`; ReadInterfaceReconciliation has no caller；defects listed in remediation §4.4 unchanged |
+| L53 | P0 classification publication loop | 部分修复 | v2 chain above + flow-worker-deployments UI (installed ACK)；v1/v2 double writers (P1-6/P2-8/P2-9) unresolved; not deployed |
+| L54 | P0 collection correctness (topic/buffer/identity/gap/lag) | 部分修复 | `bbb3451e`, `a4efa5cc`, `6d606807`; lag in run summary (`fae7eee2c`)；no sequence-gap detection |
+| L55 | P0 worker poison pills | 部分修复 | `5e822705`, `02177a20`, `984d1af1d`；ODID mismatch / missing version still exits the whole process; no partition pause |
+| L56 | P1 idempotency/recovery | 未修复 | no dedup-window migration; LKG still verified with now \| |
+| L57 | P2 performance | 部分修复 | `0ef47e87` pool split; `1005b5e3`；everything else not done |
+| L61 | regression gates (5) | 部分修复 | identity/topic/template-reject have unit tests；three-way reconciliation, six-class conservation and process-level poison gates missing |
+| L108 | collector H1 SO_RCVBUF clamped, no readback | 部分修复 | `a4efa5cc` `receiver.go:66-73` readback; collect `main.go:236-239` WARN; deploy/sysctl.d/90-watchdog-flow.conf；log only; no metric or readiness |
+| L109 | collector H2 source plan loaded only at startup | 未修复 | collect `main.go:136` single LoadSignedPlan \| |
+| L110 | collector H3 topic never verified | 已修复 | `bbb3451e` `producer.go:105-140`; `main.go:175-180`；runtime unwritability still only counted |
+| L111 | collector M1 no MaxBufferedBytes | 已修复 | `d33ebc9d` `producer.go:67-71`；plus unit MemoryMax=1G |
+| L112 | collector M2 global Produce head-of-line blocking | 部分修复 | byte cap `d33ebc9d`; kafka_buffered in summary；no per-listener isolation or stall metric |
+| L113 | collector M3 Send failures not counted | 已修复 | `6d606807` `producer.go:163-183` \| |
+| L114 | collector M4/M5/M6/M8/M9/M11 (shutdown drops unlogged / plan-change exit / linear admission / no logger / unlabeled drops / partition pinning) | 未修复 | `producer.go:225-236`; `main.go:111-120`; `flowplan/plan.go:326-348`; no WithLogger; `metrics.go:97`；6 items |
+| L117 | collector M7 per-datagram allocations | 部分修复 | `1005b5e3` removes 2 allocations；recvmmsg, closures etc. not done |
+| L120 | collector M10 collector_id≠agent-id; v1 envelope accepted | 未修复 | collect `main.go` no comparison; `signature.go:131` still accepts v1 \| |
+| L122 | collector M12 PLAIN without TLS | 已修复 | `17a4042c` `config.go:156-157` \| |
+| L123 | collector L1–L10 | 部分修复 | `63411d8f` unit gets Wants/LimitNOFILE/MemoryMax/TimeoutStopSec；metrics still on 9090, ReadMemStats per scrape, -check still registers first, doc drift remains; enrollment item obsolete (aa870f65d) |
+| L141 | worker C1 data-shape errors exit the whole process | 部分修复 | `02177a20` `pipeline.go:115` ErrInvalidRecordBatch→mapping_rejected；ErrBindingUnavailable / missing version still → consumer.go:302-305 → log.Fatal |
+| L142 | worker H1/H2/H3 (below-floor replay persists / non-deterministic token / per-fetch barrier) | 未修复 | `consumer.go:354-367`; `native.go:283` no window; `consumer.go:340-388` wait.Wait；H1 latent while replay=0 |
+| L145 | worker H4 no valid-until; retroactive effective_from | 部分修复 | automatic path ≥now+1m (`flow_enrichment_publications.go:670-677`); v2 ≥ current minute (`flow_worker_deployments.go:172`)；manual v1 only needs > latest; stale LKG still fail-open |
+| L146 | worker M1/M2 (Covers per-record copy / whole-datagram quarantine) | 未修复 | `barrier.go:65-78,178-184`; `pipeline.go:94-103`; `main.go:228-233` \| |
+| L148 | worker M3 Ready() missing scale_ppm | 已修复 | `44465c17` `native.go:177,218` (records==6) \| |
+| L149 | worker M4 LKG verified with now | 未修复 | worker `main.go:641,645`; `version_lkg.go:367,429`；v2 has the same bug |
+| L150 | worker M5 any fetch error is fatal | 部分修复 | `984d1af1d` `consumer.go:272-279` ErrDataLoss recoverable；other retriable errors still fatal (:280-285) |
+| L151 | worker M6/M7/M9 (replay default 0 / SIGTERM aborts in-flight inserts / unknown scale→0) | 未修复 | `main.go:114,` `config.go:116`; `main.go:352-354`; `decode_adapter.go:177-190` \| |
+| L153 | worker M8 nil rejection observer | 已修复 | `5cffd9dd` `processor.go:91` default rate-limited observer \| |
+| L155 | worker L1–L7 | 部分修复 | `63411d8f` TimeoutStopSec/LimitNOFILE；decoders not evicted on revoke (decoder.go only Close), StartLimit* etc. open |
+| L161 | §3.3 test gaps | 部分修复 | `984d1af1d` data-loss test; `02177a20` poison test；rebalance/crash-point/SIGTERM tests missing |
+| L173 | decoder C1 zero-field template infinite loop / OOM | 已修复 | `5e822705` `decoder.go:203-207` guardedTemplateStore \| |
+| L174 | decoder H1 VLAN/QinQ leaves fast path; 0x88a8 drops whole datagram | 未修复 | `sflow_v5_fast.go:512-513` default false；only visible through the rejection log (5cffd9dd) |
+| L175 | decoder H2/M1 (BGP/MPLS dropped; 802.1Q VlanId) | 未修复 | DecodedRecord not extended; `sflow_v5_fast.go:466-471` \| |
+| L177 | decoder M2 no fuzz on fast paths; v5 outside recover | 部分修复 | `4e9dd9bb` `fastpath_fuzz_test.go:20-41`；NetFlow v5 fast path still outside recover (decoder.go:363-368) |
+| L178 | decoder L1–L4 (doc drift / format bits / RouterKey / sequence gap) | 未修复 | `flow-decode-fastpath.md:124` still says counters skipped; `sflow_v5_fast.go:327-328` \| |
+| L182 | decoder I1 32-bit portability | 作废（被后续决策取代） | informational, no fix needed \| |
+| L216 | CH1 hub single 8-connection pool | 已修复 | `0ef47e87` `server.go:419-458` interactive/batch + monitorClickHousePools \| |
+| L217 | CH2/CH3/CH4/CH7/CH8/CH9 | 未修复 | `native.go:283` no window; three Do calls :247,256,264; columns not reused; countryCode :792; LZ4 :125 \| |
+| L220 | CH5 QueryID / MinConns | 部分修复 | min_conns configurable (`0ef47e87`, `watchdog.yaml:23`)；QueryID only in raw_delete.go |
+| L221 | CH6 hub/snmp no TLS, 1s dial | 部分修复 | hub TLS `0ef47e87` `server.go:416-426`; snmp timeout `919aae0cf`；snmp-collector has no TLS, MaxConns hard-coded to 8, DialTimeout not wired |
+| L277 | HP1/2/3/4/6/8/9/10/11/12/13/14 | 未修复 | `pipeline.go:105` EnrichBatch; `consumer.go:361` committable; no recvmmsg; sflow VLAN default false；12 items |
+| L281 | HP5 (=H1) | 部分修复 | `a4efa5cc`；log only |
+| L283 | HP7 collector allocations | 部分修复 | `1005b5e3` (duplicate ExporterKey + RawFlow pool) \| |
+| L322 | Phase 0.1 template guard | 已修复 | `5e822705` \| |
+| L323 | Phase 0.2 data-shape→receipt; retriable fetch continues | 部分修复 | `02177a20`, `984d1af1d`；ODID case / generic retriable errors not covered |
+| L324 | Phase 0.3 topic fail-fast | 已修复 | `bbb3451e` \| |
+| L325 | Phase 0.4 SO_RCVBUF readback + metric | 部分修复 | `a4efa5cc`；no receive_buffer_effective_bytes metric |
+| L326 | Phase 0.5 Send identity | 已修复 | `6d606807`；Close still does not log final Stats |
+| L327 | Phase 0.6 collector_id / v1 / PLAIN | 部分修复 | `17a4042c` (PLAIN)；collector_id binding and v1 rejection not done |
+| L328 | Phase 0.7 QinQ pcap differential | 未修复 | no fixtures \| |
+| L329 | Phase 0.8 Ready() + observer | 已修复 | `44465c17`, `5cffd9dd` \| |
+| L330 | Phase 0.9 systemd hardening | 部分修复 | `63411d8f`；MemoryMax is a fixed value, not load-tested; metrics port still 9090 |
+| L332 | template replay default decision (M6) | 未修复 | still 0 \| |
+| L338 | Phase 1.1/1.2/1.4/1.5/1.6/1.7 | 未修复 | files unchanged (`consumer.go`, `native.go`, `version_lkg.go`, collect `main.go:136,` `plan.go:326,` `barrier.go`)；6 items |
+| L340 | Phase 1.3 effective_from floor + partition pause | 部分修复 | automatic/v2 floors；no partition pause |
+| L345 | Phase 1.8 hub pool split | 部分修复 | `0ef47e87` (pools/TLS/Stat/config)；QueryID missing |
+| L351 | Phase 2.1/2.2/2.3/2.5/2.6/2.7 | 未修复 | none of them implemented；6 items |
+| L354 | Phase 2.4 collector recvmmsg/MaxBufferedBytes/logger | 部分修复 | `d33ebc9d`, `1005b5e3`；recvmmsg / logger / per-listener client not done |
+| L360 | Phase 3 fuzz/integration/doc debt | 部分修复 | `4e9dd9bb`；flow-module-design.md:113-122,210 and fastpath.md:124 drift remain |

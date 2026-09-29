@@ -1,5 +1,7 @@
 # Flow 模块详细设计
 
+> **与代码的差异（2026-09-28 复核）**：本文有 27 处已落后于代码或与代码不一致——以代码为准，逐条见文末「与代码的差异（2026-09-28 复核）」。
+
 > **Flow Storage V2 重大变更（唯一生效契约）**：原始事实取消硬编码 30 天 TTL、实时 rollup 改为策略驱动 aging/downsample、记录和回执改用 Kafka 自然坐标且移除 Flow 热路径 hash。详细切换、回滚、准确性边界和任务门禁见 [flow-storage-v2-change-plan.md](flow-storage-v2-change-plan.md)。本文后续与该设计冲突的旧 DDL、TTL、`record_id`、batch checksum、实时 1m/1h 描述均为历史基线，不可再作为实现依据；001–010 迁移仍保持不可修改。
 
 > 状态：现行。本文只定义当前实现契约；需求口径见 [flow-direction-requirements.md](flow-direction-requirements.md)，架构取舍和废弃方案见 [flow-pipeline-adr.md](flow-pipeline-adr.md)，唯一执行状态见 [flow-module-tasklist.md](flow-module-tasklist.md)。完成历史不得回填到本文。
@@ -1017,3 +1019,37 @@ N+1、多 broker/replicated CH、容量预测、备份恢复、跨故障组合�
 ## 15. 复杂度守门
 
 以下变更必须新 ADR、容量/故障数据和删除计划：第二 Flow 数据 topic、collector 本地 WAL、独立状态数据库、另一套 retry/ACK 状态机、Flow 双写 VM、同步地址 RPC、逐 flow HTTP/日志、浏览器直连 Kafka/CH、通用工作流引擎。优先使用 Kafka offset、deterministic batch、immutable snapshot、CH base 重建和平台现有 CRUD/job/RBAC。
+
+---
+
+## 与代码的差异（2026-09-28 复核）
+
+2026-09-28 全项目复核将本文与当前代码/迁移/提交逐条对照，下列各处设计已被实现取代、改名或尚未实现。**以代码为准**；正文保留作设计历史，未逐句改写。
+
+- **分层（修订框、§1.1/§1.5，:7,21-22,62,65）**：已不是“raw + 策略老化 1h”。热层调度器每个封闭小时发布 1m（`020`，按日分区、TTL 2d），再由 1m 派生 1h 与 5m；冷层 1h/1d 由 lifecycle 归档。热层 generation = unix 秒（<2^32），冷层 = policy_version<<32。查询在所选层连续 `_generation` 覆盖前缀内读聚合、尾段读 raw（`flow_hot_rollup.go`、`flow_archive.go:91-127`）。
+- **§7 表清单（:502-504,522-528）**：迁移已到 `022`；另有 `flow_aggregate_1d`/`_5m`、`flow_interface_traffic_5m`、`sflow_interface_counters`、`flow_quarantined_datagrams`、`flow_reclassified_*`、`snmp_*`；1m 是 2 天 TTL 热缓存。
+- **rollup 发布（:532）**：两阶段——数据 INSERT 成功后才单独 INSERT `_generation` marker，读者只信 marker；无 tenant；有 `minimum_generation` 再生机制。
+- **dimension registry（:532,612）**：共 19 个，新增 `direction`（由 total 行按 business_direction 派生，不新增物化 kind）。
+- **流向视图（:619）**：direction_split 只执行一次 DimensionDirection 聚合查询（typed filter 无法走聚合时为一次 joint 扫描），不是两次查询再合并。
+- **planner（:294,609）**：PlanAggregate 选 1m（≤10,080 桶）/1h（≤9,600）/1d（≤400），≥24h 自动步长强制 ≥1h；5m 表尚未接入 planner。
+- **joint（:617）**：endpoint×category/business 与 business×category 在 1h marker 覆盖时读聚合行，另有“1h 前缀 + raw 尾段”hybrid（`rollup_joint.go`）。
+- **Geo（§4.1，:257-268,294）**：EdgeManager 以 `edgemanager-geo-base` 导入地址库再编译为 WADS；server 启动自动加载 active WADS 作标签与 lookup，`flow_geo.path`/flow-geo bundle 仅遗留兼容。
+- **投递（§4.2/§4.3，:312,326-346）**：新增 v2——每 worker 一份 Ed25519 签名 deployment manifest（`0049`，`/flow-workers/:id/deployments/*`、`/flow/deployments`），装过 v2 后不回退 v1；可定向发布（`0048`）；地址快照激活时自动发布。
+- **客户边界（:318,488）**：自动投影已删除；保存只返回 source_revision/draft/publication_required，边界在 deployment 发布时编译为 device_boundary 制品。
+- **运营商门禁（:282,322,619）**：按 publication 的定向 worker 集合判定并钉住 snapshot 与 classification 版本；**门禁只读 v1 pair ACK、不看 v2 deployment ACK——v2 时期的 operator 查询会漏数或返回 503，需补代码**。
+- **六分类降级（:407）**：省份缺失降为 *_cross_province，本网同省城市缺失降为 on_net_cross_city；只有国家无效或两端 ISP/ASN 无法比较时才是 unknown。
+- **VPN match（:461）**：另有 local_ports、local_prefix_ids、local_cidrs、remote_cidrs、min/max_packet_bytes_p50 与规则级 family_hint。
+- **VPN 完整度（:469）**：分子 = 窗口内 raw 实际出现的分钟数 `uniqExact(toStartOfMinute(event_time))`（`c672dfc7b`），不是 1m marker 数。
+- **collector 健康（§5.2，:440）**：collector/worker 每分钟上报 run，summary 为窗口增量（datagrams/records/kernel_drops/kafka_*/lag/data_loss/partitions），写 `agent_runs.summary_json`；健康由运行报告与陈旧度派生。
+- **删除（:63,65,987-988）**：审批制 raw 分区删除（approve/execute/revoke）、worker tombstone barrier + 迟到 quarantine、归档月删除与备份证据 API 均已实现，默认关闭（需 policy 开关 + 审批）。
+- **producer（:95,104）**：另有 MaxBufferedBytes（默认 256MiB）；启动时校验 topic 元数据；SASL/PLAIN 必须配 TLS。
+- **超时与连接池（:520）**：migrate CLI 默认 1h；server 拆为 interactive 池（operation 2m，max_conns 8）与 batch 池（15m，batch_max_conns）——注意报表读路径的覆盖检查目前误用只有 1 个连接的 batch 池（见 `docs/watchdog-project-review-2026-09-28.md`）。
+- **已实现（:625,842,876-878）**：保存/共享过滤器已实现（`0017`/`0032`，`/flow/filters`）；报表范围超过 `flow.query.synchronous_max_range`（默认 1h）时返回 202 并作为 `flow.report.query` 作业执行，经 `GET /flow/reports/query/:id` 轮询，另有 `GET /flow/reports/references`。
+- **故障矩阵（:964-976）**：缺“topic 截断/数据丢失”一行——`kgo.ErrDataLoss` 被计数后从 reset 位置继续，`data_loss` 写入 run summary（可见但未进水位/删除 blocker）。
+- **估算（:157-168,485）**：estimated_bytes 再乘 binding 级 `estimated_bytes_scale_ppm`（0.5–2.0×，pre_scaled 禁用，`0047`）。
+- **机器身份（:312,314,343-346,427-429,857-860,993）**：worker 只用安装级共享 token + 未吊销 agent 行 + handler 校验 kind=flow_worker；`agent_credentials`/enrollment 已删除、服务端不认 mTLS（worker CLI 仍接受仅 mTLS 配置，会被 401，建议移除该分支）。
+- **tenant/VM/hub（:27,40,467,481,491-492,496,524-538,607,665-690,703,721,768,814,918,975,995,1001,1019）**：tenant、VictoriaMetrics、QueryGateway、hub 均已移除；VPN 会话 key = SHA256(local_ip\0remote_ip)、tie-break 用 Kafka 自然坐标；`vpn_rules` 为 `0018`（UNIQUE(name)、family_hint），findings 为 `0019`（finding_key、IP VARCHAR(45)、无版本/expires 列）。
+- **FLOW-04B（§3.5，:214-251）**：op-job rollup 与 028 水位已退役，改为进程内 flowHotRollupScheduler 按 marker 缺口调度 + 迟到 repair。
+- **命名与 API（:276,284,286,830-864）**：迁移号为 KISS `0011`/`0013`/`0027`；API 实为 `/flow/devices`+`/flow/exporter-bindings`、`/dimensions/address/*`、`/flow/geo/lookup`、`/flow/reclassifications`、`/flow/vpn/rule-sets/*`；settings/health/probe/rule-preview 不存在。
+- **查询限额（:614,887）**：执行时限取 `flow.query.execution_timeout`（默认 2m），设备限定 raw 查询 2.5 亿行/16GiB、端点候选 5 亿行/32GiB，group-by/sort 可落盘；端点 TopN 用 topKWeighted 近似候选并带 `approximate=true`。
+- **其他分歧（:36,106-128,210,385-392,432,438,506-508,514,559-562,568,736,791,793,810,818,852,856）**：无 `watchdog-vpn-probe-agent` 进程（Tier-2 未实现）；collector 只有 CLI flag（无 YAML 段）；`template_replay_records` 默认 0（仅纯 sFlow 可用，有 v9/IPFIX 必须配正值）；业务方向另有 `ambiguous`；exporter 无状态机（只有 enabled + 发布版本）；server 启动自动 apply CH 迁移；rollup/reconciliation 指标无生产调用方、未导出；权限名为 `flow.view.{customer,supplier,raw}`/`flow.vpn.view`，**`flow.export.*` 未被强制（安全缺口）**；境外专题有 hybrid/全 raw 路径并返回 `uses_raw`。

@@ -1,5 +1,7 @@
 # 存储与管理面收敛详细设计
 
+> **已归档（2026-09-28）**：ADR-SC-001 已归档，被 `docs/watchdog-kiss-architecture.md` 取代：PocketBase、VictoriaMetrics、tenant 均已删除（`internal/hub`、`internal/site`、`install/init.sql`、`deploy/migration/mysql` 不存在），MySQL 迁移在 `deploy/schema/mysql/0001`–`0050`；Flow 派生层全部在 ClickHouse（1m/5m/1h/1d），没有 VM recording cache；collector/worker 以全局共享 token 注册并上报运行摘要。
+
 > **历史文档 / 已被取代：** 2026-09-08 已冻结 [Watchdog KISS 目标架构](watchdog-kiss-architecture.md)：删除 PocketBase、多租户和 VictoriaMetrics，只保留 MySQL + ClickHouse。本文关于“PB 认证内核”和“VM/CH 不合并”的结论不再实施，仅保留历史审计证据。
 
 > 状态：ADR-SC-001，已评审修订；范围只覆盖 PocketBase、MySQL 与 VictoriaLogs。VictoriaMetrics 和 ClickHouse 的职责边界保持不变，见[平台架构](watchdog-platform-module-architecture.md)。平台实施见[平台重构 tasklist](platform-refactor-tasklist.md)，Flow 实施见[Flow tasklist](flow-module-tasklist.md)。
