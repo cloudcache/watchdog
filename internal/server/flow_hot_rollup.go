@@ -90,46 +90,55 @@ func (scheduler *flowHotRollupScheduler) ScanOnce(ctx context.Context, now time.
 	}
 	// The five-minute query tier is derived from the same complete one-minute
 	// coverage the hourly path consumes, so it is filled last and reuses the
-	// hour lookback and per-run budget rather than introducing new config.
+	// hour lookback (capped by the 1m TTL) and per-run budget rather than
+	// introducing new config.
 	fiveMinute, err := scheduler.scanFiveMinute(ctx, now)
 	return minute + hourly + fiveMinute, err
 }
+
+// flowMinuteTierRetention mirrors the flow_aggregate_1m TTL (ClickHouse
+// migration 020). The five-minute tier derives only from 1m, so its scan never
+// looks further back than 1m can still exist.
+const flowMinuteTierRetention = 48 * time.Hour
 
 // scanFiveMinute publishes flow_aggregate_5m for sealed hours whose one-minute
 // tier is fully marked. It never scans raw: an hour whose 1m has aged out (older
 // than the 1m TTL) is left to the cold lifecycle, not filled here. Each covered
 // hour becomes one range INSERT of twelve five-minute buckets plus their
-// generation markers, superseding any generation below the readable floor.
+// generation markers, superseding any generation below the readable floor. A
+// covered hour is derived again when one of its 1m buckets was regenerated
+// after its 5m generation (late-arrival repair or shape regeneration), so 5m
+// never keeps counts the 1m tier has since corrected.
 func (scheduler *flowHotRollupScheduler) scanFiveMinute(ctx context.Context, now time.Time) (int, error) {
 	sealedThrough := now.Add(-scheduler.config.SealDelay).Truncate(time.Hour)
-	from := sealedThrough.Add(-scheduler.config.HourLookback).Truncate(time.Hour)
+	from := sealedThrough.Add(-min(scheduler.config.HourLookback, flowMinuteTierRetention)).Truncate(time.Hour)
 	if !sealedThrough.After(from) {
 		return 0, nil
 	}
+	targets, err := scheduler.hourlyMarkers(ctx, flowch.RollupFiveMinute, from, sealedThrough)
+	if err != nil {
+		return 0, err
+	}
+	sources, err := scheduler.hourlyMarkers(ctx, flowch.RollupOneMinute, from, sealedThrough)
+	if err != nil {
+		return 0, err
+	}
 	completed := 0
 	for hour := from; hour.Before(sealedThrough) && completed < scheduler.config.MaxHourBucketsPerRun; hour = hour.Add(time.Hour) {
-		hourEnd := hour.Add(time.Hour)
-		covered, err := scheduler.runner.CoveredThroughAtLeast(ctx, flowch.RollupFiveMinute, hour, hourEnd, scheduler.config.MinimumGeneration)
-		if err != nil {
-			return completed, err
-		}
-		if covered.Equal(hourEnd) {
+		source, target := sources[hour.Unix()], targets[hour.Unix()]
+		if source.readable != 60 {
 			continue
 		}
-		sourceThrough, err := scheduler.runner.CoveredThroughAtLeast(ctx, flowch.RollupOneMinute, hour, hourEnd, scheduler.config.MinimumGeneration)
-		if err != nil {
-			return completed, err
-		}
-		if !sourceThrough.Equal(hourEnd) {
+		if target.readable == 12 && !source.newest.After(target.oldest) {
 			continue
 		}
-		generation, err := nextHotRollupGeneration(now, 0)
+		generation, err := nextHotRollupGeneration(now, target.maxGeneration)
 		if err != nil {
 			return completed, err
 		}
 		if err := scheduler.runner.Run(ctx, flowch.RollupRequest{
 			Resolution: flowch.RollupFiveMinute, SourceResolution: flowch.RollupOneMinute,
-			Bucket: hour, BucketEnd: hourEnd, Generation: generation, GeneratedAt: now,
+			Bucket: hour, BucketEnd: hour.Add(time.Hour), Generation: generation, GeneratedAt: now,
 			MaxThreads: scheduler.config.MaxThreads, Priority: scheduler.config.Priority,
 			MaxMemoryBytes: scheduler.config.MaxMemoryBytes,
 		}); err != nil {
@@ -138,6 +147,39 @@ func (scheduler *flowHotRollupScheduler) scanFiveMinute(ctx context.Context, now
 		completed++
 	}
 	return completed, nil
+}
+
+// flowHourMarkers summarizes one resolution's latest-generation markers inside
+// a UTC hour. readable counts the buckets readers accept (the same rule as
+// CoveredThroughAtLeast); oldest/newest span their generated_at.
+type flowHourMarkers struct {
+	readable       int
+	maxGeneration  uint64
+	oldest, newest time.Time
+}
+
+func (scheduler *flowHotRollupScheduler) hourlyMarkers(ctx context.Context, resolution flowch.RollupResolution, from, to time.Time) (map[int64]flowHourMarkers, error) {
+	markers, err := scheduler.runner.GenerationMarkers(ctx, resolution, from, to)
+	if err != nil {
+		return nil, err
+	}
+	hours := make(map[int64]flowHourMarkers)
+	for _, marker := range markers {
+		key := marker.Bucket.UTC().Truncate(time.Hour).Unix()
+		hour := hours[key]
+		hour.maxGeneration = max(hour.maxGeneration, marker.Generation)
+		if marker.Generation != 0 && (marker.Generation >= lifecycleGenerationFloor || marker.Generation >= scheduler.config.MinimumGeneration) {
+			hour.readable++
+			if hour.oldest.IsZero() || marker.GeneratedAt.Before(hour.oldest) {
+				hour.oldest = marker.GeneratedAt
+			}
+			if marker.GeneratedAt.After(hour.newest) {
+				hour.newest = marker.GeneratedAt
+			}
+		}
+		hours[key] = hour
+	}
+	return hours, nil
 }
 
 func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now time.Time, resolution flowch.RollupResolution,

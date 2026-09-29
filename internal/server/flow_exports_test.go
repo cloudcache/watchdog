@@ -4,15 +4,53 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/flowquery"
 	"github.com/cloudcache/watchdog/internal/opjob"
+	"github.com/gin-gonic/gin"
 )
+
+// TestFlowExportRequiresExportGrant: viewing a layer does not authorize bulk
+// export of it, at enqueue time or when the job runs.
+func TestFlowExportRequiresExportGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set(principalKey, &principal{UserID: "u1", Abilities: map[string]bool{"flow.view.customer": true}})
+	if _, ok := (&Server{}).authorizeFlowExportView(c, ""); ok || recorder.Code != http.StatusForbidden {
+		t.Fatalf("customer export without flow.export.customer: ok=%v status=%d", ok, recorder.Code)
+	}
+
+	s := &Server{}
+	subject := &principal{UserID: "u1", Abilities: map[string]bool{
+		"flow.view.raw": true, "flow.view.supplier": true, "device.viewAll": true,
+	}}
+	if err := s.authorizeFlowExportScope(context.Background(), subject, flowquery.ViewRaw, nil, nil, nil); err == nil {
+		t.Fatal("raw export job without flow.export.raw was authorized")
+	}
+	subject.Abilities["flow.export.raw"] = true
+	if err := s.authorizeFlowExportScope(context.Background(), subject, flowquery.ViewRaw, nil, nil, nil); err != nil {
+		t.Fatalf("raw export job with view and export grants: %v", err)
+	}
+	if err := s.authorizeFlowExportScope(context.Background(), subject, flowquery.ViewSupplier, nil, nil, nil); err == nil {
+		t.Fatal("the raw export grant authorized a supplier export job")
+	}
+
+	triager := &principal{UserID: "u2", Abilities: map[string]bool{"flow.vpn.view": true}}
+	findings := flowExportPayload{Kind: flowExportKindVPNFindings, Format: "csv", MaxRows: 10, VPNFindings: &vpnFindingsExportSpec{}}
+	if _, _, err := s.runFlowVPNFindingsExportArtifact(context.Background(), triager, findings); err == nil ||
+		!strings.Contains(err.Error(), "flow.export.raw") {
+		t.Fatalf("vpn findings export job without flow.export.raw: %v", err)
+	}
+}
 
 func detailExportRow(fields []flowquery.DetailField, values ...any) flowDetailExportRow {
 	return flowDetailExportRow{

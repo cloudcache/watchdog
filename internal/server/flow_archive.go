@@ -32,7 +32,14 @@ func (s *Server) startFlowArchive() error {
 	if err != nil {
 		return err
 	}
-	s.flowRollup = runner
+	// Report requests read coverage markers through s.flowRollup on the
+	// interactive pool, so a long rollup or archive job holding the batch
+	// connection cannot stall them. Background work below keeps the batch runner.
+	reader, err := flowch.NewRollupRunner(s.clickHouse)
+	if err != nil {
+		return err
+	}
+	s.flowRollup = reader
 	store := s.flowLifecycle
 	if store == nil {
 		store = flowlifecycle.NewStore(s.db)

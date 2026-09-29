@@ -900,7 +900,9 @@ func TestFlowArchiveOperationJobRetriesFromCheckpointIntegration(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if completed.Status != opjob.StatusSucceeded || completed.AttemptCount != 2 || completed.ProgressDone != 24 || runner.calls.Load() != 25 {
+	// 24 hourly rollups + the injected failure at call 4 (retried from the hour
+	// checkpoint) + the daily 1d rollup the archive handler runs since 00be2cdb5.
+	if completed.Status != opjob.StatusSucceeded || completed.AttemptCount != 2 || completed.ProgressDone != 24 || runner.calls.Load() != 26 {
 		t.Fatalf("completed=%+v rollup_calls=%d", completed, runner.calls.Load())
 	}
 	var state, errorCode string

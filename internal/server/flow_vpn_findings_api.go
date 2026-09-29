@@ -143,6 +143,12 @@ func (s *Server) createVPNFindingsExport(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "flow_query_unavailable", "flow ClickHouse store is not configured")
 		return
 	}
+	// Findings carry raw-layer endpoints, so bulk export needs the raw export
+	// grant on top of flow.vpn.view.
+	if !currentPrincipal(c).can("flow.export.raw") {
+		fail(c, http.StatusForbidden, "forbidden", "vpn findings export requires flow.export.raw")
+		return
+	}
 	var req struct {
 		From           string              `json:"from"`
 		To             string              `json:"to"`

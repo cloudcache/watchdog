@@ -48,8 +48,8 @@ func (s *Server) runFlowVPNFindingsExportArtifact(ctx context.Context, p *princi
 	if payload.VPNFindings == nil {
 		return nil, 0, opjob.TerminalError(errors.New("invalid vpn findings export payload"))
 	}
-	if !p.can("flow.vpn.view") {
-		return nil, 0, opjob.TerminalError(errors.New("vpn findings export requires flow.vpn.view"))
+	if !p.can("flow.vpn.view") || !p.can("flow.export.raw") {
+		return nil, 0, opjob.TerminalError(errors.New("vpn findings export requires flow.vpn.view and flow.export.raw"))
 	}
 	items, err := s.loadVPNFindingsForExport(ctx, *payload.VPNFindings, payload.MaxRows)
 	if err != nil {

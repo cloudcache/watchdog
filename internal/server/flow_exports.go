@@ -278,7 +278,7 @@ func (s *Server) buildDetailExportPayload(c *gin.Context, detail flowquery.Detai
 	}
 	// Detail exports resolve one immutable, replayable provenance layer; the
 	// customer layer is a live rollup projection, not exportable at record grain.
-	view, ok := s.authorizeFlowView(c, detail.View)
+	view, ok := s.authorizeFlowExportView(c, detail.View)
 	if !ok {
 		return flowExportPayload{}, false
 	}
@@ -313,7 +313,7 @@ func (s *Server) buildDetailExportPayload(c *gin.Context, detail flowquery.Detai
 // buildQueryExportPayload validates an aggregate/joint query export. The export
 // flattens points, so any table projection carried by the query is ignored.
 func (s *Server) buildQueryExportPayload(c *gin.Context, query flowAggregateInput, format string) (flowExportPayload, bool) {
-	view, ok := s.authorizeFlowView(c, query.View)
+	view, ok := s.authorizeFlowExportView(c, query.View)
 	if !ok {
 		return flowExportPayload{}, false
 	}
@@ -336,7 +336,7 @@ func (s *Server) buildReportExportPayload(c *gin.Context, report flowReportReque
 		fail(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return flowExportPayload{}, false
 	}
-	view, ok := s.authorizeFlowView(c, report.View)
+	view, ok := s.authorizeFlowExportView(c, report.View)
 	if !ok {
 		return flowExportPayload{}, false
 	}
@@ -536,11 +536,30 @@ func renderFlowExport(format string, rows []flowExportRow) ([]byte, error) {
 	return renderFlowExportCSV(rows)
 }
 
-// authorizeFlowExportScope re-checks the export subject's view and resource scope
-// without a gin context, mirroring authorizeFlow{View,ResourceFilters}.
+// authorizeFlowExportView resolves the requested layer like authorizeFlowView and
+// additionally requires flow.export.<layer>: viewing a layer does not grant bulk
+// extraction of it.
+func (s *Server) authorizeFlowExportView(c *gin.Context, requested flowquery.View) (flowquery.View, bool) {
+	view, ok := s.authorizeFlowView(c, requested)
+	if !ok {
+		return "", false
+	}
+	if !currentPrincipal(c).can("flow.export." + string(view)) {
+		fail(c, http.StatusForbidden, "forbidden", "flow "+string(view)+" export is not permitted")
+		return "", false
+	}
+	return view, true
+}
+
+// authorizeFlowExportScope re-checks the export subject's view, export grant and
+// resource scope without a gin context, mirroring authorizeFlowExportView and
+// authorizeFlowResourceFilters, so a grant revoked after enqueue stops the job.
 func (s *Server) authorizeFlowExportScope(ctx context.Context, p *principal, view flowquery.View, targetIDs, deviceIDs, exporterIDs []string) error {
 	if !p.can("flow.view." + string(view)) {
 		return fmt.Errorf("flow %s view is not permitted", view)
+	}
+	if !p.can("flow.export." + string(view)) {
+		return fmt.Errorf("flow %s export is not permitted", view)
 	}
 	if p.can("device.viewAll") {
 		return nil

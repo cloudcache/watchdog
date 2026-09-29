@@ -12,16 +12,31 @@ import (
 )
 
 type fakeHotRollupRunner struct {
-	markers       []flowch.RollupMarker
-	needsRepair   map[int64]bool
-	repairChecks  int
-	requests      []flowch.RollupRequest
-	sourceCovered bool
-	rawRecords    bool
+	markers []flowch.RollupMarker
+	// resolutionMarkers, when it has an entry, overrides markers for that
+	// resolution so a test can model the 1m source and 5m target separately.
+	resolutionMarkers map[flowch.RollupResolution][]flowch.RollupMarker
+	needsRepair       map[int64]bool
+	repairChecks      int
+	requests          []flowch.RollupRequest
+	sourceCovered     bool
+	rawRecords        bool
 }
 
-func (runner *fakeHotRollupRunner) GenerationMarkers(context.Context, flowch.RollupResolution, time.Time, time.Time) ([]flowch.RollupMarker, error) {
+func (runner *fakeHotRollupRunner) GenerationMarkers(_ context.Context, resolution flowch.RollupResolution, _, _ time.Time) ([]flowch.RollupMarker, error) {
+	if markers, ok := runner.resolutionMarkers[resolution]; ok {
+		return append([]flowch.RollupMarker(nil), markers...), nil
+	}
 	return append([]flowch.RollupMarker(nil), runner.markers...), nil
+}
+
+// hourMarkers returns one marker per step-aligned bucket of the UTC hour.
+func hourMarkers(hour time.Time, step time.Duration, generation uint64, generatedAt time.Time) []flowch.RollupMarker {
+	markers := make([]flowch.RollupMarker, 0, int(time.Hour/step))
+	for bucket := hour; bucket.Before(hour.Add(time.Hour)); bucket = bucket.Add(step) {
+		markers = append(markers, flowch.RollupMarker{Bucket: bucket, Generation: generation, GeneratedAt: generatedAt})
+	}
+	return markers
 }
 
 func (runner *fakeHotRollupRunner) CoveredThroughAtLeast(_ context.Context, resolution flowch.RollupResolution, from, to time.Time, _ uint64) (time.Time, error) {
@@ -221,7 +236,11 @@ func TestFlowHotRollupSchedulerRegeneratesPreReleaseShapeWithoutCoverageGap(t *t
 
 func TestFlowHotRollupSchedulerFillsFiveMinuteFromCompleteMinute(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
-	runner := &fakeHotRollupRunner{sourceCovered: true} // 1m complete, 5m uncovered (fake returns from for 5m)
+	hour := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
+	runner := &fakeHotRollupRunner{resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+		flowch.RollupOneMinute:  hourMarkers(hour, time.Minute, 10, now.Add(-10*time.Minute)),
+		flowch.RollupFiveMinute: nil,
+	}}
 	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
 		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
 		MinuteLookback: time.Minute, HourLookback: 4 * time.Hour,
@@ -240,14 +259,19 @@ func TestFlowHotRollupSchedulerFillsFiveMinuteFromCompleteMinute(t *testing.T) {
 	if req.Resolution != flowch.RollupFiveMinute || req.SourceResolution != flowch.RollupOneMinute {
 		t.Fatalf("wrong 5m resolution/source: %+v", req)
 	}
-	if req.BucketEnd.Sub(req.Bucket) != time.Hour || req.Bucket.Truncate(time.Hour) != req.Bucket {
-		t.Fatalf("5m batch should span one aligned hour: %+v", req)
+	if !req.Bucket.Equal(hour) || req.BucketEnd.Sub(req.Bucket) != time.Hour {
+		t.Fatalf("5m batch should span the covered hour: %+v", req)
 	}
 }
 
 func TestFlowHotRollupSchedulerSkipsFiveMinuteWhenMinuteIncomplete(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
-	runner := &fakeHotRollupRunner{sourceCovered: false} // 1m NOT complete -> no 5m derivation
+	hour := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
+	runner := &fakeHotRollupRunner{resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+		// 59 of 60 minutes: the hour is not complete, so no 5m derivation.
+		flowch.RollupOneMinute:  hourMarkers(hour, time.Minute, 10, now.Add(-10*time.Minute))[1:],
+		flowch.RollupFiveMinute: nil,
+	}}
 	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
 		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
 		MinuteLookback: time.Minute, HourLookback: 4 * time.Hour,
@@ -259,5 +283,65 @@ func TestFlowHotRollupSchedulerSkipsFiveMinuteWhenMinuteIncomplete(t *testing.T)
 	}
 	if completed != 0 || len(runner.requests) != 0 {
 		t.Fatalf("expected no 5m runs when 1m incomplete, got completed=%d requests=%d", completed, len(runner.requests))
+	}
+}
+
+func TestFlowHotRollupSchedulerRederivesFiveMinuteAfterMinuteRepair(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
+	hour := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
+	derivedAt := now.Add(-20 * time.Minute)
+	config := FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: time.Hour, HourLookback: 4 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 60, MaxHourBucketsPerRun: 4,
+	}
+	fiveMinute := hourMarkers(hour, 5*time.Minute, 500, derivedAt)
+
+	// Stable: every 1m generation predates the 5m derivation, so the hour is not
+	// rewritten on every scan.
+	stable := &fakeHotRollupRunner{resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+		flowch.RollupOneMinute:  hourMarkers(hour, time.Minute, 10, derivedAt),
+		flowch.RollupFiveMinute: fiveMinute,
+	}}
+	scheduler := &flowHotRollupScheduler{runner: stable, config: config}
+	if completed, err := scheduler.scanFiveMinute(context.Background(), now); err != nil || completed != 0 {
+		t.Fatalf("stable 5m hour was rewritten: completed=%d err=%v requests=%+v", completed, err, stable.requests)
+	}
+
+	// One minute repaired after the 5m derivation (late-arriving records): the
+	// hour is derived again with a generation that supersedes the stale one.
+	minute := hourMarkers(hour, time.Minute, 10, derivedAt)
+	minute[37] = flowch.RollupMarker{Bucket: minute[37].Bucket, Generation: 600, GeneratedAt: derivedAt.Add(10 * time.Minute)}
+	repaired := &fakeHotRollupRunner{resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+		flowch.RollupOneMinute:  minute,
+		flowch.RollupFiveMinute: fiveMinute,
+	}}
+	scheduler = &flowHotRollupScheduler{runner: repaired, config: config}
+	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	if err != nil || completed != 1 || len(repaired.requests) != 1 {
+		t.Fatalf("repaired 1m did not re-derive 5m: completed=%d err=%v requests=%+v", completed, err, repaired.requests)
+	}
+	if got := repaired.requests[0]; !got.Bucket.Equal(hour) || got.Resolution != flowch.RollupFiveMinute || got.Generation <= 500 {
+		t.Fatalf("5m re-derivation=%+v", got)
+	}
+}
+
+func TestFlowHotRollupSchedulerFiveMinuteScanStopsAtMinuteRetention(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
+	// A complete 1m hour older than the 1m TTL cannot really exist; the scan must
+	// not even reach it, however long hour_lookback is.
+	expired := now.Add(-5*time.Minute).Truncate(time.Hour).Add(-flowMinuteTierRetention - time.Hour)
+	runner := &fakeHotRollupRunner{resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+		flowch.RollupOneMinute:  hourMarkers(expired, time.Minute, 10, now.Add(-50*time.Hour)),
+		flowch.RollupFiveMinute: nil,
+	}}
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: time.Hour, HourLookback: 72 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 60, MaxHourBucketsPerRun: 4,
+	}}
+	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	if err != nil || completed != 0 || len(runner.requests) != 0 {
+		t.Fatalf("5m scan reached past 1m retention: completed=%d err=%v requests=%+v", completed, err, runner.requests)
 	}
 }
