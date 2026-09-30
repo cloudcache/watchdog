@@ -1059,7 +1059,7 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
 
 ### 18.3 待修复缺陷清单
 
-状态说明：**已部署（rNN）** 指修复已随该 release 上线生产（部署记录见 18.8）；**已修（r22，待部署）** 指已提交、待上线；其余为待办。
+状态说明：**已部署（rNN）** 指修复已随该 release 上线生产（部署记录见 18.8）；其余为待办。
 
 | ID | 优先级 | 缺陷 | 证据 | 修复方案 | 状态 |
 |---|---|---|---|---|---|
@@ -1091,7 +1091,7 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
 | D26 | P1 | `snmp_collection_recipes` 两天被更新 885 万次（约 51 次/秒），ROW 格式 binlog 每天约 8GiB | `performance_schema.table_io_waits_summary_by_table` | 降低调度状态的写频率（批量或只写变化），或 `binlog_row_image=MINIMAL`；单机无复制时可缩短 binlog 保留 | 待办 |
 | D27 | P2 | 热 rollup 修复过期小时每 30 分钟才完成一个：`BucketNeedsRepair` 的"需要修复"结论也被缓存，超出单次预算的候选要等满 `repair_interval` 才会再被检查 | 部署 r20 后 09-29 20Z–00Z 依次在 04:04、04:35、05:09、05:40、06:11 修复 | 只缓存"无需修复"的结论；已修复的小时靠新 generation 的 `generated_at` 避开窗口 | **已部署（r21）** |
 | D28 | P1 | 冷归档 job 没有资源上限，按 runner 默认每条语句 10GiB、不限线程；生产主机 15GB 内存，ClickHouse 上限约 15.1GB | `internal/flowlifecycle/archive.go` 的 1h/1d rollup 请求未带限额 | 归档复用 `flow.hot_rollup` 的 `max_threads`/`priority`/`max_memory_bytes`（生产 4 线程、6GiB） | **已部署（r21）** |
-| D29 | P0 | r21 只放宽了代码里的 `raw_retention` 下限，MySQL 0033 的 CHECK（86400..315576000）仍拒绝 6h 策略；配置同步失败，1 天策略继续生效，且 auto-deleter 只在同步成功后启动，自动删除停摆 | 生产日志 `Check constraint 'flow_retention_policy_revisions_chk_3' is violated`（r21 启动 14:32 SGT） | 迁移 0052 把该 CHECK 换成具名的 1 小时下限；配置集成测试改为经 MySQL 发布 6h 策略（缺迁移时失败） | **已修（r22，待部署）** |
+| D29 | P0 | r21 只放宽了代码里的 `raw_retention` 下限，MySQL 0033 的 CHECK（86400..315576000）仍拒绝 6h 策略；配置同步失败，1 天策略继续生效，且 auto-deleter 只在同步成功后启动，自动删除停摆 | 生产日志 `Check constraint 'flow_retention_policy_revisions_chk_3' is violated`（r21 启动 14:32 SGT） | 迁移 0052 把该 CHECK 换成具名的 1 小时下限；配置集成测试改为经 MySQL 发布 6h 策略（缺迁移时失败） | **已部署（r22）** |
 
 ### 18.4 可优化清单
 
@@ -1169,4 +1169,4 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
 | r20 `20260930-flow-lifecycle-auto-delete-r20` | `4c8398b3d` `209774aae` `ccb158bc8` `2ea288d3c` `d5f47f7d3` `192fd88ba`（自 r19 基线 `bc10958f4` 起共 34 个提交） | 11:33 SGT，用户执行 `deploy.sh` | 四个服务切到 r20；agent 改用共享 token（`agents.shared_token` 经 systemd drop-in 注入）；MySQL 0050/0051、CH 021/022 生效；策略 v1 由 `system:flow-lifecycle` 发布；Kafka 保留改为 24h/32GiB；7 天报表 1.3s、全部读 1h；热 rollup 修复 09-29 13Z–09-30 00Z 与 raw 完全一致 |
 | — | — | 14:10 SGT，用户执行 | 删除 09-27 的 22 个空 1h marker（`mutation_368`），这些小时改报缺失 |
 | r21 `20260930-flow-raw-one-day-r21` | `e8432cfa2` `f38738bb0` `1629ba436` | 14:32 SGT | 代码与配置改为 `raw_retention: "6h"`，但策略同步被 MySQL CHECK 拒绝（D29），1 天策略继续生效；用户按兜底命令手动 DROP 了 `20260929`（其 1h 已逐小时核对与 raw 一致），磁盘降至 54% |
-| r22 `20260930-flow-raw-retention-check-r22` | `bd27e6198` | 待部署 | 迁移 0052 放宽 CHECK；部署后策略 v2（6h）发布、auto-deleter 启动；09-29 会因 raw 已删被挂起为 `RAW_INCOMPLETE`（预期），09-30 于 10-01 06:00Z 归档、约 07:00Z 删除 |
+| r22 `20260930-flow-raw-retention-check-r22` | `bd27e6198` | 15:30 SGT | 迁移 0052 生效（`chk_flow_retention_raw_retention` 3600..315576000）；策略 v1 退役、v2（raw 6h、late 6h、grace 1h、auto_delete）发布，auto-deleter 启动；磁盘 60%，raw 仅剩 20260930。09-29 因 raw 已人工删除，归档时按设计挂起为 `RAW_INCOMPLETE`；09-30 于 10-01 06:00Z 归档、约 07:00Z 自动删除 |
