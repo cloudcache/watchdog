@@ -11,10 +11,15 @@ import (
 
 func main() {
 	configPath := flag.String("config", "", "path to watchdog server YAML configuration")
+	checkConfig := flag.Bool("check-config", false, "load and validate the configuration, then exit without starting")
 	flag.Parse()
 	cfg, err := server.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("watchdog-server: configuration failed: %v", err)
+	}
+	if *checkConfig {
+		log.Printf("watchdog-server: configuration is valid")
+		return
 	}
 	srv, err := server.New(cfg)
 	if err != nil {
