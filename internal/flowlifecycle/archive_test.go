@@ -63,6 +63,15 @@ func (store *archiveStoreStub) CompleteArchive(_ context.Context, _ Policy, _ ti
 	return nil
 }
 
+func (store *archiveStoreStub) HoldArchive(_ context.Context, _ Policy, _ time.Time, generation uint64, jobID string, source, archive Counters, _ time.Time) error {
+	if store.state.Generation != generation || store.state.ArchiveJobID != jobID || store.state.State != PartitionSealed {
+		return ErrTransition
+	}
+	store.state.Source, store.state.Archive = source, archive
+	store.state.State, store.state.LastErrorCode = PartitionFailed, ArchiveHoldRawIncomplete
+	return nil
+}
+
 type archiveRunnerStub struct {
 	requests []flowch.RollupRequest
 	raw      flowch.StorageCounters
@@ -172,6 +181,26 @@ func TestArchiveHandlerResumesFromCheckpointAndClassifiesFailures(t *testing.T) 
 	}
 }
 
+// TestArchiveHandlerHoldsDayWhoseRawWasRemoved: a day whose raw facts hold
+// fewer records than its published aggregate (raw dropped outside the
+// lifecycle) is held, never rebuilt into a smaller archive.
+func TestArchiveHandlerHoldsDayWhoseRawWasRemoved(t *testing.T) {
+	policy := archivePolicyFixture()
+	store := &archiveStoreStub{policy: policy}
+	runner := &archiveRunnerStub{
+		raw:     flowch.StorageCounters{RecordCount: 5},
+		archive: flowch.StorageCounters{RecordCount: 11},
+	}
+	_, err := NewArchiveHandler(store, runner)(context.Background(), archiveJobFixture(t, policy, 1))
+	if !opjob.IsTerminalError(err) || len(runner.requests) != 0 {
+		t.Fatalf("partial raw was rebuilt: err=%v requests=%d", err, len(runner.requests))
+	}
+	if store.state.State != PartitionFailed || store.state.LastErrorCode != ArchiveHoldRawIncomplete ||
+		store.state.Source.RecordCount != 5 || store.state.Archive.RecordCount != 11 {
+		t.Fatalf("held state=%+v", store.state)
+	}
+}
+
 func TestArchiveHandlerCounterMismatchIsTerminalAndRecorded(t *testing.T) {
 	policy := archivePolicyFixture()
 	store := &archiveStoreStub{policy: policy}
@@ -191,6 +220,7 @@ type archiveSchedulerStoreStub struct {
 	policy         Policy
 	partitions     map[time.Time]PartitionState
 	repairs        []PartitionState
+	superseded     []PartitionState
 	late           []PartitionState
 	archiveThrough time.Time
 	lateBefore     time.Time
@@ -225,6 +255,10 @@ func (store *archiveSchedulerStoreStub) BeginArchive(_ context.Context, policy P
 
 func (store *archiveSchedulerStoreStub) ListArchiveRepairCandidates(context.Context, int) ([]PartitionState, error) {
 	return append([]PartitionState(nil), store.repairs...), nil
+}
+
+func (store *archiveSchedulerStoreStub) ListSupersededPartitions(context.Context, Policy, int) ([]PartitionState, error) {
+	return append([]PartitionState(nil), store.superseded...), nil
 }
 
 func (store *archiveSchedulerStoreStub) ListLateCheckCandidates(_ context.Context, before time.Time, _ int) ([]PartitionState, error) {
@@ -279,6 +313,34 @@ func TestArchiveSchedulerUsesRetentionLateWindowAndBudget(t *testing.T) {
 	}
 	if !store.lateBefore.Equal(now.Add(31*time.Minute - 6*time.Hour)) {
 		t.Fatalf("late-check rotation cutoff=%v", store.lateBefore)
+	}
+}
+
+func TestArchiveSchedulerDoesNotStallBehindHeldDay(t *testing.T) {
+	policy := archivePolicyFixture()
+	held, settled, next := policy.BootstrapFrom, policy.BootstrapFrom.Add(24*time.Hour), policy.BootstrapFrom.Add(48*time.Hour)
+	now := next.Add(49 * time.Hour)
+	for _, test := range []struct {
+		code      string
+		scheduled int
+	}{
+		{code: ArchiveHoldRawIncomplete, scheduled: 1},
+		// An ordinary failure is repaired first; newer days wait for it.
+		{code: "", scheduled: 0},
+	} {
+		store := &archiveSchedulerStoreStub{policy: policy, archiveThrough: held, partitions: map[time.Time]PartitionState{
+			held:    {SourceDate: held, State: PartitionFailed, LastErrorCode: test.code},
+			settled: {SourceDate: settled, State: PartitionReconciled},
+		}}
+		jobs := &archiveEnqueuerStub{}
+		scheduler := ArchiveScheduler{Store: store, Jobs: jobs, Runner: &archiveRunnerStub{}, LateCheckEvery: 6 * time.Hour, MaxPartitions: 10, MaxLateChecks: 5}
+		count, err := scheduler.ScanOnce(context.Background(), now)
+		if err != nil || count != test.scheduled || len(jobs.jobs) != test.scheduled {
+			t.Fatalf("code=%q count=%d jobs=%d err=%v", test.code, count, len(jobs.jobs), err)
+		}
+		if test.scheduled == 1 && store.partitions[next].State != PartitionSealed {
+			t.Fatalf("day after the held one was not scheduled: %+v", store.partitions[next])
+		}
 	}
 }
 

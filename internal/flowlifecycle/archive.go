@@ -98,7 +98,13 @@ type archiveStore interface {
 	BeginArchive(context.Context, Policy, time.Time, uint64, string) (PartitionState, error)
 	MarkArchiveWritten(context.Context, Policy, time.Time, uint64, string, time.Time) error
 	CompleteArchive(context.Context, Policy, time.Time, uint64, string, Counters, Counters, time.Time) error
+	HoldArchive(context.Context, Policy, time.Time, uint64, string, Counters, Counters, time.Time) error
 }
+
+// ArchiveHoldRawIncomplete marks a day whose raw facts hold fewer records than
+// its already-published aggregate: raw was removed outside the lifecycle, so a
+// rebuild from raw would shrink the day. The scheduler never retries it.
+const ArchiveHoldRawIncomplete = "RAW_INCOMPLETE"
 
 func NewArchiveHandler(store archiveStore, runner archiveRunner) opjob.Handler {
 	return func(ctx context.Context, job opjob.Job) (string, error) {
@@ -134,6 +140,24 @@ func NewArchiveHandler(store archiveStore, runner archiveRunner) opjob.Handler {
 		generatedAt := job.CreatedAt.UTC()
 		if generatedAt.Before(day.Add(24 * time.Hour)) {
 			return "", opjob.TerminalError(errors.New("Flow archive job predates the closed UTC day"))
+		}
+		if payload.NextHour == 0 {
+			// The lifecycle generation supersedes whatever aggregate the day already
+			// has, so rebuilding is only safe while raw still holds at least as many
+			// records. Fewer means raw was removed outside the lifecycle (a manual
+			// partition drop): hold the day instead of shrinking its traffic.
+			raw, published, err := runner.DayStorageCounters(ctx, day)
+			if err != nil {
+				return "", err
+			}
+			if published.RecordCount > raw.RecordCount {
+				if err := store.HoldArchive(ctx, policy, day, payload.Generation, job.ID,
+					lifecycleCounters(raw), lifecycleCounters(published), time.Now()); err != nil {
+					return "", err
+				}
+				return "", opjob.TerminalError(fmt.Errorf("Flow archive %s held: raw facts hold %d records but the published aggregate holds %d",
+					payload.SourceDate, raw.RecordCount, published.RecordCount))
+			}
 		}
 		for hour := payload.NextHour; hour < 24; hour++ {
 			bucket := day.Add(time.Duration(hour) * time.Hour)
@@ -310,6 +334,36 @@ func (store *Store) MarkArchiveWritten(ctx context.Context, policy Policy, sourc
 	return nil
 }
 
+// HoldArchive records why a day's archive was refused (see
+// ArchiveHoldRawIncomplete). The held state is excluded from automatic repair;
+// an operator has to resolve the missing raw facts first.
+func (store *Store) HoldArchive(ctx context.Context, policy Policy, sourceDate time.Time, generation uint64, jobID string,
+	source, archive Counters, at time.Time) error {
+	day := UTCDate(sourceDate)
+	if store == nil || store.db == nil || policy.ID == "" || day.IsZero() || generation == 0 || jobID == "" || at.IsZero() {
+		return ErrInvalidPolicy
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE flow_retention_partition_states SET state='failed',
+		source_record_count=?,source_raw_bytes=?,source_raw_packets=?,source_estimated_bytes=?,source_estimated_packets=?,source_estimated_valid_records=?,
+		archive_record_count=?,archive_raw_bytes=?,archive_raw_packets=?,archive_estimated_bytes=?,archive_estimated_packets=?,archive_estimated_valid_records=?,
+		last_error_code=?,last_error_detail=?,row_version=row_version+1
+		WHERE source_date=? AND policy_id=? AND policy_version=? AND generation=? AND archive_job_id=? AND state='sealed'`,
+		source.RecordCount, source.RawBytes, source.RawPackets, source.EstimatedBytes, source.EstimatedPackets, source.EstimatedValidRecords,
+		archive.RecordCount, archive.RawBytes, archive.RawPackets, archive.EstimatedBytes, archive.EstimatedPackets, archive.EstimatedValidRecords,
+		ArchiveHoldRawIncomplete, "raw facts hold fewer records than the published aggregate; raw was removed outside the lifecycle",
+		day, policy.ID, policy.Version, generation, jobID)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return err
+		}
+		return ErrTransition
+	}
+	return nil
+}
+
 func (store *Store) CompleteArchive(ctx context.Context, policy Policy, sourceDate time.Time, generation uint64, jobID string,
 	source, archive Counters, at time.Time) error {
 	day := UTCDate(sourceDate)
@@ -357,7 +411,7 @@ func (store *Store) ListArchiveRepairCandidates(ctx context.Context, limit int) 
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT `+partitionColumns+`
 		FROM flow_retention_partition_states AS partition_state
-		WHERE partition_state.state='failed' OR (
+		WHERE (partition_state.state='failed' AND COALESCE(partition_state.last_error_code,'')<>'`+ArchiveHoldRawIncomplete+`') OR (
 			partition_state.state IN ('sealed','archive_written') AND NOT EXISTS (
 				SELECT 1 FROM operation_jobs AS job
 				WHERE job.id=partition_state.archive_job_id AND job.status NOT IN ('failed','canceled')
@@ -379,12 +433,38 @@ func (store *Store) ListArchiveRepairCandidates(ctx context.Context, limit int) 
 	return items, rows.Err()
 }
 
+// ListSupersededPartitions returns archived, not yet deleted days from the
+// published policy's bootstrap day on that are still bound to an older
+// revision, oldest first.
+func (store *Store) ListSupersededPartitions(ctx context.Context, policy Policy, limit int) ([]PartitionState, error) {
+	if store == nil || store.db == nil || limit < 1 || limit > 366 || policy.Version == 0 || policy.BootstrapFrom.IsZero() {
+		return nil, ErrInvalidPolicy
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT `+partitionColumns+` FROM flow_retention_partition_states
+		WHERE policy_version < ? AND source_date >= ? AND state IN ('reconciled','delete_eligible')
+		  AND delete_job_id IS NULL AND raw_deleted_at IS NULL
+		ORDER BY source_date ASC LIMIT ?`, policy.Version, UTCDate(policy.BootstrapFrom), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]PartitionState, 0)
+	for rows.Next() {
+		item, err := scanPartition(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (store *Store) ListLateCheckCandidates(ctx context.Context, before time.Time, limit int) ([]PartitionState, error) {
 	if store == nil || store.db == nil || before.IsZero() || limit < 1 || limit > 366 {
 		return nil, ErrInvalidPolicy
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT `+partitionColumns+` FROM flow_retention_partition_states
-		WHERE state IN ('reconciled','delete_eligible') AND raw_deleted_at IS NULL
+		WHERE state IN ('reconciled','delete_eligible') AND raw_deleted_at IS NULL AND delete_job_id IS NULL
 		  AND (late_checked_at IS NULL OR late_checked_at<=?)
 		ORDER BY COALESCE(late_checked_at,'1970-01-01') ASC,source_date ASC LIMIT ?`, before.UTC().Truncate(time.Millisecond), limit)
 	if err != nil {

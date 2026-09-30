@@ -167,7 +167,7 @@ func (store *Store) ApproveRawDayDelete(ctx context.Context, readiness RawDelete
 	if err != nil {
 		return DeletionApproval{}, PartitionState{}, err
 	}
-	if policy.Status != PolicyPublished || policy.Version != readiness.PolicyVersion {
+	if policy.Status != PolicyPublished || policy.Version != readiness.PolicyVersion || policy.WaiveKafkaCoverage != readiness.KafkaCoverageWaived {
 		return DeletionApproval{}, PartitionState{}, ErrTransition
 	}
 	if policy.RequireBackupBeforeDelete {
@@ -234,7 +234,7 @@ func validateRawDayApprovalRequest(readiness RawDeleteReadiness, expected uint64
 		strings.TrimSpace(readiness.PolicyID) == "" || readiness.PolicyVersion == 0 || readiness.Generation == 0 ||
 		strings.TrimSpace(actor) == "" || now.IsZero() || readiness.CheckedAt.IsZero() || readiness.CheckedAt.After(now) ||
 		readiness.DeleteEligibleAt.IsZero() || readiness.Source != readiness.Archive ||
-		(readiness.Source.RecordCount > 0 && len(readiness.Coverage) == 0) {
+		(!readiness.KafkaCoverageWaived && readiness.Source.RecordCount > 0 && len(readiness.Coverage) == 0) {
 		return time.Time{}, ErrInvalidDeletionApproval
 	}
 	type coverageKey struct {

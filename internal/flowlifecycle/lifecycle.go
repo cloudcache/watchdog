@@ -57,6 +57,13 @@ type Policy struct {
 	CreatedAt                 time.Time `json:"created_at"`
 	PublishedAt               time.Time `json:"published_at,omitzero"`
 	RetiredAt                 time.Time `json:"retired_at,omitzero"`
+	// AutoDelete lets the server approve and schedule a raw day's deletion as
+	// the system actor once its evidence is complete, instead of an operator.
+	AutoDelete bool `json:"auto_delete"`
+	// WaiveKafkaCoverage drops the Kafka offset-coverage gate for installations
+	// without Flow reconciliation. Conservation, late/grace windows, the delete
+	// barrier and the reclassification check still apply.
+	WaiveKafkaCoverage bool `json:"waive_kafka_coverage"`
 }
 
 // NormalizePolicy applies only semantic defaults; it deliberately has no
@@ -77,6 +84,7 @@ func NormalizePolicy(policy Policy) (Policy, error) {
 		policy.ArchiveResolutionSeconds != uint32(ArchiveResolution/time.Second) ||
 		(policy.ArchiveRetentionSeconds != 0 && policy.ArchiveRetentionSeconds <= policy.RawRetentionSeconds) ||
 		(policy.ArchiveDeleteEnabled && policy.ArchiveRetentionSeconds == 0) ||
+		(policy.AutoDelete && !policy.RawDeleteEnabled) ||
 		policy.LateArrivalSeconds > 604800 || policy.DeleteGraceSeconds < 3600 || policy.DeleteGraceSeconds > 2592000 ||
 		policy.MaxPartitionsPerRun < 1 || policy.MaxPartitionsPerRun > 366 {
 		return Policy{}, ErrInvalidPolicy
@@ -243,7 +251,7 @@ func ValidateRawDayDelete(guard RawDayDeleteGuard) error {
 		guard.DeleteEligibleAt.Before(earliest) || guard.Now.UTC().Before(guard.DeleteEligibleAt.UTC()) || guard.Source != guard.Archive {
 		return ErrDeleteLocked
 	}
-	if guard.Source.RecordCount > 0 && len(guard.Coverage) == 0 {
+	if !policy.WaiveKafkaCoverage && guard.Source.RecordCount > 0 && len(guard.Coverage) == 0 {
 		return ErrDeleteLocked
 	}
 	seen := make(map[string]struct{}, len(guard.Coverage))

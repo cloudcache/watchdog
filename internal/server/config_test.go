@@ -46,8 +46,50 @@ func TestLoadConfigRejectsRemovedStaticFlowRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := LoadConfig(path)
-	if err == nil || !strings.Contains(err.Error(), "publish the global Flow lifecycle policy") {
+	if err == nil || !strings.Contains(err.Error(), "configure flow.lifecycle") {
 		t.Fatalf("removed static lifecycle setting error=%v", err)
+	}
+}
+
+func TestLoadConfigFlowLifecycleMapsToPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchdog.yaml")
+	if err := os.WriteFile(path, []byte(`
+flow:
+  lifecycle:
+    enabled: true
+    bootstrap_from: "2026-09-29"
+    raw_delete: true
+    auto_delete: true
+    require_backup_before_delete: false
+    require_kafka_coverage: false
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := cfg.Flow.Lifecycle.policy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.BootstrapFrom.Equal(time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)) || policy.RawRetentionSeconds != 86400 ||
+		policy.LateArrivalSeconds != 6*3600 || policy.DeleteGraceSeconds != 3600 || policy.MaxPartitionsPerRun != 1 ||
+		!policy.RawDeleteEnabled || !policy.AutoDelete || policy.RequireBackupBeforeDelete || !policy.WaiveKafkaCoverage {
+		t.Fatalf("flow.lifecycle policy=%+v", policy)
+	}
+	for name, body := range map[string]string{
+		"missing bootstrap":         "flow:\n  lifecycle:\n    enabled: true\n",
+		"auto without raw delete":   "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    auto_delete: true\n",
+		"raw retention below a day": "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    raw_retention: \"12h\"\n",
+		"grace below an hour":       "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    delete_grace: \"30m\"\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "validate flow lifecycle") {
+			t.Fatalf("%s: err=%v", name, err)
+		}
 	}
 }
 

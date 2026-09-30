@@ -74,12 +74,12 @@ func (request flowRetentionPolicyInput) policy(id string) (flowlifecycle.Policy,
 func (s *Server) registerFlowStorageLifecycleRoutes(auth *gin.RouterGroup) {
 	policies := auth.Group("/flow/storage/policies")
 	policies.GET("", s.requirePermission("job.view"), s.listFlowRetentionPolicies)
-	policies.POST("", s.requirePermission("job.manage"), s.createFlowRetentionPolicy)
+	policies.POST("", s.requirePermission("job.manage"), s.rejectConfigManagedFlowPolicy, s.createFlowRetentionPolicy)
 	policies.GET("/:id", s.requirePermission("job.view"), s.getFlowRetentionPolicy)
-	policies.PATCH("/:id", s.requirePermission("job.manage"), s.updateFlowRetentionPolicy)
-	policies.DELETE("/:id", s.requirePermission("job.manage"), s.deleteFlowRetentionPolicy)
-	policies.POST("/:id/actions/publish", s.requirePermission("job.manage"), s.publishFlowRetentionPolicy)
-	policies.POST("/:id/actions/retire", s.requirePermission("job.manage"), s.retireFlowRetentionPolicy)
+	policies.PATCH("/:id", s.requirePermission("job.manage"), s.rejectConfigManagedFlowPolicy, s.updateFlowRetentionPolicy)
+	policies.DELETE("/:id", s.requirePermission("job.manage"), s.rejectConfigManagedFlowPolicy, s.deleteFlowRetentionPolicy)
+	policies.POST("/:id/actions/publish", s.requirePermission("job.manage"), s.rejectConfigManagedFlowPolicy, s.publishFlowRetentionPolicy)
+	policies.POST("/:id/actions/retire", s.requirePermission("job.manage"), s.rejectConfigManagedFlowPolicy, s.retireFlowRetentionPolicy)
 
 	storage := auth.Group("/flow/storage")
 	storage.GET("/partitions", s.requirePermission("job.view"), s.listFlowRetentionPartitions)

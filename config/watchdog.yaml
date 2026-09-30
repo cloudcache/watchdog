@@ -71,6 +71,17 @@ flow:                               # runtime inputs; lifecycle policy is publis
     max_batches: 1000
     max_fact_rows: 250000
     max_read_bytes: 536870912
+  lifecycle:                        # installation-wide retention policy; while enabled the policy API is read-only
+    enabled: false
+    bootstrap_from: ""              # first UTC day (YYYY-MM-DD) whose raw facts are complete; required when enabled
+    raw_retention: "24h"            # a raw day is archived this long after it ends, then deleted after delete_grace
+    late_arrival: "6h"
+    delete_grace: "1h"
+    max_partitions_per_run: 1
+    raw_delete: false
+    auto_delete: false              # approve and schedule eligible raw deletions as system:flow-lifecycle
+    require_backup_before_delete: true
+    require_kafka_coverage: true    # set false only when reconciliation is disabled
 
 agent_plans:                        # one installation-wide immutable plan signer
   signing_key_id: "watchdog-agent-plan-v1"

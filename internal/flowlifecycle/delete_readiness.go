@@ -60,6 +60,9 @@ type RawDeleteReadiness struct {
 	PhysicalRecords  uint64           `json:"physical_record_count"`
 	Coverage         []OffsetCoverage `json:"kafka_coverage"`
 	BackupEvidenceID string           `json:"backup_evidence_id,omitempty"`
+	// KafkaCoverageWaived reports that the published policy waives the Kafka
+	// offset-coverage gate, so Coverage is intentionally empty.
+	KafkaCoverageWaived bool `json:"kafka_coverage_waived,omitempty"`
 }
 
 func (store *Store) RawDayDeleteReadiness(ctx context.Context, sourceDate, now time.Time, reader RawDayEvidenceReader) (RawDeleteReadiness, error) {
@@ -97,9 +100,13 @@ func (store *Store) RawDayDeleteReadiness(ctx context.Context, sourceDate, now t
 	if err != nil {
 		return RawDeleteReadiness{}, err
 	}
-	spans, err := reader.DayOffsetCoverage(ctx, day)
-	if err != nil {
-		return RawDeleteReadiness{}, err
+	var spans []flowch.DayOffsetCoverage
+	result.KafkaCoverageWaived = policy.WaiveKafkaCoverage
+	if !policy.WaiveKafkaCoverage {
+		spans, err = reader.DayOffsetCoverage(ctx, day)
+		if err != nil {
+			return RawDeleteReadiness{}, err
+		}
 	}
 
 	evidenceBlockers := make([]string, 0)
@@ -117,7 +124,7 @@ func (store *Store) RawDayDeleteReadiness(ctx context.Context, sourceDate, now t
 	if eligibilityErr != nil || state.ReconciledAt.IsZero() || state.DeleteEligibleAt.Before(earliest) || now.UTC().Before(state.DeleteEligibleAt.UTC()) {
 		evidenceBlockers = append(evidenceBlockers, DeleteBlockerLateWindowOpen)
 	}
-	if result.Source.RecordCount > 0 && len(spans) == 0 {
+	if !policy.WaiveKafkaCoverage && result.Source.RecordCount > 0 && len(spans) == 0 {
 		evidenceBlockers = append(evidenceBlockers, DeleteBlockerCoverageMissing)
 	}
 	seen := make(map[string]struct{}, len(spans))

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cloudcache/watchdog/internal/billing"
+	"github.com/cloudcache/watchdog/internal/flowlifecycle"
 	"github.com/cloudcache/watchdog/internal/flowstream"
 	"github.com/cloudcache/watchdog/internal/snmpch"
 	"gopkg.in/yaml.v3"
@@ -97,6 +98,57 @@ type FlowConfig struct {
 	Query          FlowQueryConfig          `yaml:"query"`
 	HotRollup      FlowHotRollupConfig      `yaml:"hot_rollup"`
 	Reconciliation FlowReconciliationConfig `yaml:"reconciliation"`
+	Lifecycle      FlowLifecycleConfig      `yaml:"lifecycle"`
+}
+
+// FlowLifecycleConfig makes the server configuration, not the management API,
+// the source of the installation-wide Flow retention policy. While enabled the
+// policy API is read-only, and a startup whose values differ from the
+// published revision publishes a new one as the system actor. BootstrapFrom
+// has no default: it is the first UTC day the lifecycle may archive and delete,
+// and must be a day whose raw facts are complete.
+type FlowLifecycleConfig struct {
+	Enabled             bool          `yaml:"enabled"`
+	BootstrapFrom       string        `yaml:"bootstrap_from"`
+	RawRetention        time.Duration `yaml:"raw_retention"`
+	LateArrival         time.Duration `yaml:"late_arrival"`
+	DeleteGrace         time.Duration `yaml:"delete_grace"`
+	MaxPartitionsPerRun uint32        `yaml:"max_partitions_per_run"`
+	RawDelete           bool          `yaml:"raw_delete"`
+	// AutoDelete approves and schedules each eligible raw day as the system
+	// actor instead of waiting for an operator; it requires RawDelete.
+	AutoDelete                bool `yaml:"auto_delete"`
+	RequireBackupBeforeDelete bool `yaml:"require_backup_before_delete"`
+	// RequireKafkaCoverage keeps the reconciliation offset-coverage gate; turn
+	// it off only when flow.reconciliation is disabled.
+	RequireKafkaCoverage bool `yaml:"require_kafka_coverage"`
+}
+
+// policy is the retention revision flow.lifecycle describes.
+func (cfg FlowLifecycleConfig) policy() (flowlifecycle.Policy, error) {
+	bootstrap, err := time.Parse(time.DateOnly, strings.TrimSpace(cfg.BootstrapFrom))
+	if err != nil || cfg.RawRetention%time.Second != 0 || cfg.LateArrival%time.Second != 0 || cfg.DeleteGrace%time.Second != 0 ||
+		cfg.LateArrival < 0 || cfg.LateArrival > 7*24*time.Hour || cfg.DeleteGrace > 30*24*time.Hour {
+		return flowlifecycle.Policy{}, flowlifecycle.ErrInvalidPolicy
+	}
+	return flowlifecycle.NormalizePolicy(flowlifecycle.Policy{
+		ID: "config", Version: 1, Status: flowlifecycle.PolicyDraft, BootstrapFrom: bootstrap,
+		RawRetentionSeconds: uint64(cfg.RawRetention / time.Second), LateArrivalSeconds: uint32(cfg.LateArrival / time.Second),
+		DeleteGraceSeconds: uint32(cfg.DeleteGrace / time.Second), MaxPartitionsPerRun: cfg.MaxPartitionsPerRun,
+		RawDeleteEnabled: cfg.RawDelete, AutoDelete: cfg.AutoDelete,
+		RequireBackupBeforeDelete: cfg.RequireBackupBeforeDelete, WaiveKafkaCoverage: !cfg.RequireKafkaCoverage,
+	})
+}
+
+func validateFlowLifecycleConfig(cfg FlowLifecycleConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if _, err := cfg.policy(); err != nil {
+		return errors.New("bootstrap_from must be YYYY-MM-DD; raw_retention at least 24h; late_arrival at most 168h; " +
+			"delete_grace 1h..720h; max_partitions_per_run 1..366; auto_delete requires raw_delete")
+	}
+	return nil
 }
 
 // FlowQueryConfig owns the operational limits for interactive and asynchronous
@@ -267,6 +319,10 @@ func defaultConfig() Config {
 			Reconciliation: FlowReconciliationConfig{
 				Interval: 5 * time.Minute, MaxBatches: 1000, MaxFactRows: 250_000, MaxReadBytes: 512 << 20,
 			},
+			Lifecycle: FlowLifecycleConfig{
+				RawRetention: 24 * time.Hour, LateArrival: 6 * time.Hour, DeleteGrace: time.Hour, MaxPartitionsPerRun: 1,
+				RequireBackupBeforeDelete: true, RequireKafkaCoverage: true,
+			},
 		},
 		AgentPlans: AgentPlansConfig{SigningKeyID: "watchdog-agent-plan-v1", SigningPrivateKey: "data/agent-plan-ed25519.pem", DefaultTTL: 365 * 24 * time.Hour},
 		Address:    AddressConfig{ArtifactDir: "data/address-artifacts", MaxUploadBytes: 2 << 30, SnapshotDir: "data/dimension-snapshots"},
@@ -325,6 +381,9 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if err := validateFlowHotRollupConfig(cfg.Flow.HotRollup); err != nil {
 		return Config{}, fmt.Errorf("validate flow hot rollup: %w", err)
+	}
+	if err := validateFlowLifecycleConfig(cfg.Flow.Lifecycle); err != nil {
+		return Config{}, fmt.Errorf("validate flow lifecycle: %w", err)
 	}
 	if err := validateBillingConfig(cfg.Billing); err != nil {
 		return Config{}, fmt.Errorf("validate billing: %w", err)
@@ -434,7 +493,7 @@ func rejectDeprecatedFlowLifecycleConfig(data []byte) error {
 	}
 	if document.Flow.RetentionRawDays != nil || document.Flow.DownsampleAfterDays != nil ||
 		document.Flow.Rollup1mDays != nil || document.Flow.Rollup1hDays != nil {
-		return errors.New("flow retention_raw_days/downsample_after_days/rollup_*_days were removed; publish the global Flow lifecycle policy through the management API")
+		return errors.New("flow retention_raw_days/downsample_after_days/rollup_*_days were removed; configure flow.lifecycle instead")
 	}
 	return nil
 }

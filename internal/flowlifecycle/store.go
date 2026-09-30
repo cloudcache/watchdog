@@ -31,6 +31,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 const policyColumns = `id,policy_version,status,bootstrap_from,raw_retention_seconds,
 	archive_resolution_seconds,archive_retention_seconds,late_arrival_seconds,delete_grace_seconds,
 	max_partitions_per_run,raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,
+	auto_delete,waive_kafka_coverage,
 	row_version,COALESCE(created_by,''),COALESCE(published_by,''),COALESCE(retired_by,''),created_at,published_at,retired_at`
 
 type rowScanner interface{ Scan(...any) error }
@@ -41,6 +42,7 @@ func scanPolicy(row rowScanner) (Policy, error) {
 	err := row.Scan(&policy.ID, &policy.Version, &policy.Status, &policy.BootstrapFrom, &policy.RawRetentionSeconds,
 		&policy.ArchiveResolutionSeconds, &policy.ArchiveRetentionSeconds, &policy.LateArrivalSeconds, &policy.DeleteGraceSeconds,
 		&policy.MaxPartitionsPerRun, &policy.RawDeleteEnabled, &policy.ArchiveDeleteEnabled, &policy.RequireBackupBeforeDelete,
+		&policy.AutoDelete, &policy.WaiveKafkaCoverage,
 		&policy.RowVersion, &policy.CreatedBy, &policy.PublishedBy, &policy.RetiredBy, &policy.CreatedAt, &publishedAt, &retiredAt)
 	if publishedAt.Valid {
 		policy.PublishedAt = publishedAt.Time
@@ -143,11 +145,12 @@ func (store *Store) CreateDraft(ctx context.Context, policy Policy, actor string
 	_, err = tx.ExecContext(ctx, `INSERT INTO flow_retention_policy_revisions
 		(id,policy_version,status,bootstrap_from,raw_retention_seconds,archive_resolution_seconds,
 		 archive_retention_seconds,late_arrival_seconds,delete_grace_seconds,max_partitions_per_run,
-		 raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,created_by)
-		VALUES (?,?,'draft',?,?,?,?,?,?,?,?,?,?,NULLIF(?,''))`,
+		 raw_delete_enabled,archive_delete_enabled,require_backup_before_delete,auto_delete,waive_kafka_coverage,created_by)
+		VALUES (?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''))`,
 		policy.ID, policy.Version, policy.BootstrapFrom, policy.RawRetentionSeconds, policy.ArchiveResolutionSeconds,
 		policy.ArchiveRetentionSeconds, policy.LateArrivalSeconds, policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun,
-		policy.RawDeleteEnabled, policy.ArchiveDeleteEnabled, policy.RequireBackupBeforeDelete, strings.TrimSpace(actor))
+		policy.RawDeleteEnabled, policy.ArchiveDeleteEnabled, policy.RequireBackupBeforeDelete,
+		policy.AutoDelete, policy.WaiveKafkaCoverage, strings.TrimSpace(actor))
 	if err != nil {
 		return Policy{}, err
 	}
@@ -166,10 +169,11 @@ func (store *Store) UpdateDraft(ctx context.Context, policy Policy, expected uin
 	result, err := store.db.ExecContext(ctx, `UPDATE flow_retention_policy_revisions SET
 		bootstrap_from=?,raw_retention_seconds=?,archive_resolution_seconds=?,archive_retention_seconds=?,
 		late_arrival_seconds=?,delete_grace_seconds=?,max_partitions_per_run=?,raw_delete_enabled=?,
-		archive_delete_enabled=?,require_backup_before_delete=?,row_version=row_version+1
+		archive_delete_enabled=?,require_backup_before_delete=?,auto_delete=?,waive_kafka_coverage=?,row_version=row_version+1
 		WHERE id=? AND status='draft' AND row_version=?`, policy.BootstrapFrom, policy.RawRetentionSeconds,
 		policy.ArchiveResolutionSeconds, policy.ArchiveRetentionSeconds, policy.LateArrivalSeconds,
-		policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun, policy.RawDeleteEnabled, policy.ArchiveDeleteEnabled, policy.RequireBackupBeforeDelete, policy.ID, expected)
+		policy.DeleteGraceSeconds, policy.MaxPartitionsPerRun, policy.RawDeleteEnabled, policy.ArchiveDeleteEnabled, policy.RequireBackupBeforeDelete,
+		policy.AutoDelete, policy.WaiveKafkaCoverage, policy.ID, expected)
 	if err != nil {
 		return Policy{}, err
 	}

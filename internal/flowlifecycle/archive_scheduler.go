@@ -17,6 +17,7 @@ type archiveSchedulerStore interface {
 	GetPartition(context.Context, time.Time) (PartitionState, error)
 	BeginArchive(context.Context, Policy, time.Time, uint64, string) (PartitionState, error)
 	ListArchiveRepairCandidates(context.Context, int) ([]PartitionState, error)
+	ListSupersededPartitions(context.Context, Policy, int) ([]PartitionState, error)
 	ListLateCheckCandidates(context.Context, time.Time, int) ([]PartitionState, error)
 	RecordLateCheck(context.Context, PartitionState, Counters, Counters, time.Time) error
 	ArchiveThrough(context.Context, time.Time, time.Time) (time.Time, error)
@@ -125,6 +126,24 @@ func (scheduler *ArchiveScheduler) ScanOnce(ctx context.Context, now time.Time) 
 	if remaining <= 0 || !now.UTC().After(policy.BootstrapFrom) {
 		return scheduled, nil
 	}
+	// A day archived under a retired revision is re-archived under the published
+	// one: the deletion gate accepts only the published version, so leaving it
+	// would strand its raw facts forever (every configuration change publishes a
+	// new revision).
+	superseded, err := scheduler.Store.ListSupersededPartitions(ctx, policy, remaining)
+	if err != nil {
+		return scheduled, err
+	}
+	for _, state := range superseded {
+		if err := scheduler.scheduleArchive(ctx, policy, state.SourceDate, 1); err != nil {
+			return scheduled, err
+		}
+		scheduled++
+		remaining--
+	}
+	if remaining <= 0 {
+		return scheduled, nil
+	}
 	boundaryEnd := UTCDate(now).Add(24 * time.Hour)
 	next, err := scheduler.Store.ArchiveThrough(ctx, policy.BootstrapFrom, boundaryEnd)
 	if err != nil {
@@ -139,7 +158,22 @@ func (scheduler *ArchiveScheduler) ScanOnce(ctx context.Context, now time.Time) 
 			}
 			break
 		}
-		if _, err := scheduler.Store.GetPartition(ctx, next); err == nil {
+		if state, err := scheduler.Store.GetPartition(ctx, next); err == nil {
+			switch state.State {
+			case PartitionReconciled, PartitionDeleteEligible, PartitionRawDeleted:
+				// Settled days follow a held one; walk past them.
+				next = next.Add(24 * time.Hour)
+				added--
+				continue
+			case PartitionFailed:
+				if state.LastErrorCode == ArchiveHoldRawIncomplete {
+					// A held day is never repaired, so it must not stop newer
+					// days; its raw stays until an operator resolves it.
+					next = next.Add(24 * time.Hour)
+					added--
+					continue
+				}
+			}
 			// The continuous boundary stopped on an in-flight/failed day. Its
 			// existing or repair job must finish before newer days are exposed.
 			break
@@ -173,7 +207,23 @@ func (scheduler *ArchiveScheduler) scheduleRepair(ctx context.Context, state Par
 		return err
 	}
 	attempt := state.RepairAttempt + 1
-	job, err := NewArchiveOperationJob(policy, state.SourceDate, attempt)
+	if policy.Status != PolicyPublished {
+		// Repair a day of a retired revision under the published one (see the
+		// superseded scan in ScanOnce) rather than on a version it can never be
+		// deleted under.
+		published, err := scheduler.Store.GetPublishedPolicy(ctx)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			policy, attempt = published, 1
+		}
+	}
+	return scheduler.scheduleArchive(ctx, policy, state.SourceDate, attempt)
+}
+
+func (scheduler *ArchiveScheduler) scheduleArchive(ctx context.Context, policy Policy, day time.Time, attempt uint32) error {
+	job, err := NewArchiveOperationJob(policy, day, attempt)
 	if err != nil {
 		return err
 	}
@@ -182,7 +232,7 @@ func (scheduler *ArchiveScheduler) scheduleRepair(ctx context.Context, state Par
 		return err
 	}
 	generation, _ := Generation(policy.Version, attempt)
-	_, err = scheduler.Store.BeginArchive(ctx, policy, state.SourceDate, generation, queued.ID)
+	_, err = scheduler.Store.BeginArchive(ctx, policy, day, generation, queued.ID)
 	return err
 }
 
