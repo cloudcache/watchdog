@@ -88,6 +88,7 @@ func run(opt options) error {
 	agentLifecycle := make(chan error, 1)
 	var agentToken string
 	var agentPlanVersion uint64
+	bootstrapFallback := false
 	runtimeConfig := flowCollectAgentRuntime(opt)
 	if runtimeConfig.Enabled() {
 		result, token, err := runtimeConfig.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
@@ -97,12 +98,18 @@ func run(opt options) error {
 			log.Printf("flow-collect agent token was rejected (agent revoked, or the token does not match the server's agents.shared_token); stopping without restart")
 			return nil
 		}
-		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || opt.agentPlanCheck) {
+		// An unreachable control plane with no LKG (no plan was ever applied)
+		// leaves the collector where "no desired plan" does: on bootstrap values.
+		// Exiting instead would drop every UDP datagram until the API returns.
+		bootstrapFallback = errors.Is(err, agentplan.ErrNoLKG)
+		if err != nil && ((!errors.Is(err, agentplan.ErrNoPlan) && !bootstrapFallback) || opt.agentPlanCheck) {
 			return err
 		}
 		appliedPlanVersion := result.Envelope.Metadata.PlanVersion
 		if errors.Is(err, agentplan.ErrNoPlan) {
 			log.Printf("flow-collect registered without a desired agent plan; using bootstrap values until a plan is published")
+		} else if bootstrapFallback {
+			log.Printf("flow-collect control plane unavailable and no agent plan LKG; using bootstrap values: %v", err)
 		} else {
 			log.Printf("flow-collect agent plan applied: version=%d source=%s", appliedPlanVersion, result.Source)
 			if result.AckError != nil {
@@ -312,7 +319,9 @@ func run(opt options) error {
 	<-closeDone
 	select {
 	case lifecycleErr := <-agentLifecycle:
-		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) {
+		// After a bootstrap fallback a rejected heartbeat may only mean the agent
+		// was never registered; restart so the boot-time sync decides.
+		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) || bootstrapFallback {
 			return errors.Join(first, lifecycleErr)
 		}
 		return first

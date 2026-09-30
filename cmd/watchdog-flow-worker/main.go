@@ -162,6 +162,7 @@ func run(opt options) error {
 	}
 	var agentToken string
 	var agentPlanVersion uint64
+	bootstrapFallback := false
 	agentRuntime := flowWorkerAgentRuntime(opt, identity.BootID)
 	if agentRuntime.Enabled() {
 		result, token, err := agentRuntime.Sync(ctx, func(_ context.Context, spec agentplan.Spec) error {
@@ -171,12 +172,19 @@ func run(opt options) error {
 			log.Printf("flow-worker agent token was rejected (agent revoked, or the token does not match the server's agents.shared_token); stopping without restart")
 			return nil
 		}
-		if err != nil && (!errors.Is(err, agentplan.ErrNoPlan) || opt.agentPlanCheck) {
+		// An unreachable control plane with no LKG (no plan was ever applied)
+		// leaves the worker where "no desired plan" does: on bootstrap values.
+		// Exiting instead crash-looped ingestion for 25 minutes on 2026-09-30
+		// while a full disk stalled the API.
+		bootstrapFallback = errors.Is(err, agentplan.ErrNoLKG)
+		if err != nil && ((!errors.Is(err, agentplan.ErrNoPlan) && !bootstrapFallback) || opt.agentPlanCheck) {
 			return err
 		}
 		appliedPlanVersion := result.Envelope.Metadata.PlanVersion
 		if errors.Is(err, agentplan.ErrNoPlan) {
 			log.Printf("flow-worker registered without a desired agent plan; using bootstrap values until a plan is published")
+		} else if bootstrapFallback {
+			log.Printf("flow-worker control plane unavailable and no agent plan LKG; using bootstrap values: %v", err)
 		} else {
 			log.Printf("flow-worker agent plan applied: version=%d source=%s", appliedPlanVersion, result.Source)
 			if result.AckError != nil {
@@ -367,7 +375,9 @@ func run(opt options) error {
 	log.Printf("flow-worker stopped: datagrams=%d records=%d template_missing=%d rejected=%d retryable_errors=%d", stats.Datagrams, stats.Records, stats.TemplateMissing, stats.Rejected, stats.RetryableErrors)
 	select {
 	case lifecycleErr := <-agentLifecycle:
-		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) {
+		// After a bootstrap fallback a rejected heartbeat may only mean the agent
+		// was never registered; restart so the boot-time sync decides.
+		if errors.Is(lifecycleErr, agentplan.ErrPlanChanged) || bootstrapFallback {
 			return errors.Join(err, lifecycleErr)
 		}
 		return err

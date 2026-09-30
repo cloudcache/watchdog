@@ -175,6 +175,31 @@ func TestClientRemoteACKOfflineLKGAndRevocation(t *testing.T) {
 	}
 }
 
+func TestClientOfflineWithoutLKGReportsNoLKG(t *testing.T) {
+	now := time.Date(2026, 9, 30, 1, 4, 0, 0, time.UTC)
+	_, publicKey := signedTestPlan(t, "agent-test", "system", 1, 0, now)
+	status := http.StatusServiceUnavailable
+	transport := roundTripFunc(func(request *http.Request) *http.Response {
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: request}
+	})
+	client := Client{
+		BaseURL: "http://control-plane.test", AgentID: "agent-test", Token: "secret", PublicKey: publicKey,
+		HTTPClient: &http.Client{Transport: transport},
+		LKG:        DiskLKG{Path: filepath.Join(t.TempDir(), "plan.lkg")}, Kind: "system", APIVersion: "v1",
+		Capabilities: []string{"system.samples/v1"}, BootID: "boot-1", Software: "test", Now: func() time.Time { return now },
+	}
+	// Agents fall back to bootstrap values on exactly this error, so an
+	// unreachable control plane at boot must be distinguishable from a
+	// rejection.
+	if _, err := client.Sync(context.Background(), func(context.Context, Spec) error { return nil }); !errors.Is(err, ErrNoLKG) {
+		t.Fatalf("unavailable control plane without LKG: %v", err)
+	}
+	status = http.StatusConflict
+	if _, err := client.Sync(context.Background(), func(context.Context, Spec) error { return nil }); errors.Is(err, ErrNoLKG) {
+		t.Fatalf("permanent rejection reported as a missing LKG: %v", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) *http.Response
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
