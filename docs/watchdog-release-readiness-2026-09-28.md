@@ -46,6 +46,8 @@
 3. 再滚动升级各 agent 二进制；
 4. 验收：Agents 页四类进程 `run_count` 递增、health 由 run 上报驱动、无进程处于重启循环。
 
+（2026-09-30 已完成：r20 cutover 由 `deploy.sh` 生成共享 token 并经 systemd drop-in 注入 server，三个 agent 用新版 `activate-agent.sh` 重新激活；详见 `docs/flow-snmp-clickhouse-storage-query-design.md` §18.8。）
+
 ### 1.2 发布前必须处理
 - **发布门禁**：tag workflow 必须从 `go.mod` 读取 Go 版本，执行全库 Go 测试、前端 check/test/typecheck/build，再分别发布进程制品与独立 web 压缩包。
 - **`.gitignore` 已覆盖缓存/二进制**（已核实）：`.gocache-*/`、`.codex-deploy-*/`、根目录 `watchdog-flow-collect`/`watchdog-flow-worker`/`watchdog-server` 都在已提交的 `.gitignore` 中，`git add .` 不会带入这约 10 GB 垃圾。
@@ -200,11 +202,11 @@ hot_rollup:
 - [x] `.gitignore` 补 `.gocache-*/`、`.codex-deploy-*/`、根目录构建产物；确认无缓存/二进制入库。（2026-09-28 复核：已完成 — `456157562`, `8e7ec860e`; .gitignore:25-36,47-49；根目录 4 个二进制经 check-ignore 确认均被忽略，git ls-files 无 ELF/归档）
 - [ ] 5m 三个迭代按域分提交；`go build ./...` + 全套 `go test` 绿。（2026-09-28 复核：部分完成 — 已按域分提交；2026-09-28 go build ./... 与 agentplan/flowmetrics/snmpdomain/flowch 单测通过，全套 go test（含集成）未跑；`423d820e2`, `c1385cd3b`, `d6c38b62e`）
 - [ ] 集成测试（真实 Kafka→worker→CH→5m→查询/账单）至少跑一轮。
-- [ ] 迁移应用到目标库，`flow_schema_migrations` = 22；5m 两表、event_time 索引存在。（2026-09-28 复核：部分完成 — event_time minmax 已在生产（≈6× 裁剪，手工 ALTER）；021 两张 5m 表与 ledger=22 未上线；`deploy/migration/clickhouse/021_flow_atomic_5m.sql`, `deploy/migration/clickhouse/022_flow_records_event_time_index.sql`）
-- [ ] `flow.hot_rollup.enabled=true`；1h/5m marker 连续推进。（2026-09-28 复核：部分完成 — 仓库配置为 true（代码默认 false）；5m 未部署，09-24 14-17h 的 1h 为人工补，marker 连续性无证据；`config/watchdog.yaml:52`; `internal/server/flow_hot_rollup.go:98-131`）
-- [ ] raw 落独立大盘或存储策略生效；发布保留策略（或明确「暂由人工管控」并配告警）。（2026-09-28 复核：部分完成 — 实际为人工管控（09-19/20/21、09-23..27 已人工 DROP）；无独立盘/存储策略、无书面声明、无告警）
+- [x] 迁移应用到目标库，`flow_schema_migrations` = 22；5m 两表、event_time 索引存在。（2026-09-30 已完成：r20 部署后 ledger=22，MySQL 至 0051；r22 带 0052）
+- [x] `flow.hot_rollup.enabled=true`；1h/5m marker 连续推进。（2026-09-30 已完成：r20 起按 ingest 水位封桶，5m 开始写入，09-29 空洞已从 raw 修复）
+- [ ] raw 落独立大盘或存储策略生效；发布保留策略（或明确「暂由人工管控」并配告警）。（2026-09-30：保留策略已由 `flow.lifecycle` 发布并自动删除，r22 起约 1 天 raw；独立大盘与告警仍待办）
 - [ ] `/etc/docker/daemon.json` 日志封顶已生效（容器已重建）。（2026-09-28 复核：部分完成 — daemon.json 已封顶；既有容器是否已重建未确认（CH json 日志曾需手工截断））
 - [ ] `curl /api/v1/health` 返回 JSON；nginx `/api/` 反代端口与实际 API 一致。
 - [ ] CH 内存上限（交互 1.5G/rollup 6G+落盘）、operation/batch/execution 超时均已配。（2026-09-28 复核：部分完成 — 超时与 rollup 6G+落盘已配；交互上限为 4GiB/2GiB 而非 1.5G，未设 max_threads=2，生产配置未核对；`config/watchdog.yaml:20-21,39,64`; `internal/flowch/rollup.go:961-971`）
 - [ ] 磁盘、Kafka lag、摄入新鲜度三项监控/告警上线。
-- [ ] Kafka retention 与磁盘余量匹配；Kafka/CH 容器日志均有 retention/封顶。（2026-09-28 复核：部分完成 — 6h/6GiB 仅见于 dev compose 与文档自述；Kafka log4j 与 CH 日志轮转未配；docker 封顶待容器重建；`deploy/compose.flow-dev.yml:46-48`; `c5a9b745b`）
+- [ ] Kafka retention 与磁盘余量匹配；Kafka/CH 容器日志均有 retention/封顶。（2026-09-30：Kafka 已改为 24h/32GiB（vda3）；容器日志封顶仍待确认）

@@ -1059,38 +1059,39 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
 
 ### 18.3 待修复缺陷清单
 
-状态说明：**已修（未提交）** 指本轮已改代码并通过测试，尚未提交和部署；其余为待办。
+状态说明：**已部署（rNN）** 指修复已随该 release 上线生产（部署记录见 18.8）；**已修（r22，待部署）** 指已提交、待上线；其余为待办。
 
 | ID | 优先级 | 缺陷 | 证据 | 修复方案 | 状态 |
 |---|---|---|---|---|---|
-| D1 | P0 | 覆盖前缀：一个洞就让之后整段读 raw，报表失败；洞内显示 0 却标 `complete=true` | `internal/server/flow_archive.go`（原 `CoveredThroughAtLeast`）、`internal/flowquery/query.go:1087-1090`、生产 job | 边界改为“最后一个可读桶之后”：旧洞计为缺失，3 小时内的新洞仍用 raw 精确补齐；归档侧 SQL 按 `minimum_generation` 过滤 | **已修（未提交）** |
-| D2 | P0 | 1d 没有回退，6mo/1y 报表失败 | `internal/flowquery/plan.go:90-91`、生产 1d 为 0 行 | 1d 覆盖不全时改用 1h 源，保持显示间隔 | **已修（未提交）** |
-| D3 | P0 | 1m 地平线回退只有报表有，`/flow/query`、查询模式、导出会整段读 raw；报表的回退又以 6h 调度窗口为界，把仍有 1m 数据的 6–48h 窗口粗化为小时点 | `internal/server/handlers_flow.go`、`flow_query_modes.go`、`flow_exports.go`、`flow_reports.go` | 共用 `planFlowAggregate`，以 1m 保留期（48h）为界；显式步长保持不变 | **已修（未提交）** |
-| D4 | P0 | business×category 面板在起点无覆盖时，整段走 raw joint | `internal/server/flow_reports.go:746-755` | 随 D1 改为同一边界 | **已修（未提交）** |
-| D5 | P0 | 六类卡片与总流量标题显示最后一个桶的值 | `frontend/src/lib/flow-report-model.ts:370-383` | 速率类显示所选范围的平均值，量类显示所选范围的总量，并加标注 | **已修（未提交）** |
-| D6 | P1 | 改时间范围或设备后不自动查询 | `frontend/src/components/routes/flow-reports.tsx:514-522` | 范围和设备变化后去抖 400ms 自动刷新；其余筛选仍需手动刷新 | **已修（未提交）** |
-| D7 | P1 | 报表面板不返回 completeness，前端的完整度横幅对洞不可见 | `internal/server/flow_reports.go`（面板 meta） | 聚合面板 meta 带上 `complete_ratio`、`partial` 和实际读取的源 | **已修（未提交）** |
-| D8 | P0 | raw 删除没有自动闭环（见 18.1 第 1 点） | `internal/flowlifecycle/delete_readiness.go:169`、`raw_delete.go:115` | 按 18.5 的决定：策略由配置文件 `flow.lifecycle` 管理，启动时与已发布版本比对，不同即以系统用户 `system:flow-lifecycle`（disabled、无密码、无角色）发布新版本，策略写接口返回 409；`auto_delete` 由 `AutoDeleter` 每 5 分钟推进：证据齐全即审批 → 发布 delete barrier → worker 全部确认后调度删除 job，审批、barrier、回执都记在系统用户名下。所有人工路径的门禁不变；`require_kafka_coverage: false` 仅豁免 Kafka 位点覆盖（生产未启用 reconciliation） | **已修（未提交）**：`internal/server/flow_lifecycle_config.go`、`internal/flowlifecycle/auto_delete.go`、MySQL 迁移 0051；MySQL 集成测试覆盖“配置发布 → 自动审批 → 调度 → 删除 job 完成 → 改配置换版” |
-| D9 | P0 | 首次发布策略的陷阱：归档不校验 raw 是否存在；换版后分区状态搁浅；late check 与删除竞态 | §12.1、§12.2 复核注 | 归档前比较 raw 与已发布聚合的记录数，raw 少即以 `RAW_INCOMPLETE` 挂起该日（不重建、不进修复队列，调度器越过它继续推进后续日）；换版后旧版本已对账、未删除的日按新版本重新归档；late check 排除已调度删除的日 | **已修（未提交）**：`internal/flowlifecycle/archive.go`、`archive_scheduler.go`；MySQL 集成测试覆盖挂起、修复队列排除、换版重归档 |
-| D10 | P1 | 热 1h 空洞一旦超出 1m 保留窗口就永久存在 | §17.3-H1 | 1h 扫描遇到缺失小时、且该小时已超出 minute lookback 时，在 1m 保留期（48h）内先从 raw 重建该小时的 60 个 1m 桶，再由 1m 派生 1h；超过 48h 的交给冷归档（按天从 raw 重建） | **已修（未提交）**（随 D22）；空洞告警待办 |
+| D1 | P0 | 覆盖前缀：一个洞就让之后整段读 raw，报表失败；洞内显示 0 却标 `complete=true` | `internal/server/flow_archive.go`（原 `CoveredThroughAtLeast`）、`internal/flowquery/query.go:1087-1090`、生产 job | 边界改为“最后一个可读桶之后”：旧洞计为缺失，3 小时内的新洞仍用 raw 精确补齐；归档侧 SQL 按 `minimum_generation` 过滤 | **已部署（r20）** |
+| D2 | P0 | 1d 没有回退，6mo/1y 报表失败 | `internal/flowquery/plan.go:90-91`、生产 1d 为 0 行 | 1d 覆盖不全时改用 1h 源，保持显示间隔 | **已部署（r20）** |
+| D3 | P0 | 1m 地平线回退只有报表有，`/flow/query`、查询模式、导出会整段读 raw；报表的回退又以 6h 调度窗口为界，把仍有 1m 数据的 6–48h 窗口粗化为小时点 | `internal/server/handlers_flow.go`、`flow_query_modes.go`、`flow_exports.go`、`flow_reports.go` | 共用 `planFlowAggregate`，以 1m 保留期（48h）为界；显式步长保持不变 | **已部署（r20）** |
+| D4 | P0 | business×category 面板在起点无覆盖时，整段走 raw joint | `internal/server/flow_reports.go:746-755` | 随 D1 改为同一边界 | **已部署（r20）** |
+| D5 | P0 | 六类卡片与总流量标题显示最后一个桶的值 | `frontend/src/lib/flow-report-model.ts:370-383` | 速率类显示所选范围的平均值，量类显示所选范围的总量，并加标注 | **已部署（r20）** |
+| D6 | P1 | 改时间范围或设备后不自动查询 | `frontend/src/components/routes/flow-reports.tsx:514-522` | 范围和设备变化后去抖 400ms 自动刷新；其余筛选仍需手动刷新 | **已部署（r20）** |
+| D7 | P1 | 报表面板不返回 completeness，前端的完整度横幅对洞不可见 | `internal/server/flow_reports.go`（面板 meta） | 聚合面板 meta 带上 `complete_ratio`、`partial` 和实际读取的源 | **已部署（r20）** |
+| D8 | P0 | raw 删除没有自动闭环（见 18.1 第 1 点） | `internal/flowlifecycle/delete_readiness.go:169`、`raw_delete.go:115` | 按 18.5 的决定：策略由配置文件 `flow.lifecycle` 管理，启动时与已发布版本比对，不同即以系统用户 `system:flow-lifecycle`（disabled、无密码、无角色）发布新版本，策略写接口返回 409；`auto_delete` 由 `AutoDeleter` 每 5 分钟推进：证据齐全即审批 → 发布 delete barrier → worker 全部确认后调度删除 job，审批、barrier、回执都记在系统用户名下。所有人工路径的门禁不变；`require_kafka_coverage: false` 仅豁免 Kafka 位点覆盖（生产未启用 reconciliation） | **已部署（r20；r21/r22 改为约 1 天 raw）**：`internal/server/flow_lifecycle_config.go`、`internal/flowlifecycle/auto_delete.go`、MySQL 迁移 0051；MySQL 集成测试覆盖“配置发布 → 自动审批 → 调度 → 删除 job 完成 → 改配置换版” |
+| D9 | P0 | 首次发布策略的陷阱：归档不校验 raw 是否存在；换版后分区状态搁浅；late check 与删除竞态 | §12.1、§12.2 复核注 | 归档前比较 raw 与已发布聚合的记录数，raw 少即以 `RAW_INCOMPLETE` 挂起该日（不重建、不进修复队列，调度器越过它继续推进后续日）；换版后旧版本已对账、未删除的日按新版本重新归档；late check 排除已调度删除的日 | **已部署（r20）**：`internal/flowlifecycle/archive.go`、`archive_scheduler.go`；MySQL 集成测试覆盖挂起、修复队列排除、换版重归档 |
+| D10 | P1 | 热 1h 空洞一旦超出 1m 保留窗口就永久存在 | §17.3-H1 | 1h 扫描遇到缺失小时、且该小时已超出 minute lookback 时，在 1m 保留期（48h）内先从 raw 重建该小时的 60 个 1m 桶，再由 1m 派生 1h；超过 48h 的交给冷归档（按天从 raw 重建） | **已部署（r20）**（随 D22）；空洞告警待办 |
 | D11 | P1 | 人工删除 raw 没有登记，查询无法区分“无流量”和“数据已删” | §12.3 复核注 | 删除登记，查询把这些日标为缺失 | 待办（随 D8） |
 | D12 | P1 | SNMP coverage 与采样相位耦合，约 29% 的桶被计费剔除 | §8.4 复核注 | 跨桶的段按桶边界比例拆分 | 待办 |
 | D13 | P1 | Flow 计费：没有读预算，CROSS JOIN 不下推设备条件，跑在交互池上；raw 只保留 3 天，无法出账 | §10.4 复核注 | 加预算和设备预过滤；实现接口级 5m 证据的 writer | 待办 |
 | D14 | P1 | 异步报表结果文件从不清理 | `internal/server/flow_report_jobs.go:203` | 增加回收任务 | 待办 |
 | D15 | P1 | 自动迁移不传 TLS；无法回滚到 021 之前的二进制 | §13 复核注 | 传入 TLS；发布手册写明先 inspect | 待办 |
 | D16 | P2 | 新 generation 的 marker 写失败时，会遮住已发布的旧 generation | §5.5 复核注 | marker 写失败时强制重试；或把 generation 纳入排序键并定期清理旧代 | 待办 |
-| D17 | P2 | 1h 与 1m 迟到窗口不一致，1h 反复重建却无法收敛 | §8.1 复核注 | 1h 迟到修复时先从 raw 重建该小时的 1m，再派生 1h | **已修（未提交）**（随 D22） |
+| D17 | P2 | 1h 与 1m 迟到窗口不一致，1h 反复重建却无法收敛 | §8.1 复核注 | 1h 迟到修复时先从 raw 重建该小时的 1m，再派生 1h | **已部署（r20）**（随 D22） |
 | D18 | P2 | 超时未归类为预算错误，返回 503 并被重试 3 次；`approximate` 标记只有端点面板带出 | §9.6、§9.3 复核注 | 补充错误分类；所有响应都带 `approximate` | 待办 |
 | D19 | P2 | 删除就绪检查不含 barrier 和 reclassification；barrier 只要求 active worker 确认；`ErrDataLoss` 只告警 | §12.2 复核注 | 并入 readiness；ACK 集合包含 draining worker；数据丢失时阻断删除 | 待办 |
 | D20 | P2 | SNMP `sample_index` 空洞会让整块写入失败（生产暂未触发） | §6.1 复核注 | 写入前按保留下来的行重新编号 | 待办 |
 | D21 | P2 | flowch 的 ClickHouse 集成测试在 HEAD 就有 4 个失败：`RollupQueryRepair`、`ConcurrentAggregate`、`OverseasKPIAndRepair` 的覆盖为 0；`StorageV2MigrationBackfill` 仍断言旧的 1m 表形态 | 本轮在 dev CH 26.3 上对比 HEAD 与工作区，结果相同 | 按 020/021 之后的 schema 更新断言与测试夹具 | 待办 |
-| D22 | P0 | 热 rollup 按墙钟封桶：ingest 停滞后，worker 尚未写入的小时被封成空桶（marker-only）或残缺桶，而 30m/2h 迟到窗口不会再修复；查询随后显示 0 且标 `complete=true` | 生产 1h：09-29 19:00Z–09-30 00:00Z 的 marker（generation 1790731692，09-30 01:28:13Z 生成，worker 5 秒后才恢复）数据行为 0，而 raw 现有约 4,000 万行；13:00Z–18:00Z 无 1m/1h（6h minute lookback 在磁盘满期间过期） | 封桶时刻取墙钟与 ingest 水位（raw 最新 `event_time`）中较早者减去 `seal_delay`；1h 迟到修复先从 raw 重建该小时的 1m；`BucketNeedsRepair` 对 1m/1h 只在 raw 多于聚合时修复（raw 少只意味着已被删除，重建会把正确聚合清空）。生产实测水位探测 37ms、读 318 万行 | **已修（未提交）**：`internal/server/flow_hot_rollup.go`、`internal/flowch/rollup.go`；部署后把 `hour_late_arrival_window` 临时设为 `24h` 可修复 09-29 20Z–09-30 00Z（见 18.7） |
-| D23 | P0 | 控制面不可达且没有 LKG 时，flow worker 启动即退出：API 被磁盘写满拖住后，worker 从 09:04 到 09:28（SGT）崩溃重启 42 次，延长了 ingest 中断；collector 同样会在重启时丢弃全部 UDP | `journalctl -u watchdog-flow-worker`：`fetch agent plan … context deadline exceeded` + `no agent plan LKG is available` | 与“没有期望 plan”同样处理：用启动参数运行，心跳恢复后拿到 plan 再重启应用；回退状态下若心跳被拒，退出码非 0 让 systemd 重启，由启动时的同步判定是否被吊销 | **已修（未提交）**：`cmd/watchdog-flow-worker`、`cmd/watchdog-flow-collect`；snmp-collector、system-agent 相同模式待办 |
+| D22 | P0 | 热 rollup 按墙钟封桶：ingest 停滞后，worker 尚未写入的小时被封成空桶（marker-only）或残缺桶，而 30m/2h 迟到窗口不会再修复；查询随后显示 0 且标 `complete=true` | 生产 1h：09-29 19:00Z–09-30 00:00Z 的 marker（generation 1790731692，09-30 01:28:13Z 生成，worker 5 秒后才恢复）数据行为 0，而 raw 现有约 4,000 万行；13:00Z–18:00Z 无 1m/1h（6h minute lookback 在磁盘满期间过期） | 封桶时刻取墙钟与 ingest 水位（raw 最新 `event_time`）中较早者减去 `seal_delay`；1h 迟到修复先从 raw 重建该小时的 1m；`BucketNeedsRepair` 对 1m/1h 只在 raw 多于聚合时修复（raw 少只意味着已被删除，重建会把正确聚合清空）。生产实测水位探测 37ms、读 318 万行 | **已部署（r20）**：`internal/server/flow_hot_rollup.go`、`internal/flowch/rollup.go`；部署后把 `hour_late_arrival_window` 临时设为 `24h` 可修复 09-29 20Z–09-30 00Z（见 18.7） |
+| D23 | P0 | 控制面不可达且没有 LKG 时，flow worker 启动即退出：API 被磁盘写满拖住后，worker 从 09:04 到 09:28（SGT）崩溃重启 42 次，延长了 ingest 中断；collector 同样会在重启时丢弃全部 UDP | `journalctl -u watchdog-flow-worker`：`fetch agent plan … context deadline exceeded` + `no agent plan LKG is available` | 与“没有期望 plan”同样处理：用启动参数运行，心跳恢复后拿到 plan 再重启应用；回退状态下若心跳被拒，退出码非 0 让 systemd 重启，由启动时的同步判定是否被吊销 | **已部署（r20）**：`cmd/watchdog-flow-worker`、`cmd/watchdog-flow-collect`；snmp-collector、system-agent 相同模式待办 |
 | D24 | P0 | Kafka `watchdog.flow.raw-v1` 保留 `retention.ms=6h`、`retention.bytes=6GiB`，短于一次故障的时长：worker 停滞期间未消费的数据被 Kafka 删除，永久丢失 | 09-29 18:00Z 仅 186 万行、19:00Z 为 0、20:00Z 仅 212 万行（前一天同时段约 790 万、690 万）；Kafka 在 vda3（64G，仅用 6.5G） | 保留期至少覆盖最长可接受故障（建议 48h；按约 1.3GiB/h 估算需约 60GiB 时改为 24h/32GiB）；worker lag 告警 | 待办（运维，命令见 18.7） |
 | D25 | P0 | 单盘容量：vda1（60G）同时承载 ClickHouse、MySQL（含 binlog）、日志。raw 保留 1 天时，第 D 天在 D+48h 才删除，峰值约为 2 天 raw（按 16–18GiB/天约 32–36GiB），还要给 merge 预留空间；ClickHouse system 日志无 TTL（约 4.3GiB）；MySQL binlog 每天约 8GiB | 09-30 凌晨磁盘写满：ClickHouse `NOT_ENOUGH_SPACE`、MySQL 写入阻塞、API 超时 | 把 ClickHouse 数据迁到独立大盘（或扩 vda1）；system 日志设 TTL；binlog 见 D26 | 待办（需你决定） |
 | D26 | P1 | `snmp_collection_recipes` 两天被更新 885 万次（约 51 次/秒），ROW 格式 binlog 每天约 8GiB | `performance_schema.table_io_waits_summary_by_table` | 降低调度状态的写频率（批量或只写变化），或 `binlog_row_image=MINIMAL`；单机无复制时可缩短 binlog 保留 | 待办 |
-| D27 | P2 | 热 rollup 修复过期小时每 30 分钟才完成一个：`BucketNeedsRepair` 的"需要修复"结论也被缓存，超出单次预算的候选要等满 `repair_interval` 才会再被检查 | 部署 r20 后 09-29 20Z–00Z 依次在 04:04、04:35、05:09、05:40、06:11 修复 | 只缓存"无需修复"的结论；已修复的小时靠新 generation 的 `generated_at` 避开窗口 | **已修（r21）** |
-| D28 | P1 | 冷归档 job 没有资源上限，按 runner 默认每条语句 10GiB、不限线程；生产主机 15GB 内存，ClickHouse 上限约 15.1GB | `internal/flowlifecycle/archive.go` 的 1h/1d rollup 请求未带限额 | 归档复用 `flow.hot_rollup` 的 `max_threads`/`priority`/`max_memory_bytes`（生产 4 线程、6GiB） | **已修（r21）** |
+| D27 | P2 | 热 rollup 修复过期小时每 30 分钟才完成一个：`BucketNeedsRepair` 的"需要修复"结论也被缓存，超出单次预算的候选要等满 `repair_interval` 才会再被检查 | 部署 r20 后 09-29 20Z–00Z 依次在 04:04、04:35、05:09、05:40、06:11 修复 | 只缓存"无需修复"的结论；已修复的小时靠新 generation 的 `generated_at` 避开窗口 | **已部署（r21）** |
+| D28 | P1 | 冷归档 job 没有资源上限，按 runner 默认每条语句 10GiB、不限线程；生产主机 15GB 内存，ClickHouse 上限约 15.1GB | `internal/flowlifecycle/archive.go` 的 1h/1d rollup 请求未带限额 | 归档复用 `flow.hot_rollup` 的 `max_threads`/`priority`/`max_memory_bytes`（生产 4 线程、6GiB） | **已部署（r21）** |
+| D29 | P0 | r21 只放宽了代码里的 `raw_retention` 下限，MySQL 0033 的 CHECK（86400..315576000）仍拒绝 6h 策略；配置同步失败，1 天策略继续生效，且 auto-deleter 只在同步成功后启动，自动删除停摆 | 生产日志 `Check constraint 'flow_retention_policy_revisions_chk_3' is violated`（r21 启动 14:32 SGT） | 迁移 0052 把该 CHECK 换成具名的 1 小时下限；配置集成测试改为经 MySQL 发布 6h 策略（缺迁移时失败） | **已修（r22，待部署）** |
 
 ### 18.4 可优化清单
 
@@ -1160,3 +1161,12 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
    - 启动日志出现 `Flow lifecycle published policy version 1 from flow.lifecycle`；
    - `GET /api/v1/flow/storage/partitions` 在 10-01 00:00Z 后看到 09-29 进入 `reconciled`，约 1 小时后变为 `raw_deleted`；
    - 7 天报表在数秒内返回，09-27/09-28 有数据，洞在完整度横幅中显示。
+
+### 18.8 部署记录（2026-09-30）
+
+| Release | 提交 | 上线 | 结果 |
+|---|---|---|---|
+| r20 `20260930-flow-lifecycle-auto-delete-r20` | `4c8398b3d` `209774aae` `ccb158bc8` `2ea288d3c` `d5f47f7d3` `192fd88ba`（自 r19 基线 `bc10958f4` 起共 34 个提交） | 11:33 SGT，用户执行 `deploy.sh` | 四个服务切到 r20；agent 改用共享 token（`agents.shared_token` 经 systemd drop-in 注入）；MySQL 0050/0051、CH 021/022 生效；策略 v1 由 `system:flow-lifecycle` 发布；Kafka 保留改为 24h/32GiB；7 天报表 1.3s、全部读 1h；热 rollup 修复 09-29 13Z–09-30 00Z 与 raw 完全一致 |
+| — | — | 14:10 SGT，用户执行 | 删除 09-27 的 22 个空 1h marker（`mutation_368`），这些小时改报缺失 |
+| r21 `20260930-flow-raw-one-day-r21` | `e8432cfa2` `f38738bb0` `1629ba436` | 14:32 SGT | 代码与配置改为 `raw_retention: "6h"`，但策略同步被 MySQL CHECK 拒绝（D29），1 天策略继续生效；用户按兜底命令手动 DROP 了 `20260929`（其 1h 已逐小时核对与 raw 一致），磁盘降至 54% |
+| r22 `20260930-flow-raw-retention-check-r22` | `bd27e6198` | 待部署 | 迁移 0052 放宽 CHECK；部署后策略 v2（6h）发布、auto-deleter 启动；09-29 会因 raw 已删被挂起为 `RAW_INCOMPLETE`（预期），09-30 于 10-01 06:00Z 归档、约 07:00Z 删除 |
