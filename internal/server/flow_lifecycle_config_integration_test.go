@@ -124,13 +124,14 @@ func TestFlowLifecycleConfigAutoDeletesRawDayIntegration(t *testing.T) {
 		t.Fatalf("auto-scheduled deletion did not converge: job=%+v partition=%+v", finished, partition)
 	}
 
-	// A changed flow.lifecycle publishes the next revision and retires this one.
-	s.cfg.Flow.Lifecycle.RawRetention = 48 * time.Hour
+	// A changed flow.lifecycle publishes the next revision and retires this one;
+	// a sub-day retention must pass the MySQL CHECK as well as NormalizePolicy.
+	s.cfg.Flow.Lifecycle.RawRetention = 6 * time.Hour
 	if _, err := s.syncFlowLifecycleConfig(ctx, store, now); err != nil {
 		t.Fatal(err)
 	}
 	next, err := store.GetPublishedPolicy(ctx)
-	if err != nil || next.Version != policy.Version+1 || next.RawRetentionSeconds != 2*86400 {
+	if err != nil || next.Version != policy.Version+1 || next.RawRetentionSeconds != 6*3600 {
 		t.Fatalf("changed config was not published: %+v err=%v", next, err)
 	}
 	if retired, err := store.GetPolicy(ctx, policy.ID); err != nil || retired.Status != flowlifecycle.PolicyRetired {
