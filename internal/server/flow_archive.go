@@ -51,7 +51,13 @@ func (s *Server) startFlowArchive() error {
 	s.flowArchiveCancel = cancel
 	worker := &opjob.Worker{
 		Repo: s.jobs, JobType: flowlifecycle.ArchiveJobType, Owner: "watchdog-server/flow-archive",
-		Handler: flowlifecycle.NewArchiveHandler(store, runner), Logf: log.Printf,
+		// Archiving scans raw like the hot rollup, so it shares that
+		// deployment's ClickHouse guards instead of the 10 GiB runner default.
+		Handler: flowlifecycle.NewArchiveHandlerWithLimits(store, runner, flowlifecycle.ArchiveLimits{
+			MaxThreads: s.cfg.Flow.HotRollup.MaxThreads, Priority: s.cfg.Flow.HotRollup.Priority,
+			MaxMemoryBytes: s.cfg.Flow.HotRollup.MaxMemoryBytes,
+		}),
+		Logf: log.Printf,
 	}
 	deleteWorker := &opjob.Worker{
 		Repo: s.jobs, JobType: flowlifecycle.RawDeleteJobType, Owner: "watchdog-server/flow-raw-delete",

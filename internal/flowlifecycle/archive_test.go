@@ -147,6 +147,25 @@ func TestArchiveHandlerBuildsAndReconcilesWholeUTCDay(t *testing.T) {
 	}
 }
 
+func TestArchiveHandlerForwardsResourceLimits(t *testing.T) {
+	policy := archivePolicyFixture()
+	store := &archiveStoreStub{policy: policy}
+	counters := flowch.StorageCounters{RecordCount: 11, RawBytes: 12, RawPackets: 13, EstimatedBytes: 14, EstimatedPackets: 15, EstimatedValidRecords: 10}
+	runner := &archiveRunnerStub{raw: counters, archive: counters}
+	limits := ArchiveLimits{MaxThreads: 4, Priority: 10, MaxMemoryBytes: 6 << 30}
+	if _, err := NewArchiveHandlerWithLimits(store, runner, limits)(context.Background(), archiveJobFixture(t, policy, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.requests) != 25 {
+		t.Fatalf("requests=%d", len(runner.requests))
+	}
+	for _, request := range runner.requests {
+		if request.MaxThreads != 4 || request.Priority != 10 || request.MaxMemoryBytes != 6<<30 {
+			t.Fatalf("archive rollup ignored its limits: %+v", request)
+		}
+	}
+}
+
 func TestArchiveHandlerResumesFromCheckpointAndClassifiesFailures(t *testing.T) {
 	policy := archivePolicyFixture()
 	job := archiveJobFixture(t, policy, 1)

@@ -80,7 +80,7 @@ func NormalizePolicy(policy Policy) (Policy, error) {
 	}
 	if policy.ID == "" || len(policy.ID) > 26 || policy.Version == 0 || policy.Version > uint64(^uint32(0)) ||
 		(policy.Status != PolicyDraft && policy.Status != PolicyPublished && policy.Status != PolicyRetired) ||
-		policy.BootstrapFrom.IsZero() || policy.RawRetentionSeconds < 86400 || policy.RawRetentionSeconds > 315576000 ||
+		policy.BootstrapFrom.IsZero() || policy.RawRetentionSeconds < 3600 || policy.RawRetentionSeconds > 315576000 ||
 		policy.ArchiveResolutionSeconds != uint32(ArchiveResolution/time.Second) ||
 		(policy.ArchiveRetentionSeconds != 0 && policy.ArchiveRetentionSeconds <= policy.RawRetentionSeconds) ||
 		(policy.ArchiveDeleteEnabled && policy.ArchiveRetentionSeconds == 0) ||

@@ -106,7 +106,19 @@ type archiveStore interface {
 // rebuild from raw would shrink the day. The scheduler never retries it.
 const ArchiveHoldRawIncomplete = "RAW_INCOMPLETE"
 
+// ArchiveLimits bound every rollup statement of an archive job. Zero values
+// keep the rollup runner defaults (10 GiB with spilling, all threads).
+type ArchiveLimits struct {
+	MaxThreads, Priority, MaxMemoryBytes uint64
+}
+
 func NewArchiveHandler(store archiveStore, runner archiveRunner) opjob.Handler {
+	return NewArchiveHandlerWithLimits(store, runner, ArchiveLimits{})
+}
+
+// NewArchiveHandlerWithLimits archives a day with each hourly and daily rollup
+// statement held to limits.
+func NewArchiveHandlerWithLimits(store archiveStore, runner archiveRunner, limits ArchiveLimits) opjob.Handler {
 	return func(ctx context.Context, job opjob.Job) (string, error) {
 		if store == nil || runner == nil {
 			return "", opjob.TerminalError(errors.New("Flow archive dependencies are not initialized"))
@@ -163,6 +175,7 @@ func NewArchiveHandler(store archiveStore, runner archiveRunner) opjob.Handler {
 			bucket := day.Add(time.Duration(hour) * time.Hour)
 			if err := runner.Run(ctx, flowch.RollupRequest{
 				Resolution: flowch.RollupOneHour, Bucket: bucket, Generation: payload.Generation, GeneratedAt: generatedAt,
+				MaxThreads: limits.MaxThreads, Priority: limits.Priority, MaxMemoryBytes: limits.MaxMemoryBytes,
 			}); err != nil {
 				var permanent *flowch.PermanentError
 				if errors.As(err, &permanent) {
@@ -184,6 +197,7 @@ func NewArchiveHandler(store archiveStore, runner archiveRunner) opjob.Handler {
 		// versus hourly comparison below remains the deletion gate.
 		if err := runner.Run(ctx, flowch.RollupRequest{
 			Resolution: flowch.RollupOneDay, Bucket: day, Generation: payload.Generation, GeneratedAt: generatedAt,
+			MaxThreads: limits.MaxThreads, Priority: limits.Priority, MaxMemoryBytes: limits.MaxMemoryBytes,
 		}); err != nil {
 			var permanent *flowch.PermanentError
 			if errors.As(err, &permanent) {

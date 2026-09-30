@@ -79,10 +79,10 @@ flow:
 		t.Fatalf("flow.lifecycle policy=%+v", policy)
 	}
 	for name, body := range map[string]string{
-		"missing bootstrap":         "flow:\n  lifecycle:\n    enabled: true\n",
-		"auto without raw delete":   "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    auto_delete: true\n",
-		"raw retention below a day": "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    raw_retention: \"12h\"\n",
-		"grace below an hour":       "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    delete_grace: \"30m\"\n",
+		"missing bootstrap":           "flow:\n  lifecycle:\n    enabled: true\n",
+		"auto without raw delete":     "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    auto_delete: true\n",
+		"raw retention below an hour": "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    raw_retention: \"30m\"\n",
+		"grace below an hour":         "flow:\n  lifecycle:\n    enabled: true\n    bootstrap_from: \"2026-09-29\"\n    delete_grace: \"30m\"\n",
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)

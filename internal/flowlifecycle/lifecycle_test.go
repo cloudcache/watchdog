@@ -41,6 +41,25 @@ func TestPolicyHasNoImplicitRetentionAndUsesMaxWindow(t *testing.T) {
 	}
 }
 
+func TestShortRawRetentionArchivesAfterTheLateWindow(t *testing.T) {
+	policy := validPolicy()
+	policy.RawRetentionSeconds, policy.LateArrivalSeconds = 6*3600, 6*3600
+	normalized, err := NormalizePolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// About one day of raw on disk: a day is archived 6h after it ends and
+	// deleted after the grace period, instead of a day later.
+	day := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	if eligible, err := ArchiveEligibleAt(day, normalized); err != nil || !eligible.Equal(day.Add(30*time.Hour)) {
+		t.Fatalf("eligible=%s err=%v", eligible, err)
+	}
+	policy.RawRetentionSeconds = 3599
+	if _, err := NormalizePolicy(policy); !errors.Is(err, ErrInvalidPolicy) {
+		t.Fatalf("sub-hour retention error=%v", err)
+	}
+}
+
 func TestGenerationRoundTripAndBounds(t *testing.T) {
 	generation, err := Generation(19, 4)
 	if err != nil {

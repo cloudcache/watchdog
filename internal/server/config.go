@@ -145,7 +145,7 @@ func validateFlowLifecycleConfig(cfg FlowLifecycleConfig) error {
 		return nil
 	}
 	if _, err := cfg.policy(); err != nil {
-		return errors.New("bootstrap_from must be YYYY-MM-DD; raw_retention at least 24h; late_arrival at most 168h; " +
+		return errors.New("bootstrap_from must be YYYY-MM-DD; raw_retention at least 1h; late_arrival at most 168h; " +
 			"delete_grace 1h..720h; max_partitions_per_run 1..366; auto_delete requires raw_delete")
 	}
 	return nil
