@@ -281,8 +281,12 @@ func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now
 		if err != nil {
 			return 0, err
 		}
-		scheduler.lastRepairChecked[key] = now
 		if !needsRepair {
+			// Only a clean verdict is cached. A stale bucket that loses this
+			// scan's heavy budget is checked again next scan instead of waiting
+			// a whole repair interval; once repaired, its fresh generated_at
+			// keeps it out of the window.
+			scheduler.lastRepairChecked[key] = now
 			continue
 		}
 		candidates = append(candidates, marker)

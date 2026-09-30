@@ -481,3 +481,40 @@ func TestFlowHotRollupSchedulerFillsHourOutsideMinuteLookbackFromRaw(t *testing.
 		t.Fatalf("orphaned hour was not filled from raw: count=%d requests=%+v", count, runner.requests)
 	}
 }
+
+func TestFlowHotRollupSchedulerRepairsQueuedStaleHoursEveryScan(t *testing.T) {
+	now := time.Date(2026, 9, 30, 4, 17, 0, 0, time.UTC)
+	through := now.Add(-5 * time.Minute).Truncate(time.Hour)
+	first, second := time.Date(2026, 9, 29, 21, 0, 0, 0, time.UTC), time.Date(2026, 9, 29, 22, 0, 0, 0, time.UTC)
+	hours := hourMarkersExcept(through.Add(-24*time.Hour), through, now.Add(-time.Hour))
+	runner := &fakeHotRollupRunner{
+		resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{flowch.RollupOneHour: hours},
+		needsRepair:       map[int64]bool{first.Unix(): true, second.Unix(): true}, rawRecords: true,
+	}
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: 6 * time.Hour, HourLookback: 24 * time.Hour, HourLateArrivalWindow: 24 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxHourBucketsPerRun: 1,
+	}}
+	scan := func(at time.Time) []flowch.RollupRequest {
+		t.Helper()
+		runner.requests = nil
+		if _, err := scheduler.scanResolution(context.Background(), at, at.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, 24*time.Hour, 24*time.Hour, 1); err != nil {
+			t.Fatal(err)
+		}
+		return runner.requests
+	}
+	if got := scan(now); len(got) != 2 || !got[1].Bucket.Equal(first) {
+		t.Fatalf("first scan=%+v", got)
+	}
+	// The repair published a fresh generation for the first hour; the second,
+	// which lost the one-bucket budget, must not wait a whole repair interval.
+	for i := range hours {
+		if hours[i].Bucket.Equal(first) {
+			hours[i] = flowch.RollupMarker{Bucket: first, Generation: uint64(now.Unix()), GeneratedAt: now}
+		}
+	}
+	if got := scan(now.Add(2 * time.Minute)); len(got) != 2 || !got[1].Bucket.Equal(second) {
+		t.Fatalf("second scan=%+v", got)
+	}
+}
