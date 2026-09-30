@@ -116,6 +116,15 @@ raw 压缩后约 **62 字节/行**（已加 codec；未加约 84）。单 export
 ### 4.1 迁移自动应用
 `internal/server/install.go:173-182` 在安装/启动时用内嵌 FS（`//go:embed *.sql`）`LoadMigrations` + `Apply`，幂等。新增的 `021`/`022` **随部署自动生效**，无需手工建表。验收：`SELECT max(version) FROM watchdog_flow.flow_schema_migrations` = 22。
 
+（2026-09-29 复核补记，详见 `docs/flow-snmp-clickhouse-storage-query-design.md` §13、§17：
+- **不可回滚。** 部署后不能回滚到 021 之前的二进制：旧二进制启动时会报 “schema version 021 is newer than the available migration set”，ClickHouse 平面起不来（`internal/flowch/migrations.go:144-146`）。部署前先用新二进制跑只读 `watchdog-flow-migrate -command inspect`。
+- **自动迁移不传 TLS**（`internal/server/install.go:164-168`），启用 ClickHouse TLS 的部署会迁移失败。
+- **5m 影子写入会立即开始。** 部署后热聚合立刻开始影子写 `flow_aggregate_5m`（没有独立开关）；这是预期的影子阶段，此时没有任何 reader。
+- **首次发布 retention policy 的两个约束。** `bootstrap_from` 不得早于 2026-09-27，否则归档会在已删 raw 的空日上发布空归档，遮住仍然存在的热 1h；首版就定好全部开关，因为换版会让旧版已归档的日永久卡在 `invalid_generation`。
+- **索引收益只对非 FINAL 查询成立。** 022 的约 6 倍裁剪是非 FINAL 实测；生产 `use_skip_indexes_if_final=0`，raw 查询的 FINAL 路径用不到该索引。）
+
+（2026-09-30 补记：retention policy 改由配置文件 `flow.lifecycle` 管理，策略写接口只读；首版 `bootstrap_from` 用 2026-09-29。部署顺序、配置块、Kafka 保留期与磁盘前置条件见 `docs/flow-snmp-clickhouse-storage-query-design.md` §18.7，事故复盘见 §18.6。）
+
 ### 4.2 分层表与索引
 | 表 | 角色 | 分区 | TTL |
 |---|---|---|---|

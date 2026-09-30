@@ -94,3 +94,12 @@
 2. **Flow worker 控制面方向**：`flow-worker-control-plane-repair-plan.md` 的"逐设备 desired"方案与已提交的 composite v2 部署方向相反；新前端契约测试已把 composite 固化，该计划自己的变更冻结（L594）也未被遵守。以哪个为目标？
 3. **代码发现是否现在修**：建议顺序——§3 高 1/2/4（均为本轮自己引入）→ 5（升级兼容参数）→ 3（连接池）→ 9（导出权限）→ 8（v2 operator 门禁）→ 6/7（system agent、SNMP 补桶）→ 10（许可证）。
 4. **生产运维（需你在主机执行）**：vda3 存储策略、部署 5m 分层与 agent 改动（按 §1.3 顺序）、nginx `/api/` 反代端口（8090 vs 8091）。
+
+## 8. 后续：Flow/SNMP 存储与查询设计复核（2026-09-29）
+
+`docs/flow-snmp-clickhouse-storage-query-design.md` 已逐节对照代码并做只读生产核验，正文已就地加注，结论见其 §17。物理 schema 描述准确；新发现的高优先级问题：
+
+- **H1 覆盖空洞 + 前缀语义。** 1h 缺 09-25 07:00 至 09-27 00:00 共 42 小时，raw 只剩 09-27 起。起点早于空洞的报表整段读 raw，超出预算而失败；洞内结果则显示为 0 并标 `complete=true`。1d 没有生产者，也没有回退。
+- **H2 生命周期被绕开。** 生命周期四表为 0 行，raw 是人工 DROP 的。首次发布策略有两个陷阱：`bootstrap_from` 必须不早于 2026-09-27；换版会让旧版的日永久卡住。
+- **H3 FINAL 使跳数索引与 projection 全部失效**（生产 `use_skip_indexes_if_final=0`，已用 `EXPLAIN` 证实）。
+- **H4 计费与对账是纸面闭环。** Flow 5m 证据表没有 writer，Flow billing 算不出真实账期，三方对账函数没有调用方。SNMP coverage 与采样相位耦合，约 29% 的桶被持久化计费剔除。
