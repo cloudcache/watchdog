@@ -1089,6 +1089,8 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
 | D24 | P0 | Kafka `watchdog.flow.raw-v1` 保留 `retention.ms=6h`、`retention.bytes=6GiB`，短于一次故障的时长：worker 停滞期间未消费的数据被 Kafka 删除，永久丢失 | 09-29 18:00Z 仅 186 万行、19:00Z 为 0、20:00Z 仅 212 万行（前一天同时段约 790 万、690 万）；Kafka 在 vda3（64G，仅用 6.5G） | 保留期至少覆盖最长可接受故障（建议 48h；按约 1.3GiB/h 估算需约 60GiB 时改为 24h/32GiB）；worker lag 告警 | 待办（运维，命令见 18.7） |
 | D25 | P0 | 单盘容量：vda1（60G）同时承载 ClickHouse、MySQL（含 binlog）、日志。raw 保留 1 天时，第 D 天在 D+48h 才删除，峰值约为 2 天 raw（按 16–18GiB/天约 32–36GiB），还要给 merge 预留空间；ClickHouse system 日志无 TTL（约 4.3GiB）；MySQL binlog 每天约 8GiB | 09-30 凌晨磁盘写满：ClickHouse `NOT_ENOUGH_SPACE`、MySQL 写入阻塞、API 超时 | 把 ClickHouse 数据迁到独立大盘（或扩 vda1）；system 日志设 TTL；binlog 见 D26 | 待办（需你决定） |
 | D26 | P1 | `snmp_collection_recipes` 两天被更新 885 万次（约 51 次/秒），ROW 格式 binlog 每天约 8GiB | `performance_schema.table_io_waits_summary_by_table` | 降低调度状态的写频率（批量或只写变化），或 `binlog_row_image=MINIMAL`；单机无复制时可缩短 binlog 保留 | 待办 |
+| D27 | P2 | 热 rollup 修复过期小时每 30 分钟才完成一个：`BucketNeedsRepair` 的"需要修复"结论也被缓存，超出单次预算的候选要等满 `repair_interval` 才会再被检查 | 部署 r20 后 09-29 20Z–00Z 依次在 04:04、04:35、05:09、05:40、06:11 修复 | 只缓存"无需修复"的结论；已修复的小时靠新 generation 的 `generated_at` 避开窗口 | **已修（r21）** |
+| D28 | P1 | 冷归档 job 没有资源上限，按 runner 默认每条语句 10GiB、不限线程；生产主机 15GB 内存，ClickHouse 上限约 15.1GB | `internal/flowlifecycle/archive.go` 的 1h/1d rollup 请求未带限额 | 归档复用 `flow.hot_rollup` 的 `max_threads`/`priority`/`max_memory_bytes`（生产 4 线程、6GiB） | **已修（r21）** |
 
 ### 18.4 可优化清单
 
@@ -1106,7 +1108,7 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
 
 ### 18.5 自动清理的决定（2026-09-30 已定）
 
-1. **raw 保留 1 天**：`raw_retention: 24h`。按公式第 D 天在 D+24h+max(24h, late) 归档，再过 `delete_grace` 删除，即每条记录至少保留 1 天；磁盘峰值约为 2 天 raw（见 D25）。
+1. **raw 保留 1 天**：r20 用 `raw_retention: 24h`，按公式第 D 天在 D+24h+max(24h, late) 归档、再过 `delete_grace` 删除，即每条记录至少保留 1 天，磁盘峰值约 2 天 raw（见 D25）。2026-09-30 修订（r21）：最小值由 24h 降为 1h，生产改为 `raw_retention: "6h"`（与 `late_arrival` 相同），第 D 天结束 6 小时后归档、再过 1 小时删除（约 D+31h），磁盘上约 1–1.3 天 raw。
 2. **自动删除，由配置文件而非界面管理**：`flow.lifecycle.auto_delete: true`；策略 API 只读（写操作返回 409 `flow_lifecycle_config_managed`）。
 3. **Kafka 对账门禁豁免**：生产未启用 reconciliation，`require_kafka_coverage: false`；守恒、late/grace 窗口、delete barrier、reclassification 检查照常。
 4. **不要求删除前备份**：`require_backup_before_delete: false`（生产没有备份证据，也没有备份空间）。
@@ -1144,6 +1146,8 @@ Flow 的查询与生命周期**都没有闭环**。本轮沿“界面 → API �
        require_backup_before_delete: false
        require_kafka_coverage: false
    ```
+
+   r21 起把 `raw_retention` 改为 `"6h"`，见 18.5 第 1 点。
 
 3. **Kafka 保留期**（D24，vda3 有空间）：
 
