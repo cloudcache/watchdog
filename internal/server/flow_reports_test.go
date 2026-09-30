@@ -161,49 +161,46 @@ func TestFlowReportPanelFailureReasonExposesOnlyTypedQueryErrors(t *testing.T) {
 	}
 }
 
-func TestPlanFlowReportAggregateUsesConfiguredMinuteCoverageHorizon(t *testing.T) {
+func TestPlanFlowAggregateUsesMinuteRetentionHorizon(t *testing.T) {
 	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
 	cfg := defaultConfig()
 	cfg.Flow.HotRollup.MinuteLookback = 6 * time.Hour
 	cfg.Flow.HotRollup.SealDelay = 20 * time.Minute
 	s := &Server{cfg: cfg}
 
-	// At 08:00 with a 20m seal delay the minute scheduler's through boundary is
-	// 07:00, so its six-hour physical coverage begins at 01:00.
-	within, err := s.planFlowReportAggregate(flowReportRequest{From: now.Add(-7 * time.Hour), To: now}, 300, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if within.Source != flowquery.BucketOneMinute {
-		t.Fatalf("range within minute coverage selected %s", within.Source)
+	// At 08:00 with a 20m seal delay the last sealed hour ends at 07:00; minute
+	// buckets are retained for the 1m TTL, so they exist back to 09-20 07:00 even
+	// though the scheduler only fills the last six hours.
+	for name, window := range map[string][2]time.Time{
+		"recent":            {now.Add(-7 * time.Hour), now},
+		"historical short":  {now.Add(-25 * time.Hour), now.Add(-23 * time.Hour)},
+		"at the 1m horizon": {now.Add(-flowMinuteTierRetention - time.Hour), now.Add(-flowMinuteTierRetention + 5*time.Hour)},
+	} {
+		plan, err := s.planFlowReportAggregate(flowReportRequest{From: window[0], To: window[1]}, 300, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Source != flowquery.BucketOneMinute {
+			t.Fatalf("%s range inside 1m retention selected %+v", name, plan)
+		}
 	}
 
-	beyond, err := s.planFlowReportAggregate(flowReportRequest{From: now.Add(-7*time.Hour - time.Minute), To: now}, 300, now)
+	beyondFrom := now.Add(-flowMinuteTierRetention - time.Hour - time.Minute)
+	beyond, err := s.planFlowReportAggregate(flowReportRequest{From: beyondFrom, To: beyondFrom.Add(6 * time.Hour)}, 300, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if beyond.Source != flowquery.BucketOneHour || beyond.StepSeconds != 3600 {
-		t.Fatalf("range beyond minute coverage selected %+v", beyond)
-	}
-	historicalShort, err := s.planFlowReportAggregate(flowReportRequest{
-		From: now.Add(-25 * time.Hour), To: now.Add(-23 * time.Hour),
-	}, 300, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if historicalShort.Source != flowquery.BucketOneHour {
-		t.Fatalf("short historical range selected %s", historicalShort.Source)
+		t.Fatalf("range beyond 1m retention selected %+v", beyond)
 	}
 
-	// The threshold is deployment-owned, not a second hard-coded query limit.
-	cfg.Flow.HotRollup.MinuteLookback = 12 * time.Hour
-	s.cfg = cfg
-	expanded, err := s.planFlowReportAggregate(flowReportRequest{From: now.Add(-12 * time.Hour), To: now}, 300, now)
+	// An explicit step keeps its requested resolution.
+	explicit, err := s.planFlowAggregate(beyondFrom, beyondFrom.Add(6*time.Hour), 5*time.Minute, 300, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if expanded.Source != flowquery.BucketOneMinute {
-		t.Fatalf("expanded minute coverage selected %s", expanded.Source)
+	if explicit.Source != flowquery.BucketOneMinute {
+		t.Fatalf("explicit 5m step was re-planned: %+v", explicit)
 	}
 }
 

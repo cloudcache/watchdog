@@ -505,7 +505,7 @@ func (s *Server) runFlowQueryExportResult(ctx context.Context, view flowquery.Vi
 		}
 		return marshalFlowJointResult(result, nil, s.flowGeo)
 	}
-	plan, err := flowquery.PlanAggregate(input.From, input.To, step, input.TargetPoints, now)
+	plan, err := s.planFlowAggregate(input.From, input.To, step, input.TargetPoints, now)
 	if err != nil {
 		return nil, err
 	}

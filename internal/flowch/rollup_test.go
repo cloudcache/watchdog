@@ -314,6 +314,28 @@ func TestRollupRunnerChecksPhysicalRawBucketWithoutFinal(t *testing.T) {
 	}
 }
 
+func TestRollupRunnerReadsRawWatermark(t *testing.T) {
+	from := time.Date(2026, 9, 30, 1, 0, 0, 0, time.UTC)
+	newest := time.Date(2026, 9, 30, 1, 42, 29, 0, time.UTC)
+	executor := &scalarSequenceExecutor{values: []uint64{uint64(newest.Unix()), 0}}
+	runner := &RollupRunner{executor: executor}
+	watermark, err := runner.RawWatermark(context.Background(), from, from.Add(time.Hour))
+	if err != nil || !watermark.Equal(newest) {
+		t.Fatalf("watermark=%s err=%v", watermark, err)
+	}
+	if body := executor.queries[0].Body; !strings.Contains(body, "max(event_time)") || strings.Contains(body, "FINAL") ||
+		!strings.Contains(body, "PREWHERE event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}") {
+		t.Fatalf("watermark query=%s", body)
+	}
+	// An empty window yields max() = epoch, reported as no watermark.
+	if watermark, err := runner.RawWatermark(context.Background(), from, from.Add(time.Hour)); err != nil || !watermark.IsZero() {
+		t.Fatalf("empty window watermark=%s err=%v", watermark, err)
+	}
+	if _, err := runner.RawWatermark(context.Background(), from, from); err == nil {
+		t.Fatal("empty watermark window accepted")
+	}
+}
+
 func TestDayStorageCountersUsesRawAndLatestCompleteHourlyGeneration(t *testing.T) {
 	raw := StorageCounters{RecordCount: 2, RawBytes: 30, RawPackets: 3, EstimatedBytes: 300, EstimatedPackets: 30, EstimatedValidRecords: 1}
 	archive := raw
@@ -566,6 +588,11 @@ func TestBucketNeedsRepairComparesStoredAndLiveCounts(t *testing.T) {
 	late := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 4}}}
 	if needs, err := late.BucketNeedsRepair(context.Background(), RollupOneMinute, bucket); err != nil || !needs {
 		t.Fatalf("late arrival: needs=%v err=%v", needs, err)
+	}
+	// live < stored: raw was deleted after the roll; rebuilding would empty it.
+	deleted := &RollupRunner{executor: &scalarSequenceExecutor{values: []uint64{3, 0}}}
+	if needs, err := deleted.BucketNeedsRepair(context.Background(), RollupOneHour, bucket.Truncate(time.Hour)); err != nil || needs {
+		t.Fatalf("deleted raw: needs=%v err=%v", needs, err)
 	}
 	// An unaligned bucket is a permanent (programmer) error, not a silent false.
 	if _, err := inSync.BucketNeedsRepair(context.Background(), RollupOneMinute, bucket.Add(30*time.Second)); err == nil {

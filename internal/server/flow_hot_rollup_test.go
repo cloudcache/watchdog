@@ -21,6 +21,19 @@ type fakeHotRollupRunner struct {
 	requests          []flowch.RollupRequest
 	sourceCovered     bool
 	rawRecords        bool
+	// watermark is the newest stored raw event_time; zero models live
+	// ingestion (a record from just now).
+	watermark time.Time
+}
+
+func (runner *fakeHotRollupRunner) RawWatermark(_ context.Context, from, to time.Time) (time.Time, error) {
+	if runner.watermark.IsZero() {
+		return to.Add(-time.Second), nil
+	}
+	if runner.watermark.Before(from) || !runner.watermark.Before(to) {
+		return time.Time{}, nil
+	}
+	return runner.watermark, nil
 }
 
 func (runner *fakeHotRollupRunner) GenerationMarkers(_ context.Context, resolution flowch.RollupResolution, _, _ time.Time) ([]flowch.RollupMarker, error) {
@@ -101,7 +114,7 @@ func TestFlowHotRollupSchedulerDerivesHourFromCompleteMinuteTier(t *testing.T) {
 		HourLookback: time.Hour, HourLateArrivalWindow: 0, RepairInterval: 30 * time.Minute,
 		MaxHourBucketsPerRun: 1, MinimumGeneration: 11,
 	}}
-	count, err := scheduler.scanResolution(context.Background(), now, flowch.RollupOneHour, time.Hour, time.Hour, 0, 1)
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, time.Hour, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,12 +127,14 @@ func TestFlowHotRollupSchedulerDerivesHourFromCompleteMinuteTier(t *testing.T) {
 func TestFlowHotRollupSchedulerNeverFallsBackToRawHourExpansion(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 17, 0, 0, time.UTC)
 	runner := &fakeHotRollupRunner{rawRecords: true}
+	// Both hours are still inside the minute lookback: the minute scan completes
+	// their 1m tier, so the hour path waits instead of reading raw itself.
 	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
 		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
-		HourLookback: 2 * time.Hour, HourLateArrivalWindow: 0, RepairInterval: 30 * time.Minute,
+		MinuteLookback: 2 * time.Hour, HourLookback: 2 * time.Hour, HourLateArrivalWindow: 0, RepairInterval: 30 * time.Minute,
 		MaxHourBucketsPerRun: 1, MinimumGeneration: 11,
 	}}
-	count, err := scheduler.scanResolution(context.Background(), now, flowch.RollupOneHour, time.Hour, 2*time.Hour, 0, 1)
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, 2*time.Hour, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +151,7 @@ func TestFlowHotRollupSchedulerDoesNotChargeEmptyMarkersToHeavyBudget(t *testing
 		HourLookback: 3 * time.Hour, HourLateArrivalWindow: 0, RepairInterval: 30 * time.Minute,
 		MaxHourBucketsPerRun: 1, MinimumGeneration: 11,
 	}}
-	count, err := scheduler.scanResolution(context.Background(), now, flowch.RollupOneHour, time.Hour, 3*time.Hour, 0, 1)
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, 3*time.Hour, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +173,7 @@ func TestFlowHotRollupSchedulerBatchesOnlyFullySealedRawHour(t *testing.T) {
 		MinuteLookback: 5 * time.Minute, MinuteLateArrivalWindow: 0, RepairInterval: 30 * time.Minute,
 		MaxMinuteBucketsPerRun: 5,
 	}}
-	count, err := scheduler.scanResolution(context.Background(), now, flowch.RollupOneMinute, time.Minute, 5*time.Minute, 0, 5)
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneMinute, time.Minute, 5*time.Minute, 0, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +240,7 @@ func TestFlowHotRollupSchedulerRegeneratesPreReleaseShapeWithoutCoverageGap(t *t
 		HourLookback: time.Hour, HourLateArrivalWindow: 0, RepairInterval: 30 * time.Minute,
 		MaxHourBucketsPerRun: 1, MinimumGeneration: 11,
 	}}
-	count, err := scheduler.scanResolution(context.Background(), now, flowch.RollupOneHour, time.Hour, time.Hour, 0, 1)
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, time.Hour, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +263,7 @@ func TestFlowHotRollupSchedulerFillsFiveMinuteFromCompleteMinute(t *testing.T) {
 		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 1, MaxHourBucketsPerRun: 1,
 		MaxThreads: 4, Priority: 10, MaxMemoryBytes: 6 << 30,
 	}}
-	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	completed, err := scheduler.scanFiveMinute(context.Background(), now, now.Add(-5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +292,7 @@ func TestFlowHotRollupSchedulerSkipsFiveMinuteWhenMinuteIncomplete(t *testing.T)
 		MinuteLookback: time.Minute, HourLookback: 4 * time.Hour,
 		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 1, MaxHourBucketsPerRun: 1,
 	}}
-	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	completed, err := scheduler.scanFiveMinute(context.Background(), now, now.Add(-5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +319,7 @@ func TestFlowHotRollupSchedulerRederivesFiveMinuteAfterMinuteRepair(t *testing.T
 		flowch.RollupFiveMinute: fiveMinute,
 	}}
 	scheduler := &flowHotRollupScheduler{runner: stable, config: config}
-	if completed, err := scheduler.scanFiveMinute(context.Background(), now); err != nil || completed != 0 {
+	if completed, err := scheduler.scanFiveMinute(context.Background(), now, now.Add(-5*time.Minute)); err != nil || completed != 0 {
 		t.Fatalf("stable 5m hour was rewritten: completed=%d err=%v requests=%+v", completed, err, stable.requests)
 	}
 
@@ -317,7 +332,7 @@ func TestFlowHotRollupSchedulerRederivesFiveMinuteAfterMinuteRepair(t *testing.T
 		flowch.RollupFiveMinute: fiveMinute,
 	}}
 	scheduler = &flowHotRollupScheduler{runner: repaired, config: config}
-	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	completed, err := scheduler.scanFiveMinute(context.Background(), now, now.Add(-5*time.Minute))
 	if err != nil || completed != 1 || len(repaired.requests) != 1 {
 		t.Fatalf("repaired 1m did not re-derive 5m: completed=%d err=%v requests=%+v", completed, err, repaired.requests)
 	}
@@ -340,8 +355,129 @@ func TestFlowHotRollupSchedulerFiveMinuteScanStopsAtMinuteRetention(t *testing.T
 		MinuteLookback: time.Hour, HourLookback: 72 * time.Hour,
 		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 60, MaxHourBucketsPerRun: 4,
 	}}
-	completed, err := scheduler.scanFiveMinute(context.Background(), now)
+	completed, err := scheduler.scanFiveMinute(context.Background(), now, now.Add(-5*time.Minute))
 	if err != nil || completed != 0 || len(runner.requests) != 0 {
 		t.Fatalf("5m scan reached past 1m retention: completed=%d err=%v requests=%+v", completed, err, runner.requests)
+	}
+}
+
+func TestFlowHotRollupSchedulerWaitsForIngestWatermark(t *testing.T) {
+	now := time.Date(2026, 9, 30, 1, 28, 0, 0, time.UTC)
+	// The worker stalled at 18:15Z. The wall clock alone would seal 18:00-01:00,
+	// but raw holds nothing after the stall, so those hours must stay open
+	// rather than close as empty markers (the 2026-09-30 incident).
+	runner := &fakeHotRollupRunner{watermark: time.Date(2026, 9, 29, 18, 15, 0, 0, time.UTC)}
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: time.Hour, HourLookback: 12 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxMinuteBucketsPerRun: 60, MaxHourBucketsPerRun: 1,
+	}}
+	if _, err := scheduler.ScanOnce(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.requests) == 0 {
+		t.Fatal("hours before the watermark were not sealed")
+	}
+	sealedThrough := time.Date(2026, 9, 29, 18, 0, 0, 0, time.UTC)
+	for _, request := range runner.requests {
+		end := request.BucketEnd
+		if end.IsZero() {
+			end = request.Bucket.Add(time.Hour)
+		}
+		if end.After(sealedThrough) {
+			t.Fatalf("sealed past the ingest watermark: %+v", request)
+		}
+	}
+	// No raw at all within the lookback: nothing closes.
+	idle := &fakeHotRollupRunner{watermark: now.Add(-48 * time.Hour)}
+	scheduler.runner = idle
+	if count, err := scheduler.ScanOnce(context.Background(), now); err != nil || count != 0 || len(idle.requests) != 0 {
+		t.Fatalf("closed buckets without any stored raw: count=%d err=%v requests=%+v", count, err, idle.requests)
+	}
+}
+
+// hourMarkersExcept returns one generation-10 marker per hour in [from,to) except
+// the skipped hours.
+func hourMarkersExcept(from, to time.Time, generatedAt time.Time, skip ...time.Time) []flowch.RollupMarker {
+	var markers []flowch.RollupMarker
+next:
+	for bucket := from; bucket.Before(to); bucket = bucket.Add(time.Hour) {
+		for _, skipped := range skip {
+			if bucket.Equal(skipped) {
+				continue next
+			}
+		}
+		markers = append(markers, flowch.RollupMarker{Bucket: bucket, Generation: 10, GeneratedAt: generatedAt})
+	}
+	return markers
+}
+
+func TestFlowHotRollupSchedulerRebuildsStaleHourFromRaw(t *testing.T) {
+	now := time.Date(2026, 9, 30, 2, 17, 0, 0, time.UTC)
+	through := now.Add(-5 * time.Minute).Truncate(time.Hour)
+	stale := time.Date(2026, 9, 29, 21, 0, 0, 0, time.UTC)
+	// The hour was sealed while the worker replayed its backlog: its 1m tier is
+	// complete but partial, and raw now holds more records than the aggregate.
+	hours := hourMarkersExcept(through.Add(-24*time.Hour), through, now.Add(-time.Hour))
+	runner := &fakeHotRollupRunner{
+		resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+			flowch.RollupOneHour:   hours,
+			flowch.RollupOneMinute: hourMarkers(stale, time.Minute, 1790731700, now.Add(-time.Hour)),
+		},
+		needsRepair: map[int64]bool{stale.Unix(): true}, sourceCovered: true, rawRecords: true,
+	}
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: 6 * time.Hour, HourLookback: 24 * time.Hour, HourLateArrivalWindow: 24 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxHourBucketsPerRun: 1,
+	}}
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, 24*time.Hour, 24*time.Hour, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 61 || len(runner.requests) != 2 {
+		t.Fatalf("stale hour was not rebuilt: count=%d requests=%+v", count, runner.requests)
+	}
+	minute, hour := runner.requests[0], runner.requests[1]
+	if minute.Resolution != flowch.RollupOneMinute || !minute.Bucket.Equal(stale) || !minute.BucketEnd.Equal(stale.Add(time.Hour)) ||
+		minute.Generation <= 1790731700 || minute.SourceResolution != "" {
+		t.Fatalf("1m tier was not rebuilt from raw: %+v", minute)
+	}
+	if hour.Resolution != flowch.RollupOneHour || !hour.Bucket.Equal(stale) || hour.SourceResolution != flowch.RollupOneMinute ||
+		hour.MarkerOnly || hour.Generation <= 10 {
+		t.Fatalf("hour was not derived from the rebuilt 1m tier: %+v", hour)
+	}
+}
+
+func TestFlowHotRollupSchedulerFillsHourOutsideMinuteLookbackFromRaw(t *testing.T) {
+	now := time.Date(2026, 9, 30, 2, 17, 0, 0, time.UTC)
+	through := now.Add(-5 * time.Minute).Truncate(time.Hour)
+	// 13:00Z went missing while the disk was full and the 6h minute lookback
+	// expired before it recovered, so no minute scan will ever fill it. The
+	// 60h-old hole's 1m tier has aged out; it is left to the lifecycle archive.
+	missing := time.Date(2026, 9, 29, 13, 0, 0, 0, time.UTC)
+	aged := time.Date(2026, 9, 27, 14, 0, 0, 0, time.UTC)
+	runner := &fakeHotRollupRunner{
+		resolutionMarkers: map[flowch.RollupResolution][]flowch.RollupMarker{
+			flowch.RollupOneHour:   hourMarkersExcept(through.Add(-72*time.Hour), through, now.Add(-time.Hour), missing, aged),
+			flowch.RollupOneMinute: nil,
+		},
+		rawRecords: true,
+	}
+	scheduler := &flowHotRollupScheduler{runner: runner, config: FlowHotRollupConfig{
+		Enabled: true, ScanInterval: time.Minute, SealDelay: 5 * time.Minute,
+		MinuteLookback: 6 * time.Hour, HourLookback: 72 * time.Hour,
+		RepairInterval: 30 * time.Minute, MaxHourBucketsPerRun: 1,
+	}}
+	count, err := scheduler.scanResolution(context.Background(), now, now.Add(-5*time.Minute), flowch.RollupOneHour, time.Hour, 72*time.Hour, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 61 || len(runner.requests) != 2 ||
+		runner.requests[0].Resolution != flowch.RollupOneMinute || !runner.requests[0].Bucket.Equal(missing) ||
+		!runner.requests[0].BucketEnd.Equal(missing.Add(time.Hour)) ||
+		runner.requests[1].Resolution != flowch.RollupOneHour || !runner.requests[1].Bucket.Equal(missing) ||
+		runner.requests[1].SourceResolution != flowch.RollupOneMinute {
+		t.Fatalf("orphaned hour was not filled from raw: count=%d requests=%+v", count, runner.requests)
 	}
 }

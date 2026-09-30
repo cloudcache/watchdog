@@ -197,6 +197,7 @@ func compileRollupJoint(scope Scope, request JointRequest, now time.Time, layout
 		uintParameter("top_n", uint64(request.TopN)),
 		uintParameter("include_other", boolUint(request.IncludeOther)),
 		uintParameter("bucket_seconds", uint64(interval/time.Second)),
+		uintParameter("minimum_generation", request.MinimumGeneration),
 	}
 	parameters = append(parameters, filterParameters...)
 	valueColumn := metric.column
@@ -266,6 +267,7 @@ const rollupJointSQL = `WITH
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {to:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
+    HAVING generation >= {minimum_generation:UInt64}
   ),
   grouped AS (
     SELECT
@@ -333,6 +335,7 @@ const businessCategoryHybridJointSQL = `WITH
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
+    HAVING generation >= {minimum_generation:UInt64}
   ),
   source_rows AS (
     SELECT

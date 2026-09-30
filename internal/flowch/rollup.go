@@ -336,13 +336,45 @@ FROM (
 	return value != 0, nil
 }
 
+// RawWatermark returns the newest stored raw event_time in [from,to), or the
+// zero time when that window holds no record. The hot rollup bounds its sealed
+// instant by it so a bucket closes only after ingestion has moved past it.
+func (r *RollupRunner) RawWatermark(ctx context.Context, from, to time.Time) (time.Time, error) {
+	from, to = from.UTC(), to.UTC()
+	if r == nil || r.executor == nil {
+		return time.Time{}, Permanent(errors.New("ClickHouse rollup runner is not initialized"))
+	}
+	if from.Unix() < 0 || !to.After(from) {
+		return time.Time{}, Permanent(errors.New("raw watermark window must be increasing and after the Unix epoch"))
+	}
+	value, err := r.scalarUInt64(ctx, ch.Query{
+		Body: `SELECT toUInt64(toUnixTimestamp(max(event_time))) AS value
+FROM flow_records
+PREWHERE event_time >= {from:DateTime('UTC')} AND event_time < {to:DateTime('UTC')}`,
+		Parameters: ch.Parameters(map[string]any{
+			"from": from.Format("2006-01-02 15:04:05"),
+			"to":   to.Format("2006-01-02 15:04:05"),
+		}),
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read raw ingest watermark: %w", err)
+	}
+	if value == 0 {
+		return time.Time{}, nil
+	}
+	return time.Unix(int64(value), 0).UTC(), nil
+}
+
 // BucketNeedsRepair reports whether a bucket's latest rolled generation no
-// longer reflects its base data: the number of base records now in flow_records
-// for the bucket differs from the received_records its aggregate recorded. Base
-// records that arrived after the rollup ran are the common cause (F2). The
-// reaper calls it only for buckets that already have a successful generation, so
-// the aggregate side is populated. Public data rows and raw facts read FINAL;
-// marker-only max(generation) subqueries do not need merge-time deduplication.
+// longer reflects its base data. For 1m/1h that means flow_records now holds
+// more base records for the bucket than the received_records its aggregate
+// recorded: base records that arrived after the rollup ran are the common cause
+// (F2). The rollup counts the same FINAL records, so fewer base records only
+// mean raw was deleted after the roll, and rebuilding would empty a correct
+// aggregate. The reaper calls it only for buckets that already have a
+// successful generation, so the aggregate side is populated. Public data rows
+// and raw facts read FINAL; marker-only max(generation) subqueries do not need
+// merge-time deduplication.
 func (r *RollupRunner) BucketNeedsRepair(ctx context.Context, resolution RollupResolution, bucket time.Time) (bool, error) {
 	duration, table, err := rollupTarget(resolution)
 	if err != nil {
@@ -398,8 +430,11 @@ WHERE bucket >= {start:DateTime('UTC')} AND bucket < {end:DateTime('UTC')}
 	if err != nil {
 		return false, fmt.Errorf("read %s base record count: %w", resolution, err)
 	}
-	if live != stored || resolution != RollupOneDay {
-		return live != stored, nil
+	if resolution != RollupOneDay {
+		return live > stored, nil
+	}
+	if live != stored {
+		return true, nil
 	}
 	newerSource, err := r.scalarUInt64(ctx, ch.Query{
 		Body: `SELECT toUInt64(

@@ -37,6 +37,9 @@ type JointRequest struct {
 	Timezone         string
 	TimeWindows      []LocalTimeWindow
 	ExecutionTimeout time.Duration
+	// MinimumGeneration is the readable hot-rollup generation floor for the
+	// aggregate-backed business-category compilers.
+	MinimumGeneration uint64
 	// Reclassification is server-owned. It switches the bounded base-fact
 	// query to one already activated historical generation; clients never
 	// supply a table name or SQL fragment.

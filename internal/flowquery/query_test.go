@@ -339,6 +339,58 @@ func TestCompileStorageV2UsesDisjointArchiveAndRawRangesWithGlobalTopN(t *testin
 	}
 }
 
+// TestCompileStorageV2ArchiveHonorsMinimumGeneration: the archive side of every
+// hybrid compiler skips a bucket whose latest marker is below the readable
+// hot-rollup floor, so a gap-tolerant boundary cannot read stale-shape rows.
+func TestCompileStorageV2ArchiveHonorsMinimumGeneration(t *testing.T) {
+	const floor = uint64(1790070054)
+	const having = "HAVING generation >= {minimum_generation:UInt64}"
+
+	request := validRequest()
+	request.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	request.To = time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	request.Bucket = BucketOneHour
+	request.Interval = 6 * time.Hour
+	request.StorageV2 = true
+	request.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	request.MinimumGeneration = floor
+	aggregate, err := Compile(Scope{}, request, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jointNow := time.Date(2026, 9, 23, 1, 3, 0, 0, time.UTC)
+	jointTo := time.Date(2026, 9, 23, 1, 0, 0, 0, time.UTC)
+	joint, err := CompileBusinessCategoryHybridJoint(Scope{}, JointRequest{
+		From: jointTo.Add(-24 * time.Hour), To: jointTo, Interval: time.Hour,
+		TargetPoints: 300, Metric: MetricEstimatedBPS,
+		Dimensions: []Dimension{DimensionBusiness, DimensionCategory},
+		View:       ViewCustomer, TopN: 20, IncludeOther: true, MinimumGeneration: floor,
+	}, jointTo.Add(-time.Hour), jointNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	overseas := validOverseasRequest()
+	overseas.From = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	overseas.To = time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	overseas.Bucket = BucketOneHour
+	overseas.StorageV2 = true
+	overseas.ArchiveThrough = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	overseas.MinimumGeneration = floor
+	overseasCompiled, err := CompileOverseas(Scope{}, overseas, overseasNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, query := range map[string]ch.Query{"aggregate": aggregate.Query, "joint": joint.Query, "overseas": overseasCompiled.Query} {
+		if !strings.Contains(query.Body, having) || queryParameter(query, "minimum_generation") != "'1790070054'" {
+			t.Fatalf("%s archive side does not honor the generation floor: parameter=%q\n%s",
+				name, queryParameter(query, "minimum_generation"), query.Body)
+		}
+	}
+}
+
 func TestCompileStorageV2ScopedRawQueryProjectsMetricAndUsesScopedBudget(t *testing.T) {
 	request := validRequest()
 	request.StorageV2 = true

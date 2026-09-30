@@ -60,7 +60,7 @@ func (s *Server) queryFlowDirectionSplit(c *gin.Context, envelope flowQueryEnvel
 		}
 	}
 	step := time.Duration(envelope.StepSeconds) * time.Second
-	plan, err := flowquery.PlanAggregate(envelope.From, envelope.To, step, input.TargetPoints, now)
+	plan, err := s.planFlowAggregate(envelope.From, envelope.To, step, input.TargetPoints, now)
 	if err != nil {
 		writeFlowQueryError(c, err)
 		return

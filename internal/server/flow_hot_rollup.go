@@ -20,6 +20,7 @@ type flowHotRollupRunner interface {
 	GenerationMarkers(context.Context, flowch.RollupResolution, time.Time, time.Time) ([]flowch.RollupMarker, error)
 	CoveredThroughAtLeast(context.Context, flowch.RollupResolution, time.Time, time.Time, uint64) (time.Time, error)
 	RawBucketHasRecords(context.Context, flowch.RollupResolution, time.Time) (bool, error)
+	RawWatermark(context.Context, time.Time, time.Time) (time.Time, error)
 	BucketNeedsRepair(context.Context, flowch.RollupResolution, time.Time) (bool, error)
 	Run(context.Context, flowch.RollupRequest) error
 }
@@ -76,14 +77,18 @@ func (scheduler *flowHotRollupScheduler) ScanOnce(ctx context.Context, now time.
 		return 0, err
 	}
 	now = now.UTC()
+	sealed, err := scheduler.ingestSealedThrough(ctx, now)
+	if err != nil || sealed.IsZero() {
+		return 0, err
+	}
 	// Publish sealed minutes first. A completed set of 60 markers lets the hour
 	// path merge the compact 1m tier instead of expanding raw EAV records again.
-	minute, err := scheduler.scanResolution(ctx, now, flowch.RollupOneMinute, time.Minute,
+	minute, err := scheduler.scanResolution(ctx, now, sealed, flowch.RollupOneMinute, time.Minute,
 		scheduler.config.MinuteLookback, scheduler.config.MinuteLateArrivalWindow, scheduler.config.MaxMinuteBucketsPerRun)
 	if err != nil {
 		return minute, err
 	}
-	hourly, err := scheduler.scanResolution(ctx, now, flowch.RollupOneHour, time.Hour,
+	hourly, err := scheduler.scanResolution(ctx, now, sealed, flowch.RollupOneHour, time.Hour,
 		scheduler.config.HourLookback, scheduler.config.HourLateArrivalWindow, scheduler.config.MaxHourBucketsPerRun)
 	if err != nil {
 		return minute + hourly, err
@@ -92,8 +97,33 @@ func (scheduler *flowHotRollupScheduler) ScanOnce(ctx context.Context, now time.
 	// coverage the hourly path consumes, so it is filled last and reuses the
 	// hour lookback (capped by the 1m TTL) and per-run budget rather than
 	// introducing new config.
-	fiveMinute, err := scheduler.scanFiveMinute(ctx, now)
+	fiveMinute, err := scheduler.scanFiveMinute(ctx, now, sealed)
 	return minute + hourly + fiveMinute, err
+}
+
+// ingestSealedThrough is the instant through which buckets may close: SealDelay
+// behind both the wall clock and the newest stored raw record. Sealing by the
+// wall clock alone let a stalled Flow worker's hours close empty or partial
+// (2026-09-30: 09-29 19:00Z-00:00Z were sealed empty seconds before the worker
+// resumed, outside every late-arrival window). The zero time means no raw
+// record is stored within the lookback, so nothing may close.
+func (scheduler *flowHotRollupScheduler) ingestSealedThrough(ctx context.Context, now time.Time) (time.Time, error) {
+	sealed := now.Add(-scheduler.config.SealDelay)
+	// The newest record normally lies in the current hour, so the common probe
+	// reads at most that hour; only a lagging worker needs the lookback scan.
+	current := sealed.Truncate(time.Hour)
+	watermark, err := scheduler.runner.RawWatermark(ctx, current, now.Add(scheduler.config.SealDelay))
+	if err == nil && watermark.IsZero() {
+		lookback := max(scheduler.config.MinuteLookback, scheduler.config.HourLookback)
+		watermark, err = scheduler.runner.RawWatermark(ctx, current.Add(-lookback), current)
+	}
+	if err != nil || watermark.IsZero() {
+		return time.Time{}, err
+	}
+	if ingested := watermark.Add(-scheduler.config.SealDelay); ingested.Before(sealed) {
+		sealed = ingested
+	}
+	return sealed, nil
 }
 
 // flowMinuteTierRetention mirrors the flow_aggregate_1m TTL (ClickHouse
@@ -109,8 +139,8 @@ const flowMinuteTierRetention = 48 * time.Hour
 // covered hour is derived again when one of its 1m buckets was regenerated
 // after its 5m generation (late-arrival repair or shape regeneration), so 5m
 // never keeps counts the 1m tier has since corrected.
-func (scheduler *flowHotRollupScheduler) scanFiveMinute(ctx context.Context, now time.Time) (int, error) {
-	sealedThrough := now.Add(-scheduler.config.SealDelay).Truncate(time.Hour)
+func (scheduler *flowHotRollupScheduler) scanFiveMinute(ctx context.Context, now, sealed time.Time) (int, error) {
+	sealedThrough := sealed.Truncate(time.Hour)
 	from := sealedThrough.Add(-min(scheduler.config.HourLookback, flowMinuteTierRetention)).Truncate(time.Hour)
 	if !sealedThrough.After(from) {
 		return 0, nil
@@ -182,15 +212,14 @@ func (scheduler *flowHotRollupScheduler) hourlyMarkers(ctx context.Context, reso
 	return hours, nil
 }
 
-func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now time.Time, resolution flowch.RollupResolution,
+func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now, sealed time.Time, resolution flowch.RollupResolution,
 	duration, lookback, lateArrivalWindow time.Duration, maxBuckets int) (int, error) {
-	sealedThrough := now.Add(-scheduler.config.SealDelay)
-	through := sealedThrough.Truncate(duration)
+	through := sealed.Truncate(duration)
 	if resolution == flowch.RollupOneMinute {
 		// flow_records is ordered by UTC hour, so a one-minute predicate still
 		// reads the containing hour. Publish all 60 minute buckets once after the
 		// hour seals; the query planner keeps the current partial hour as raw tail.
-		through = sealedThrough.Truncate(time.Hour)
+		through = sealed.Truncate(time.Hour)
 	}
 	from := through.Add(-lookback).Truncate(duration)
 	if !through.After(from) {
@@ -236,6 +265,7 @@ func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now
 			}
 		}
 	}
+	lateRepairs := make(map[int64]bool)
 	repairFrom := through.Add(-lateArrivalWindow)
 	for bucket := repairFrom; bucket.Before(through) && len(candidates) < candidateLimit; bucket = bucket.Add(duration) {
 		marker, exists := byBucket[bucket.Unix()]
@@ -256,6 +286,7 @@ func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now
 			continue
 		}
 		candidates = append(candidates, marker)
+		lateRepairs[bucket.Unix()] = true
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].Bucket.Before(candidates[j].Bucket)
@@ -266,13 +297,19 @@ func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now
 
 	completed := 0
 	heavyCompleted := 0
+	// Hours the minute scan still reaches get their 1m tier from it; an older
+	// hour (the minute lookback expired while it was missing) is rebuilt here.
+	minuteFrom := through.Add(-scheduler.config.MinuteLookback)
 	for _, candidate := range candidates {
 		generation, err := nextHotRollupGeneration(now, candidate.Generation)
 		if err != nil {
 			return completed, err
 		}
+		// A late-arrival repair means the hour's 1m tier was rolled from the same
+		// incomplete raw, so it is rebuilt instead of trusted.
+		stale := lateRepairs[candidate.Bucket.Unix()]
 		sourceResolution := flowch.RollupResolution("")
-		if resolution == flowch.RollupOneHour {
+		if resolution == flowch.RollupOneHour && !stale {
 			sourceThrough, sourceErr := scheduler.runner.CoveredThroughAtLeast(
 				ctx, flowch.RollupOneMinute, candidate.Bucket, candidate.Bucket.Add(time.Hour),
 				scheduler.config.MinimumGeneration,
@@ -284,19 +321,37 @@ func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now
 				sourceResolution = flowch.RollupOneMinute
 			}
 		}
-		markerOnly := false
+		markerOnly, rebuildMinutes := false, false
 		if resolution == flowch.RollupOneHour && sourceResolution == "" {
-			hasRaw, rawErr := scheduler.runner.RawBucketHasRecords(ctx, resolution, candidate.Bucket)
-			if rawErr != nil {
-				return completed, rawErr
+			// BucketNeedsRepair already proved a stale hour has more raw records
+			// than its aggregate.
+			hasRaw := stale
+			if !stale {
+				hasRaw, err = scheduler.runner.RawBucketHasRecords(ctx, resolution, candidate.Bucket)
+				if err != nil {
+					return completed, err
+				}
 			}
-			if hasRaw {
+			switch {
+			case !hasRaw:
+				markerOnly = true
+			case (!stale && !candidate.Bucket.Before(minuteFrom)) || !candidate.Bucket.After(now.Add(-flowMinuteTierRetention)):
+				// The minute scan completes this hour first, or its 1m tier has
+				// aged out and the hour is left to the cold lifecycle archive.
 				continue
+			default:
+				rebuildMinutes = true
 			}
-			markerOnly = true
 		}
 		if !markerOnly && heavyCompleted >= maxBuckets {
 			continue
+		}
+		if rebuildMinutes {
+			if err := scheduler.rebuildMinuteHour(ctx, now, candidate.Bucket); err != nil {
+				return completed, err
+			}
+			completed += int(time.Hour / time.Minute)
+			sourceResolution = flowch.RollupOneMinute
 		}
 		if err := scheduler.runner.Run(ctx, flowch.RollupRequest{
 			Resolution: resolution, SourceResolution: sourceResolution, Bucket: candidate.Bucket,
@@ -312,6 +367,29 @@ func (scheduler *flowHotRollupScheduler) scanResolution(ctx context.Context, now
 		}
 	}
 	return completed, nil
+}
+
+// rebuildMinuteHour regenerates all sixty 1m buckets of hour from raw in one
+// batch, above every 1m generation the hour already has.
+func (scheduler *flowHotRollupScheduler) rebuildMinuteHour(ctx context.Context, now, hour time.Time) error {
+	markers, err := scheduler.runner.GenerationMarkers(ctx, flowch.RollupOneMinute, hour, hour.Add(time.Hour))
+	if err != nil {
+		return err
+	}
+	var current uint64
+	for _, marker := range markers {
+		current = max(current, marker.Generation)
+	}
+	generation, err := nextHotRollupGeneration(now, current)
+	if err != nil {
+		return err
+	}
+	return scheduler.runner.Run(ctx, flowch.RollupRequest{
+		Resolution: flowch.RollupOneMinute, Bucket: hour, BucketEnd: hour.Add(time.Hour),
+		Generation: generation, GeneratedAt: now,
+		MaxThreads: scheduler.config.MaxThreads, Priority: scheduler.config.Priority,
+		MaxMemoryBytes: scheduler.config.MaxMemoryBytes,
+	})
 }
 
 func (scheduler *flowHotRollupScheduler) runMinuteCandidateBatches(ctx context.Context, now time.Time, candidates []flowch.RollupMarker) (int, error) {

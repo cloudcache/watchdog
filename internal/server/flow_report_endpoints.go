@@ -277,9 +277,9 @@ func (s *Server) runEndpointBusinessPanel(ctx context.Context, scope flowquery.S
 	return raw, gin.H{"step_seconds": result.Plan.StepSeconds, "source": result.Plan.Source}, nil
 }
 
-// endpointCorrelationRollupPlan returns the continuous aggregate prefix. The
-// caller may execute the uncovered suffix against raw facts; a marker gap never
-// authorizes aggregate data beyond the returned boundary.
+// endpointCorrelationRollupPlan returns the hourly aggregate/raw boundary (see
+// flowCoverage.boundary). The caller executes the suffix after it against raw
+// facts; an older marker gap before it is read as missing, not as raw.
 func (s *Server) endpointCorrelationRollupPlan(ctx context.Context, req flowReportRequest, targetPoints uint16, now time.Time) (flowquery.AggregatePlan, time.Time, error) {
 	plan, err := flowquery.PlanAggregate(req.From, req.To, time.Hour, targetPoints, now)
 	if err != nil {
@@ -297,13 +297,11 @@ func (s *Server) endpointCorrelationRollupPlan(ctx context.Context, req flowRepo
 			return plan, plan.EffectiveFrom, nil
 		}
 	}
-	covered, err := s.flowRollup.CoveredThroughAtLeast(
-		ctx, flowch.RollupOneHour, plan.EffectiveFrom, plan.EffectiveTo, s.flowReadableGenerationFloor(),
-	)
+	coverage, err := s.flowCoverage(ctx, flowch.RollupOneHour, plan.EffectiveFrom, plan.EffectiveTo)
 	if err != nil {
 		return flowquery.AggregatePlan{}, time.Time{}, err
 	}
-	return plan, covered, nil
+	return plan, coverage.boundary(plan.EffectiveTo), nil
 }
 
 func (s *Server) runEndpointCorrelationJoint(ctx context.Context, scope flowquery.Scope, view flowquery.View,
@@ -321,7 +319,7 @@ func (s *Server) runEndpointCorrelationJoint(ctx context.Context, scope flowquer
 		TargetPoints: targetPoints, Metric: req.Metric,
 		Dimensions: []flowquery.Dimension{endpoint, secondary}, Filters: filters,
 		View: view, TopN: topN, IncludeOther: false, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout, MinimumGeneration: s.flowReadableGenerationFloor(),
 	}
 	if !archiveThrough.After(plan.EffectiveFrom) {
 		base.From, base.To, base.Filter = req.From, req.To, addressFilter

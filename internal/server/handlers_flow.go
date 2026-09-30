@@ -252,7 +252,7 @@ func (s *Server) queryFlow(c *gin.Context) {
 		return
 	}
 
-	plan, err := flowquery.PlanAggregate(envelope.From, envelope.To, step, input.TargetPoints, now)
+	plan, err := s.planFlowAggregate(envelope.From, envelope.To, step, input.TargetPoints, now)
 	if err != nil {
 		writeFlowQueryError(c, err)
 		return

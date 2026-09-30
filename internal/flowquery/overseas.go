@@ -42,6 +42,9 @@ type OverseasRequest struct {
 	StorageV2        bool             `json:"-"`
 	ArchiveThrough   time.Time        `json:"-"`
 	ExecutionTimeout time.Duration    `json:"-"`
+	// MinimumGeneration is the readable hot-rollup generation floor for the
+	// archive side of a Storage V2 query.
+	MinimumGeneration uint64 `json:"-"`
 }
 
 type CompiledOverseas struct {
@@ -148,6 +151,7 @@ func CompileOverseas(scope Scope, request OverseasRequest, now time.Time) (Compi
 		parameters = append(parameters,
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(duration/time.Second)),
+			uintParameter("minimum_generation", request.MinimumGeneration),
 		)
 		archiveFilters, rawFilters, err = compileOverseasStorageV2Filters(request.Filters)
 		if err != nil {
@@ -431,6 +435,7 @@ const overseasStorageV2SourceSQL = `WITH
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
+    HAVING generation >= {minimum_generation:UInt64}
   ),
   archive_selected AS (
     SELECT

@@ -84,6 +84,9 @@ func (s *Server) startFlowArchive() error {
 	go deleteWorker.Run(workerContext)
 	go archiveDeleteWorker.Run(workerContext)
 	go scheduler.Run(workerContext)
+	if s.cfg.Flow.Lifecycle.Enabled {
+		go s.runFlowLifecycleConfig(workerContext, store, runner)
+	}
 	if s.cfg.Flow.HotRollup.Enabled {
 		hot := &flowHotRollupScheduler{config: s.cfg.Flow.HotRollup, runner: runner, logf: log.Printf}
 		go hot.Run(workerContext)
@@ -91,16 +94,105 @@ func (s *Server) startFlowArchive() error {
 	return nil
 }
 
-// applyFlowStorageBoundary makes raw facts authoritative after the largest
-// contiguous generation-marked prefix for the selected physical tier. A
-// lifecycle state alone is not sufficient: older reconciled days may predate a
-// newly introduced derived tier and therefore have no rows in that table.
+// flowExactRawTail is how much of a query's recent tail may be read from raw
+// facts to fill marker gaps exactly. The hot scheduler publishes a tier only
+// after its hour seals, so a healthy query always has a raw tail shorter than
+// this; an older gap is reported as missing coverage instead.
+const flowExactRawTail = 3 * time.Hour
+
+// flowCoverage summarizes the readable generation markers of one tier over a
+// query range.
+type flowCoverage struct {
+	firstGap, lastCovered time.Time
+	readable, expected    int
+}
+
+func summarizeFlowCoverage(markers []flowch.RollupMarker, from, to time.Time, step time.Duration, minimumGeneration uint64) flowCoverage {
+	readable := make(map[int64]struct{}, len(markers))
+	for _, marker := range markers {
+		if marker.Generation != 0 && (marker.Generation >= lifecycleGenerationFloor || marker.Generation >= minimumGeneration) {
+			readable[marker.Bucket.UTC().Unix()] = struct{}{}
+		}
+	}
+	from, to = from.UTC(), to.UTC()
+	coverage := flowCoverage{firstGap: to, lastCovered: from}
+	for bucket := from; bucket.Before(to); bucket = bucket.Add(step) {
+		coverage.expected++
+		if _, ok := readable[bucket.Unix()]; ok {
+			coverage.readable++
+			coverage.lastCovered = bucket.Add(step)
+		} else if coverage.firstGap.Equal(to) {
+			coverage.firstGap = bucket
+		}
+	}
+	return coverage
+}
+
+// boundary returns where a hybrid query switches from generation-marked
+// aggregates to raw facts. Before it, the archive side reads every bucket with
+// a readable marker and returns nothing for a gap, which the query's
+// completeness ratio reports; after it, raw facts are authoritative. Coverage
+// need not be a contiguous prefix: a gap that ends before the last readable
+// bucket (a permanent hole, or a range starting before the retained data) would
+// otherwise push every later bucket, including healthy aggregates, onto raw
+// facts and exhaust the read budget. A gap within flowExactRawTail of to is
+// still read exactly from raw.
+func (coverage flowCoverage) boundary(to time.Time) time.Time {
+	if !coverage.lastCovered.After(coverage.firstGap) || to.UTC().Sub(coverage.firstGap) <= flowExactRawTail {
+		return coverage.firstGap
+	}
+	return coverage.lastCovered
+}
+
+func (s *Server) flowCoverage(ctx context.Context, resolution flowch.RollupResolution, from, to time.Time) (flowCoverage, error) {
+	markers, err := s.flowRollup.GenerationMarkers(ctx, resolution, from, to)
+	if err != nil {
+		return flowCoverage{}, err
+	}
+	step := time.Hour
+	switch resolution {
+	case flowch.RollupOneMinute:
+		step = time.Minute
+	case flowch.RollupOneDay:
+		step = 24 * time.Hour
+	}
+	return summarizeFlowCoverage(markers, from, to, step, s.flowReadableGenerationFloor()), nil
+}
+
+// flowQueryResolution selects the rollup tier for a query bucket. Only the cold
+// archive writes 1d, so a daily bucket is served from the hourly tier (with the
+// same display interval) until 1d covers the whole range, instead of sending
+// the range to raw facts.
+func (s *Server) flowQueryResolution(ctx context.Context, bucket flowquery.Bucket, from, to time.Time) (flowquery.Bucket, flowch.RollupResolution, error) {
+	switch bucket {
+	case flowquery.BucketOneMinute:
+		return bucket, flowch.RollupOneMinute, nil
+	case flowquery.BucketOneDay:
+		daily, err := s.flowCoverage(ctx, flowch.RollupOneDay, from, to)
+		if err != nil {
+			return bucket, "", err
+		}
+		if daily.readable == daily.expected {
+			return bucket, flowch.RollupOneDay, nil
+		}
+		return flowquery.BucketOneHour, flowch.RollupOneHour, nil
+	default:
+		return bucket, flowch.RollupOneHour, nil
+	}
+}
+
+// applyFlowStorageBoundary splits a query between the generation-marked
+// aggregate of the selected physical tier and raw facts (see
+// flowCoverage.boundary). A lifecycle state alone is not sufficient: older
+// reconciled days may predate a newly introduced derived tier and therefore
+// have no rows in that table.
 func (s *Server) applyFlowStorageBoundary(ctx context.Context, request *flowquery.Request) error {
 	if request == nil || (s.flowLifecycle == nil && s.flowRollup == nil) {
 		return nil
 	}
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From.UTC()
+	request.MinimumGeneration = s.flowReadableGenerationFloor()
 	// The remote-port archive is deliberately top-N bounded. An explicit port
 	// lookup must stay exact, so it uses raw facts instead of treating an absent
 	// long-tail aggregate row as zero.
@@ -109,19 +201,16 @@ func (s *Server) applyFlowStorageBoundary(ctx context.Context, request *flowquer
 	}
 	boundary := request.From.UTC()
 	if s.flowRollup != nil {
-		resolution := flowch.RollupOneHour
-		if request.Bucket == flowquery.BucketOneMinute {
-			resolution = flowch.RollupOneMinute
-		} else if request.Bucket == flowquery.BucketOneDay {
-			resolution = flowch.RollupOneDay
-		}
-		covered, err := s.flowRollup.CoveredThroughAtLeast(
-			ctx, resolution, request.From, request.To, s.flowReadableGenerationFloor(),
-		)
+		bucket, resolution, err := s.flowQueryResolution(ctx, request.Bucket, request.From, request.To)
 		if err != nil {
 			return err
 		}
-		boundary = covered
+		request.Bucket = bucket
+		coverage, err := s.flowCoverage(ctx, resolution, request.From, request.To)
+		if err != nil {
+			return err
+		}
+		boundary = coverage.boundary(request.To)
 	} else if s.flowLifecycle != nil && request.Bucket == flowquery.BucketOneHour {
 		var err error
 		boundary, err = s.flowLifecycle.ArchiveThrough(ctx, request.From, request.To)
@@ -139,21 +228,19 @@ func (s *Server) applyFlowOverseasStorageBoundary(ctx context.Context, request *
 	}
 	request.StorageV2 = true
 	request.ArchiveThrough = request.From.UTC()
+	request.MinimumGeneration = s.flowReadableGenerationFloor()
 	boundary := request.From.UTC()
 	if s.flowRollup != nil {
-		resolution := flowch.RollupOneHour
-		if request.Bucket == flowquery.BucketOneMinute {
-			resolution = flowch.RollupOneMinute
-		} else if request.Bucket == flowquery.BucketOneDay {
-			resolution = flowch.RollupOneDay
-		}
-		covered, err := s.flowRollup.CoveredThroughAtLeast(
-			ctx, resolution, request.From, request.To, s.flowReadableGenerationFloor(),
-		)
+		bucket, resolution, err := s.flowQueryResolution(ctx, request.Bucket, request.From, request.To)
 		if err != nil {
 			return err
 		}
-		boundary = covered
+		request.Bucket = bucket
+		coverage, err := s.flowCoverage(ctx, resolution, request.From, request.To)
+		if err != nil {
+			return err
+		}
+		boundary = coverage.boundary(request.To)
 	} else if s.flowLifecycle != nil && request.Bucket == flowquery.BucketOneHour {
 		var err error
 		boundary, err = s.flowLifecycle.ArchiveThrough(ctx, request.From, request.To)

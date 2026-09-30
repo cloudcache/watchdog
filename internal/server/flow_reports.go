@@ -466,29 +466,30 @@ func (s *Server) buildFlowReportResponse(ctx context.Context, scope flowquery.Sc
 	}, nil
 }
 
-// planFlowReportAggregate keeps automatic reports on a physically covered
-// tier. The generic planner chooses display density without knowing the hot 1m
-// horizon; a range that starts before that horizon would otherwise select 1m,
-// find a marker gap at its first bucket, and fall back to raw for the whole
-// window. Explicit /flow/query step requests retain their requested resolution.
 func (s *Server) planFlowReportAggregate(req flowReportRequest, targetPoints uint16, now time.Time) (flowquery.AggregatePlan, error) {
-	plan, err := flowquery.PlanAggregate(req.From, req.To, 0, targetPoints, now)
-	if err != nil || plan.Source != flowquery.BucketOneMinute {
+	return s.planFlowAggregate(req.From, req.To, 0, targetPoints, now)
+}
+
+// planFlowAggregate keeps automatic plans (step 0) on a physically covered
+// tier. The generic planner chooses display density without knowing the 1m
+// retention; a range that starts before it would otherwise select 1m, find no
+// 1m markers and read the whole window from raw facts. Explicit step requests
+// retain their requested resolution.
+func (s *Server) planFlowAggregate(from, to time.Time, step time.Duration, targetPoints uint16, now time.Time) (flowquery.AggregatePlan, error) {
+	plan, err := flowquery.PlanAggregate(from, to, step, targetPoints, now)
+	if err != nil || step != 0 || plan.Source != flowquery.BucketOneMinute {
 		return plan, err
 	}
-	minuteHorizon := s.cfg.Flow.HotRollup.MinuteLookback
-	if minuteHorizon <= 0 {
-		return plan, nil
-	}
-	// Match the scheduler's physical 1m coverage boundary. Minute rollups are
-	// published only after the containing hour seals, so duration alone is not
-	// sufficient: a short historical window can still be outside the hot tier.
+	// Minute rollups are published after the containing hour seals and kept for
+	// the 1m TTL, so duration alone is not sufficient: a short historical window
+	// can still be older than every retained minute bucket. A gap inside the
+	// retention is reported as missing coverage by the storage boundary.
 	minuteCoverageFrom := now.UTC().Add(-s.cfg.Flow.HotRollup.SealDelay).
-		Truncate(time.Hour).Add(-minuteHorizon).Truncate(time.Minute)
+		Truncate(time.Hour).Add(-flowMinuteTierRetention).Truncate(time.Minute)
 	if !plan.EffectiveFrom.Before(minuteCoverageFrom) {
 		return plan, nil
 	}
-	return flowquery.PlanAggregate(req.From, req.To, time.Hour, targetPoints, now)
+	return flowquery.PlanAggregate(from, to, time.Hour, targetPoints, now)
 }
 
 // flowReportCompleteness derives the report-level completeness from its panels: the
@@ -729,7 +730,7 @@ func (s *Server) runReportPanel(ctx context.Context, scope flowquery.Scope, view
 	if err != nil {
 		return nil, nil, err
 	}
-	return raw, gin.H{"step_seconds": plan.StepSeconds, "source": plan.Source, "unit": result.Metric.Unit}, nil
+	return raw, flowReportAggregateMeta(plan, queryRequest.Bucket, result), nil
 }
 
 func flowReportBusinessCategoryRollup(dimensions []flowquery.Dimension) bool {
@@ -758,7 +759,7 @@ func (s *Server) runBusinessCategoryRollupPanel(ctx context.Context, scope flowq
 		TargetPoints: req.TargetPoints, Metric: req.Metric, Dimensions: spec.Dimensions,
 		Filters: spec.Filters, Filter: req.Filter, View: view, TopN: spec.TopN,
 		IncludeOther: spec.IncludeOther, Timezone: req.Timezone, TimeWindows: req.PeakWindows,
-		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout,
+		ExecutionTimeout: s.cfg.Flow.Query.ExecutionTimeout, MinimumGeneration: s.flowReadableGenerationFloor(),
 	}
 	var compiled flowquery.CompiledJoint
 	if coveredThrough.Equal(plan.EffectiveTo) {
@@ -845,11 +846,21 @@ func (s *Server) runReportDirectionPanel(ctx context.Context, scope flowquery.Sc
 	if err != nil {
 		return nil, nil, err
 	}
-	return raw, gin.H{
-		"step_seconds": plan.StepSeconds,
-		"source":       plan.Source,
-		"unit":         combined.Metric.Unit,
-	}, nil
+	return raw, flowReportAggregateMeta(plan, request.Bucket, combined), nil
+}
+
+// flowReportAggregateMeta describes an aggregate panel. The source is the tier
+// actually read (a daily plan can be served from the hourly tier), and the
+// completeness scalars let the report surface marker gaps instead of drawing
+// missing hours as zero traffic.
+func flowReportAggregateMeta(plan flowquery.AggregatePlan, source flowquery.Bucket, result flowquery.Result) gin.H {
+	return gin.H{
+		"step_seconds":   plan.StepSeconds,
+		"source":         source,
+		"unit":           result.Metric.Unit,
+		"complete_ratio": result.RollupCompleteness.Ratio,
+		"partial":        !result.RollupCompleteness.Complete,
+	}
 }
 
 // flowReportNeedsBaseFacts keeps fixed reports on rollups whenever their typed

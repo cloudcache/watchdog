@@ -184,6 +184,9 @@ type Request struct {
 	StorageV2        bool          `json:"-"`
 	ArchiveThrough   time.Time     `json:"-"`
 	ExecutionTimeout time.Duration `json:"-"`
+	// MinimumGeneration is the readable hot-rollup generation floor. A bucket
+	// whose latest marker is below it is not read from the archive side.
+	MinimumGeneration uint64 `json:"-"`
 }
 
 type DimensionDefinition struct {
@@ -516,6 +519,7 @@ func Compile(scope Scope, request Request, now time.Time) (Compiled, error) {
 		parameters = append(parameters,
 			stringParameter("archive_through", archiveThrough.Format("2006-01-02 15:04:05")),
 			uintParameter("source_seconds", uint64(sourceDuration/time.Second)),
+			uintParameter("minimum_generation", request.MinimumGeneration),
 		)
 		identityScopedRawQuery = archiveThrough.Before(to) && hasIdentityScope(request.Filters)
 		endpointCandidateQuery = archiveThrough.Equal(from) && identityScopedRawQuery &&
@@ -966,6 +970,7 @@ const storageV2QuerySQL = `WITH
     WHERE bucket >= {from:DateTime('UTC')} AND bucket < {archive_through:DateTime('UTC')}
       AND dimension_kind = '_generation'
     GROUP BY bucket
+    HAVING generation >= {minimum_generation:UInt64}
   ),
   archive_rows AS (
     SELECT
