@@ -11,6 +11,7 @@ import {
 	initialFlowReportRange,
 	reportDirectionTotals,
 	reportPanelUnit,
+	reportRangeHeadline,
 	reportSeriesStats,
 	resolveFlowReportRange,
 	transformReportSeries,
@@ -148,6 +149,14 @@ test("report series preserves category identity and exact bucket statistics", ()
 	const series = buildReportSeries(panel)
 	assert.equal(series.length, 1)
 	assert.deepEqual(reportSeriesStats(series[0]), { current: 100, average: 26.5, p95: 100, maximum: 100, total: 106 })
+})
+
+test("report cards lead with a statistic of the selected range, never only the newest bucket", () => {
+	const stats = { current: 100, average: 26.5, p95: 100, maximum: 100, total: 106 }
+	assert.deepEqual(reportRangeHeadline(stats, "bits_per_second"), { value: 26.5, kind: "average" })
+	assert.deepEqual(reportRangeHeadline(stats, "packets_per_second"), { value: 26.5, kind: "average" })
+	assert.deepEqual(reportRangeHeadline(stats, "bytes"), { value: 106, kind: "total" })
+	assert.deepEqual(reportRangeHeadline(stats, "records"), { value: 106, kind: "total" })
 })
 
 test("report series displays immutable geography names instead of storage IDs", () => {

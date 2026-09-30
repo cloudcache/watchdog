@@ -382,6 +382,20 @@ export function reportSeriesStats(series?: FlowReportSeries) {
 	}
 }
 
+/**
+ * The number a report card leads with for the selected range: the average of a
+ * rate series (bps, pps) or the total of a volume series (bytes, packets,
+ * records). The last bucket alone would show the newest data whatever range is
+ * selected.
+ */
+export function reportRangeHeadline(
+	stats: ReturnType<typeof reportSeriesStats>,
+	unit?: string
+): { value: number; kind: "average" | "total" } {
+	if (unit === "bytes" || unit === "packets" || unit === "records") return { value: stats.total, kind: "total" }
+	return { value: stats.average, kind: "average" }
+}
+
 export function transformReportSeries(
 	inbound: FlowReportSeries[],
 	outbound: FlowReportSeries[],

@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { PagedVTable } from "@/components/ui/paged-vtable"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
-import { canManageAddressLibrary, api } from "@/lib/api"
+import { canManageAddressLibrary, api, WatchdogAPIError } from "@/lib/api"
 import { buildFlowDeviceFilter, type FlowFilterExpression } from "@/lib/flow-explorer-model"
 import { formatBitsPerSecond, formatGigabitsPerSecond } from "@/lib/metric-format"
 import {
@@ -32,6 +32,7 @@ import {
 	reportCategoryTotals,
 	reportPanel,
 	reportPanelUnit,
+	reportRangeHeadline,
 	reportSeriesStats,
 	resolveFlowReportRange,
 	transformReportSeries,
@@ -75,6 +76,18 @@ type FlowReportQueryJob = {
 
 function isFlowReportQueryJob(value: FlowReportResponse | FlowReportQueryJob): value is FlowReportQueryJob {
 	return "job_id" in value
+}
+
+// Report requests carry their own deadlines: API requests otherwise have no
+// transport timeout, and one dead connection left the page loading forever
+// with Refresh disabled. The submit may run a short range synchronously.
+const FLOW_REPORT_SUBMIT_TIMEOUT_MS = 60_000
+const FLOW_REPORT_POLL_TIMEOUT_MS = 30_000
+// The job keeps running server-side, so a few dropped polls must not fail it.
+const FLOW_REPORT_POLL_RETRIES = 3
+
+function isTransientAPIError(reason: unknown) {
+	return reason instanceof WatchdogAPIError && (reason.code === "network_error" || reason.code === "request_timeout")
 }
 
 function waitForFlowReportQuery(delayMs: number, signal: AbortSignal): Promise<void> {
@@ -436,13 +449,20 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 					method: "POST",
 					body,
 					signal: controller.signal,
+					timeoutMs: FLOW_REPORT_SUBMIT_TIMEOUT_MS,
 				})
+				let pollFailures = 0
 				while (isFlowReportQueryJob(result)) {
 					await waitForFlowReportQuery(result.poll_after_ms, controller.signal)
-					result = await api.send<FlowReportResponse | FlowReportQueryJob>(
-						`/api/v1/flow/reports/query/${encodeURIComponent(result.job_id)}`,
-						{ signal: controller.signal }
-					)
+					try {
+						result = await api.send<FlowReportResponse | FlowReportQueryJob>(
+							`/api/v1/flow/reports/query/${encodeURIComponent(result.job_id)}`,
+							{ signal: controller.signal, timeoutMs: FLOW_REPORT_POLL_TIMEOUT_MS }
+						)
+						pollFailures = 0
+					} catch (reason) {
+						if (!isTransientAPIError(reason) || ++pollFailures > FLOW_REPORT_POLL_RETRIES) throw reason
+					}
 				}
 				if (sequence !== requestSequence.current) return
 				setResponse(result)
@@ -511,15 +531,37 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 		]
 	)
 
+	// The time range and device define what the report is about, so changing
+	// either re-runs it; the finer filters still wait for Refresh so editing them
+	// does not produce query storms.
+	const selectionKey = range === "custom" ? `${range}|${customStart}|${customEnd}|${device}` : `${range}|${device}`
+	const lastSelectionKey = useRef(selectionKey)
+	const refreshRef = useRef(refresh)
+	refreshRef.current = refresh
+
 	useEffect(() => {
 		if (!referencesLoaded || !device || initialRequestStarted.current) return
 		initialRequestStarted.current = true
+		lastSelectionKey.current = selectionKey
 		refresh().catch(() => {})
 		return () => abortRef.current?.abort()
-		// The initial request is intentional; subsequent controls use Refresh so
-		// editing a time or filter does not produce query storms.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [surface, referencesLoaded, device])
+
+	useEffect(() => {
+		if (!initialRequestStarted.current || lastSelectionKey.current === selectionKey) return
+		if (range === "custom") {
+			try {
+				resolveFlowReportRange(range, customStart, customEnd, timezone)
+			} catch {
+				return
+			}
+		}
+		lastSelectionKey.current = selectionKey
+		const timer = window.setTimeout(() => refreshRef.current().catch(() => {}), 400)
+		return () => window.clearTimeout(timer)
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [selectionKey])
 
 	const runTable = useCallback(
 		(next: TableControl) => {
@@ -734,7 +776,7 @@ export default memo(function FlowReports({ surface }: { surface: FlowReportSurfa
 						</div>
 					) : null}
 					<div className="flex flex-wrap items-center gap-2">
-						<Button onClick={() => refresh()} disabled={loading || !device}>
+						<Button onClick={() => refresh()} disabled={!device}>
 							<RefreshCwIcon className={cn("mr-2 h-4 w-4", loading && "animate-spin")} />
 							<Trans>Refresh</Trans>
 						</Button>
@@ -860,13 +902,19 @@ function OverviewReport({
 	const inbound = reportPanel(response, "category_in")
 	const outbound = reportPanel(response, "category_out")
 	const totalSeries = buildReportSeries(total)
-	const inboundCurrent = reportSeriesStats(totalSeries.find((series) => series.name === "Inbound")).current
-	const outboundCurrent = reportSeriesStats(totalSeries.find((series) => series.name === "Outbound")).current
+	const totalPanelUnit = reportPanelUnit(total)
+	const inboundHeadline = reportRangeHeadline(
+		reportSeriesStats(totalSeries.find((series) => series.name === "Inbound")),
+		totalPanelUnit
+	)
+	const outboundHeadline = reportRangeHeadline(
+		reportSeriesStats(totalSeries.find((series) => series.name === "Outbound")),
+		totalPanelUnit
+	)
 	const inboundTotals = reportCategoryTotals(inbound)
 	const outboundTotals = reportCategoryTotals(outbound)
 	const totalInbound = [...inboundTotals.values()].reduce((sum, value) => sum + value, 0)
 	const totalOutbound = [...outboundTotals.values()].reduce((sum, value) => sum + value, 0)
-	const totalPanelUnit = reportPanelUnit(total)
 	const displayTotalSeries = totalSeries.map((series) => ({
 		...series,
 		name: series.name === "Inbound" ? t`Inbound` : series.name === "Outbound" ? t`Outbound` : series.name,
@@ -883,9 +931,12 @@ function OverviewReport({
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
-					<div className="mb-3 flex flex-wrap gap-6 text-xl font-semibold">
-						<span>↓ {formatMetric(inboundCurrent, totalPanelUnit)}</span>
-						<span>↑ {formatMetric(outboundCurrent, totalPanelUnit)}</span>
+					<div className="mb-3 flex flex-wrap items-baseline gap-6 text-xl font-semibold">
+						<span className="text-sm font-normal text-muted-foreground">
+							{inboundHeadline.kind === "total" ? t`Total` : t`Average`}
+						</span>
+						<span>↓ {formatMetric(inboundHeadline.value, totalPanelUnit)}</span>
+						<span>↑ {formatMetric(outboundHeadline.value, totalPanelUnit)}</span>
 					</div>
 					<ReportChart series={displayTotalSeries} unit={totalPanelUnit} />
 				</CardContent>
@@ -941,21 +992,24 @@ function CategoryCard({
 	const outStats = reportSeriesStats(outSeries)
 	const inboundUnit = reportPanelUnit(inbound)
 	const outboundUnit = reportPanelUnit(outbound)
+	const inHeadline = reportRangeHeadline(inStats, inboundUnit)
+	const outHeadline = reportRangeHeadline(outStats, outboundUnit)
 	return (
 		<Card>
 			<CardHeader className="api-3">
 				<CardTitle>{categoryLabel(category)}</CardTitle>
+				<CardDescription>{inHeadline.kind === "total" ? t`Total` : t`Average`}</CardDescription>
 			</CardHeader>
 			<CardContent>
 				<div className="grid grid-cols-2 gap-2 text-sm">
 					<div>
 						<span className="text-muted-foreground">{t`Inbound`}</span>
-						<div className="font-semibold">{formatMetric(inStats.current, inboundUnit)}</div>
+						<div className="font-semibold">{formatMetric(inHeadline.value, inboundUnit)}</div>
 						<div className="text-xs text-muted-foreground">{formatShare(inStats.total, inboundTotal)}</div>
 					</div>
 					<div>
 						<span className="text-muted-foreground">{t`Outbound`}</span>
-						<div className="font-semibold">{formatMetric(outStats.current, outboundUnit)}</div>
+						<div className="font-semibold">{formatMetric(outHeadline.value, outboundUnit)}</div>
 						<div className="text-xs text-muted-foreground">{formatShare(outStats.total, outboundTotal)}</div>
 					</div>
 				</div>
